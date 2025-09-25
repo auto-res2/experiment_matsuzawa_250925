@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+SELF-REFINE is an iterative algorithm that leverages a single Large Language Model (LLM), 'M', to act as the generator, feedback provider, and refiner. The process begins with an 'Initial Generation' step, where the LLM produces a first output (y0) for a given input (x) using a task-specific few-shot prompt (pgen). This is followed by iterative 'FEEDBACK' and 'REFINE' steps. In the 'FEEDBACK' step, the same LLM 'M' generates actionable and specific feedback (fbt) on its current output (yt) using a few-shot prompt (pfb). In the 'REFINE' step, 'M' uses this feedback, along with the complete history of previous outputs and feedback (y0, fb0, ..., yt, fbt), to generate an improved output (yt+1) with a refinement-specific few-shot prompt (prefine). The iterations continue for a maximum of 4 steps or until a stopping condition is met. The approach relies entirely on in-context few-shot prompting, avoiding explicit training of separate models or reward functions.
+
+# GitHub URLs List
+['https://github.com/krishnakt031990/Crawl-Wiki-For-Acronyms', 'https://github.com/IBM/Project_CodeNet']
+Output:
+{
+    "index": null
+}
