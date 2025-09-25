@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+GraphSAINT's core methodology involves constructing minibatches by sampling the training graph itself, rather than individual nodes or edges across GCN layers. The process begins with light-weight pre-processing to estimate the probability of nodes and edges being sampled, which are then used to compute normalization coefficients (α for aggregator normalization in feature propagation and λ for loss normalization). During training, an independent subgraph (Gs) is sampled in each iteration, a full GCN is built on Gs, and forward/backward propagation proceeds with the derived normalizations. To reduce variance, the paper analyzes independent edge sampling and derives an optimal edge probability proportional to the sum of aggregated features and their reciprocals, simplifying it to a topology-dependent form (pe ∝ 1/deg(u) + 1/deg(v)). Four specific samplers are proposed and integrated: Random Node Sampler, Random Edge Sampler, Random Walk (RW) Sampler, and Multi-dimensional Random Walk (MRW) Sampler, all of which induce a subgraph from the sampled elements to ensure connectivity.
+
+# GitHub URLs List
+['https://github.com/GraphSAINT/GraphSAINT']
+Output:
+{
+    "index": 0
+}
