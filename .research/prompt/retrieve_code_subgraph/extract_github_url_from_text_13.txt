@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The methodology is primarily theoretical and empirical. Theoretically, the authors derive a conservation law for GATs (including variants with shared feature weights and multiple attention heads) using the concept of rescale invariance from traditional deep neural networks and positive homogeneous activation functions (e.g., ReLU). This law quantifies the relationship between gradients and parameters, explaining why standard initializations lead to poor trainability. Empirically, they propose a balanced initialization scheme (Procedure 2.6) where attention parameters are initialized to zero and feature weights are scaled layer-wise to satisfy a derived norm-preservation equality. This scheme is further enhanced by incorporating a Looks-Linear-Orthogonal (LLortho) initialization for feature weights, aiming for initial dynamical isometry.
+
+# GitHub URLs List
+['https://github.com/Diego999/pyGAT']
+Output:
+{
+    "index": 0
+}
