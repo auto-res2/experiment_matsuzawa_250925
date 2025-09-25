@@ -542,6 +542,68 @@
       }
     }
   ],
+  "reference_research_study_list": [
+    {
+      "title": "On the bottleneck of graph neural networks and its practical implications"
+    },
+    {
+      "title": "A convergence analysis of gradient descent for deep linear neural networks"
+    },
+    {
+      "title": "Stronger generalization bounds for deep nets via a compression approach"
+    },
+    {
+      "title": "Generalization of two-layer neural networks: An asymptotic viewpoint"
+    },
+    {
+      "title": "Layer normalization"
+    },
+    {
+      "title": "The shattered gradients problem: If resnets are the answer, then what is the question?"
+    },
+    {
+      "title": "Gradient descent with identity initialization efficiently learns positive definite linear transformations by deep residual networks"
+    },
+    {
+      "title": "Rumor detection on social media with bi-directional graph convolutional networks"
+    },
+    {
+      "title": "How attentive are graph attention networks?"
+    },
+    {
+      "title": "Initialization of ReLUs for dynamical isometry"
+    },
+    {
+      "title": "Graphnorm: A principled approach to accelerating graph neural network training"
+    },
+    {
+      "title": "Bag of tricks for training deeper graph neural networks: A comprehensive benchmark study"
+    },
+    {
+      "title": "On provable benefits of depth in training graph convolutional networks"
+    },
+    {
+      "title": "Lipschitz normalization for self-attention layers with application to graph neural networks"
+    },
+    {
+      "title": "Algorithmic regularization in learning deep homogeneous models: Layers are automatically balanced"
+    },
+    {
+      "title": "Pde-gcn: Novel architectures for graph neural networks motivated by partial differential equations"
+    },
+    {
+      "title": "pathgcn: Learning general graph spatial operators from paths"
+    },
+    {
+      "title": "Improving graph neural networks with learnable propagation operators"
+    },
+    {
+      "title": "Understanding the difficulty of training deep feedforward neural networks"
+    },
+    {
+      "title": "A new model for learnig in graph domains"
+    }
+  ],
   "new_method": {
     "method": "{\n    \"Open Problems\": \"• Current samplers optimise variance inside one mini-batch but give no guarantee that different workers (or successive steps) explore complementary areas of the receptive field.  \\n• Importance scores (attn/grad) are still obtained from the *preceding* forward pass, so they arrive one iteration late; this hurts highly dynamic graphs.  \\n• Similarity kernels for k-DPP become the new bottleneck on billion-node graphs.  \\n• Existing energy accounting ignores *CPU* and *PCIe* traffic and cannot be compared across multi-GPU jobs.  \\n• Variance, diversity and energy are optimised by separate heuristics; there is no single objective balancing them.\",\n    \"Methods\": \"We propose TADP-HABLS (Temporal-Adaptive, Diversity-and-Power-aware Hierarchical ABLS), a drop-in sampler that unifies variance, temporal diversity and energy into one online objective.\\n\\nM1 – Sliding-window DPP (SW-DPP).  A size-K reservoir stores the last W batches’ neighbours.  When sampling the next batch we draw S_ℓ ~ DPP( Σ_{t∈window} Φ_t  ⊕  Φ_curr ) where Φ are low-rank Nyström sketches of node embeddings.  This maximises novelty across time with O(Kd^2) cost and yields a provable 1-1/e coverage ratio of unseen high-attention vertices over W steps.\\n\\nM2 – One-step look-ahead attention predictor.  A 2-layer GRU takes previous α_{ij}, |g_j| and degree features and outputs \\\\hat α^{t+1}_{ij}.  The bandit reward becomes r_j = −|g_j|²· ( β·\\\\hat α^{t+1} +(1−β)·α^t ).  This removes the one-iteration lag and reduces cache bias to O(β^{2t}).\\n\\nM3 – Kernel on compressed embeddings.  Node embeddings are projected through fixed 256-dim CountSketch + random sine/cosine features; cosine similarities are approximated with <2 % error, cutting DPP kernel build time 8× and RAM 16×.\\n\\nM4 – Unified objective via constrained Lagrangian.  We maximise E[accuracy proxy] −λ₁·Var −λ₂·Redundancy −λ₃·Energy under a global GPU‐mem cap.  λ’s are updated by dual ascent every epoch, giving automatically tuned fan-outs *and* target diversity level.\\n\\nM5 – Full-system energy meter.  We sample GPU, CPU and DRAM power via NVML & RAPL, add PCIe throughput, and report JEPE (Joule-per-Epoch) plus JEPTA (Joule·Area under Train-Acc).\",\n    \"Experimental Setup\": \"Datasets: ogbn-products, ogbn-papers100M, Friendster, heterophilic MolPCBA; dynamic setting: Reddit-Temporal, Yelp-Timeline.  \\nModels: 2-layer GAT, 4-layer GATv2, 8-layer GraphTransformer, 3-layer GeniePath.  \\nHardware: single A100, 4×A100, and CPU-only (Xeon-IceLake) to show portability.  \\nBaselines: NS(25), LABOR-*, HABLS, DPA-HABLS, GraphSAINT-rw, RSC-only.  \\nMetrics: Test accuracy/AUROC, wall-clock, #vertices/edges, variance, JEP(E), JEPTA, inter-batch Jaccard of sampled sets.  \\nProtocol: 5 seeds, Adam 0.005, early-stop 50.  Budget levels: 6 GB, 10 GB, 14 GB, plus energy budget 0.3 kWh.\",\n    \"Experimental Code\": \"# SW-DPP reservoir (PyTorch)\\nclass SWDPP:\\n    def __init__(self,K,W,d):\\n        self.K,K0=K,K*3; self.W=W; self.d=d; self.res=[]\\n    def _sketch(self,emb):\\n        # CountSketch+RFF to 256 dims\\n        return torch.randn(self.d,256,device=emb.device)@emb.T\\n    def update(self,emb):\\n        self.res.append(self._sketch(emb))\\n        if len(self.res)>self.W: self.res.pop(0)\\n    def sample(self,cand_emb):\\n        R=torch.cat(self.res+[self._sketch(cand_emb)],1)\\n        K=(R.T@R)/(self.d)\\n        idx=fast_k_dpp(K,self.K)\\n        return idx\\n\\n# Look-ahead GRU\\nclass AttnPredictor(nn.Module):\\n    def __init__(self,feat_dim):\\n        super().__init__(); self.gru=nn.GRU(feat_dim,32,2)\\n    def forward(self,feat,h=None):\\n        out,_=self.gru(feat.unsqueeze(0),h)\\n        return torch.sigmoid(out[-1])\\n\",\n    \"Expected Result\": \"• 12-epoch moving window reduces neighbour overlap between workers from 0.42→0.18 (ogbn-products).  \\n• Var lowered 15 % vs HABLS while sampling 1.4× fewer vertices; accuracy +0.9 %.  \\n• JEPE drops 38 % vs DPA-HABLS, 55 % vs NS.  \\n• Predictor cuts additional forward-pass latency by 22 %.  \\n• Dual-objective tuner matches best manual (grid) fan-outs within 0.5 % accuracy under all memory/energy budgets.\",\n    \"Expected Conclusion\": \"Temporal diversity across mini-batches, predictive importance and a global Lagrangian tuner together unlock a new Pareto front for attention-based GNN training: similar or better accuracy with half the energy and memory.  SW-DPP shows that coverage-style objectives can be enforced online at scale, and the full-system JEPE metric enables fair sustainability comparisons.  These ideas generalise to any sparse-attention architecture and pave the way for budget-aware, diversity-controlled training on trillion-edge dynamic graphs.\"\n}",
     "experimental_design": {
