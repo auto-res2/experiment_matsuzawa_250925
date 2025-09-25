@@ -1,0 +1,10 @@
+{
+  "research_topic": "Accelerating Graph Attention Network training",
+  "queries": [
+    "GAT kernel fusion",
+    "sparse attention acceleration",
+    "quantized GAT training",
+    "distributed GAT training",
+    "low-rank graph attention"
+  ]
+}
