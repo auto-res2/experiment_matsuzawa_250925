@@ -110,10 +110,11 @@ class HAQGATConv(MessagePassing):
         self.q_lin = nn.Linear(in_dim, heads * out_dim, bias=False)
         self.k_lin = nn.Linear(in_dim, heads * out_dim, bias=False)
         self.v_lin = nn.Linear(in_dim, heads * out_dim, bias=False)
-        self.o_lin = nn.Linear(heads * out_dim, out_dim, bias=False)
+        self.o_lin = nn.Linear(out_dim, out_dim, bias=False)
+        self.lr_lin = nn.Linear(shared_bank.bank_dim, out_dim, bias=False)
 
         # Fixed random projection for hashing-based clustering
-        self.register_buffer("rand_proj", torch.randn(out_dim * heads, 1))
+        self.register_buffer("rand_proj", torch.randn(out_dim, 1))
 
         # QAT stubs
         if self.quant:
@@ -124,7 +125,7 @@ class HAQGATConv(MessagePassing):
         self.register_buffer("_last_keep_mask", torch.empty(0, dtype=torch.bool))
 
     # ------------------------------------------------------------------
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor):  # x[N,F]
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, orig_x: torch.Tensor = None):  # x[N,F]
         if self.quant:
             x = self.quant_in(x)
 
@@ -154,7 +155,8 @@ class HAQGATConv(MessagePassing):
         keep_max, keep_idx = scatter_max(flat_att, group_ids)
 
         keep_mask = torch.zeros_like(flat_att, dtype=torch.bool)
-        keep_mask[keep_idx[keep_idx >= 0]] = True
+        valid_idx = keep_idx[(keep_idx >= 0) & (keep_idx < keep_mask.size(0))]
+        keep_mask[valid_idx] = True
         keep_mask = keep_mask.view(E, H_)
         self._last_keep_mask = keep_mask
 
@@ -166,8 +168,9 @@ class HAQGATConv(MessagePassing):
         out = scatter(out, src, dim=0, dim_size=N, reduce="add")  # [N,d]
 
         # ----------------  Shared Low-Rank Kernel  -----------------------
-        low_rank_feat = self.shared_bank(x)  # [N,m]
-        out = out + self.o_lin(low_rank_feat)
+        bank_input = orig_x if orig_x is not None else x
+        low_rank_feat = self.shared_bank(bank_input)  # [N,m]
+        out = out + self.lr_lin(low_rank_feat)
         out = self.o_lin(out)
 
         if self.quant:
@@ -213,11 +216,12 @@ class HAQGATNetwork(nn.Module):
 
     # --------------------------------------------------------------
     def forward(self, x: torch.Tensor, edge_idx: torch.Tensor):
+        orig_x = x  # Store original input for shared bank
         for conv in self.layers[:-1]:
-            x = conv(x, edge_idx)
+            x = conv(x, edge_idx, orig_x)
             x = torch.relu(x)
             x = self.dropout(x)
-        x = self.layers[-1](x, edge_idx)
+        x = self.layers[-1](x, edge_idx, orig_x)
         return x
 
     # --------------------------------------------------------------
@@ -238,6 +242,14 @@ class HAQGATNetwork(nn.Module):
             nn.init.orthogonal_(new_phi)
             self.shared_bank.phi = nn.Parameter(new_phi, requires_grad=False)
             self.shared_bank.bank_dim = self.state.m
+
+            # Update lr_lin layers in all convolution layers
+            for layer in self.layers:
+                if hasattr(layer, 'lr_lin'):
+                    old_out_dim = layer.lr_lin.out_features
+                    layer.lr_lin = nn.Linear(self.state.m, old_out_dim, bias=False)
+                    if hasattr(self.shared_bank.phi, 'device'):
+                        layer.lr_lin = layer.lr_lin.to(self.shared_bank.phi.device)
 
 
 # -----------------------------------------------------------------------------
@@ -339,7 +351,7 @@ class Trainer:
 # -----------------------------------------------------------------------------
 
 def train_pipeline(cfg: Dict, data):
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = "cpu"  # Force CPU due to torch-scatter CUDA incompatibility
 
     # Controller shared state for adaptive models – initialise regardless; ignored by non-adaptive baselines
     state = ControllerState(K0=cfg["model"].get("K0_init", 0) or 4,
