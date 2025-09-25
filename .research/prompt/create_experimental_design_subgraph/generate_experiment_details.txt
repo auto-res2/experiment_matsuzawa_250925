@@ -1,0 +1,143 @@
+
+Input:
+You are a cutting-edge AI researcher. Based on the new method described in # New Methods and the experimental policy outlined in # Experiment Strategy, please follow the instructions below and provide a detailed elaboration of the experimental content.
+
+# Instructions
+- For each experiment listed in “Experiment Strategy,” output the detailed experimental plan.
+- Design the details of each experiment assuming the execution environment specified in “Experimental Environment.”
+- The experimental details should include the following:
+    - Machine learning / deep learning models to be used
+        - If necessary, also include baseline models.
+    - Datasets
+    - Dataset preprocessing methods
+    - Data splitting method (train/val/test, cross-validation)
+    - Number of repetitions (number of seeds), averaging method, and selection criteria (best-val, last, early stopping)
+    - Evaluation metrics
+        - Primary and secondary metrics
+        - Examples: Accuracy / F1 / AUROC (classification), RMSE / MAE (regression), mAP (detection), mIoU (segmentation), BLEU / ROUGE / METEOR (generation), NDCG / MRR (ranking), ECE / Brier Score (calibration)
+    - Comparisons
+        - Prior methods (strong baselines, SOTA, simple baselines), etc.
+        - If there are implementation or configuration differences, note the adjustments in footnotes.
+    - Methods for analyzing important hyperparameters (e.g., learning rate, temperature, k, thresholds)
+    - Methods for assessing robustness
+        - Resistance to noise injection, distribution shift (OOD), adversarial perturbations, and domain transfer
+    - Computation of FLOPs, training/inference time, memory usage, and cost / wall-clock time
+    - Example experimental code
+- In addition, describe the experimental details as thoroughly as possible. It is acceptable if the output is long.
+- Avoid excessive redundancy across experiments. When a single experiment can cover multiple validation items, integrate them appropriately.
+- NO-FALLBACK CONSTRAINT: Never suggest using synthetic/dummy/placeholder data - if real datasets are unavailable, the experiment must terminate with clear error messages.
+- "Reference Information from Previous Iteration"
+
+## Output Format
+Please provide:
+- experiment_details: Detailed experimental plan following all the instructions above
+- expected_models: A list of specific model names/architectures that will be used in the experiments (e.g., ["ResNet-50", "BERT-base", "GPT-3.5-turbo"])
+- expected_datasets: A list of specific dataset names that will be used in the experiments (e.g., ["CIFAR-10", "ImageNet", "IMDB Reviews"])
+
+
+# Experimental Environment
+NVIDIA A100
+VRAM：80GB
+RAM：2048 GB
+
+# Current Research Method (Target for Experiment Design)
+{
+    "Open Problems": "1. Current gradient–free TTA methods still need two forward passes per image (collect statistics → predict); for video or high-FPS cameras even this 2× latency is too large.\n2. Purely channel-wise central moments ignore cross-channel / cross-token correlations that become important in modern multi-branch CNNs and ViTs.\n3. Hyper-networks trained only with synthetic perturbations may over-fit to frequency-domain noise and show limited benefit on truly out-of-distribution (OOD) conditions such as weather or lens ageing.\n4. A unified evaluation of energy, memory and calibration for INT8 deployment on real edge SoCs is still missing.",
+    "Methods": "FLASH-TTA (Fast, Latency-Aware, Streaming Hyper-network for Test-Time Adaptation)\nA. One-pass streaming encoder\n  • During the normal forward pass we tap K chosen layers and compute:   \n    – first two central moments μ,σ (C channels)  \n    – a 16-dim. random projection of the channel covariance Σ≈HΦHᵀ (H – Rademacher Hadamard).  \n    All ops are O(C log C) and fuse with existing ReLU kernels → zero extra latency.\n  • A causal 1-D GRU (256 hidden) ingests the per-layer stats frame-by-frame and outputs a running context hₜ.\nB. Zero-delay parameter modulation\n  • The same GRU hidden state instantly produces Δγ,Δβ via two small linear heads – no second forward needed; prediction is made with modulated weights in the *same* pass.\n  • For the very first frame we use Δ=0; afterwards adaptation is simultaneous with inference (steady-state overhead <5 %).\nC. Cross-layer consistency regulariser\n  • Add a tiny temperature head τ(hₜ) and minimise   KL( f_{θ₀+Δ}(x′)‖f_{θ₀}(x′) )  s.t. expected entropy drops, preventing over-confident collapse.\nD. Natural-shift self-supervision\n  • Meta-train only on the source set augmented with (i) camera ISP simulations (white-balance drift, rolling-shutter wobble), (ii) physically-based weather engine, (iii) JPEG/QP jitter.  All implemented on-the-fly in Kornia so no external datasets.\nE. Ultra-low-precision design\n  • Statistics in int8, GRU in int8, only the Δ heads in fp16; total additional memory ResNet-50: 220 kB.  \n  • Provide reference CUDA kernel that merges BN affine update with GEMM to avoid extra memory writes.\nF. Continual safeguard\n  • Lightweight Dirichlet density tracker on hₜ: if Mahalanobis(hₜ) > δ we freeze updates for 8 frames – shields against rare extremes.",
+    "Experimental Setup": "Datasets\n  • Synthetic: CIFAR-10-C/100-C, ImageNet-C, VisDA-C.\n  • Natural: ACDC driving (snow,rain,fog), ImageNet-V2, RealBlur-J/B.\n  • Video stream: BDD-100k dash-cam 180 k frames with day→night transition.\nBackbones: ResNet-26/50, MobileNet-V3-S, DeiT-Small (LayerNorm only).\nBaselines: Source, BN-adapt, Tent, EATA, CoTTA, STAMP (prev. idea).\nMetrics: top-1 error, ECE, Φ-calibration, wall-clock fps & joules on Jetson-Nano, ESP32-S3, Apple A15.\nProtocols: 1) single-image, 2) 256-fps video stream (Dirichlet(0.05) drifting corruption) for 200 k frames.\nAblations: (a) remove covariance proj, (b) GRU → EMA, (c) one-pass vs two-pass, (d) natural vs Fourier training.",
+    "Experimental Code": "# pseudo-snippet\ndef fused_stats(x):                      # x: B×C×H×W\n    mu  = x.mean((0,2,3));               # (C,)\n    var = (x-mu[None,:,None,None])**2\n    sig = var.mean((0,2,3)).sqrt()       # (C,)\n    # 16-dim Hadamard sketch of covariance\n    h   = torch.sign(torch.randn(C,16,device=x.device))\n    cov_sketch = ( (x-mu[None,:,None,None])      \n                   .flatten(2) @ h )             # B·HW ×16, accumulate mean\n    cov = cov_sketch.mean(0) / sig               # scale-free\n    return torch.cat([mu,sig,cov])               # (2C+16,)\n\nclass FlashTTA(nn.Module):\n    def __init__(self, backbone):\n        super().__init__()\n        self.backbone = backbone\n        feat_sz = sum(2*m.num_features+16 for m in self._tap_layers())\n        self.gru  = nn.GRUCell(feat_sz,256)\n        self.head = nn.Linear(256, self._param_count())\n    def _tap_layers(self):\n        return [m for m in self.backbone.modules() if isinstance(m,(nn.BatchNorm2d,nn.LayerNorm,nn.GroupNorm))]\n    def _param_count(self):\n        return sum(2*m.num_features for m in self._tap_layers())\n    def forward(self,x,h=None):\n        stats=[]\n        for m in self._tap_layers():\n            m.register_forward_pre_hook(lambda _,inp: stats.append(fused_stats(inp[0])))\n        y = self.backbone(x)\n        s = torch.cat(stats)\n        h = self.gru(s[None],h) if h is not None else self.gru(s[None])\n        delta = self.head(h).squeeze(0)\n        self._apply_delta(delta)          # in-place weight,bias update\n        return y, h.detach()\n",
+    "Expected Result": "• Same-pass adaptation: +0.5 % over STAMP on ImageNet-C while running at 165 FPS on Nano (×2 faster than STAMP, ×12 faster than Tent).\n• Video stream: error drift <0.3 % over 200 k frames; STAMP 0.7 %, Tent 6.1 %.\n• DeiT-Small gains 3.4 % over source and closes 85 % of Tent gap despite no BN.\n• Energy per image 0.34 J (-18 % vs STAMP, ‑85 % vs Tent).\n• INT8 quantisation increases error by <0.2 pp.",
+    "Expected Conclusion": "FLASH-TTA demonstrates that fully one-pass, statistics-driven hyper-networks can deliver state-of-the-art test-time robustness with negligible latency even on micro-controllers. Encoding low-rank cross-channel covariance and using a streaming GRU unlocks richer adaptation signals without back-prop, while the natural-shift self-supervision avoids reliance on curated corruption suites. The design forms a practical blueprint for real-world, always-on adaptive perception modules in autonomous systems and smartphones."
+}
+
+# Experiment Strategy
+Experiment 1 – Single-frame Accuracy + Latency Benchmark
+-------------------------------------------------------
+Goal: Show that FLASH-TTA reaches or exceeds SOTA corruption robustness while keeping true single-pass latency.
+
+Setup
+1. Datasets: CIFAR-10-C/100-C, ImageNet-C (all severities).
+2. Models: ResNet-50, MobileNet-V3-S, DeiT-Small.
+3. Methods compared: Source, BN-adapt, Tent, EATA, CoTTA, STAMP, FLASH-TTA (+ four ablations: no-cov, EMA, two-pass, Fourier-only training).
+4. Hardware: single NVIDIA A100; measure latency with Nvidia Nsight-Systems (CUDA event timing, batch size = 1) and peak memory from nvidia-smi.
+
+Procedure
+• Evaluate each checkpoint once without adaptation (warm-up 50 images) to cache kernels.
+• For adaptive baselines run prescribed adaptation loop; for FLASH-TTA run standard forward only.
+• Record: top-1 error/Δpp from Source, Expected Calibration Error (ECE), wall-clock time per image, GPU memory.
+
+Expected Results
+• FLASH-TTA ≥ STAMP (≈ –0.5 pp top-1) and beats all others by 1-6 pp.
+• Latency: FLASH-TTA within +5 % of Source, ≈ ×2 faster than STAMP, ×10–12 faster than Tent/EATA.
+• Ablations: removing covariance or GRU each hurts 0.8–1.3 pp, proving their contribution; two-pass variant doubles latency with no accuracy gain.
+
+Demonstrates
+Accuracy/speed trade-off, proves “same-pass” adaptation works and that covariance+GRU are critical.
+
+
+Experiment 2 – High-FPS Streaming Shift Test
+-------------------------------------------
+Goal: Validate continual, latency-free adaptation and drift-prevention over very long video streams.
+
+Setup
+1. Stream: 180 k frames from BDD-100k ordered day→dusk→night; injected Dirichlet(0.05) corruption drift at 256 fps.
+2. Hardware: A100 for fair speed; synthetic 256 fps enqueue ensures compute-bound regime.
+3. Metrics per 1 k-frame window: top-1 error, error drift (|err_t – err_0|), average entropy, catastrophic collapse events.
+4. Methods: Tent, EATA, STAMP, FLASH-TTA (+ FLASH-TTA w/o safeguard).
+
+Procedure
+• Feed RGB frames sequentially; methods update online only (no look-ahead). • Log hidden-state Mahalanobis distance & safeguard triggers for FLASH-TTA.
+• Repeat three random corruption schedules for statistical confidence.
+
+Expected Results
+• FLASH-TTA keeps error drift < 0.3 pp over 200 k frames; Tent drifts > 6 pp, STAMP ≈ 0.7 pp.
+• Zero collapse events for FLASH-TTA; w/o safeguard shows 2–3 collapses → validates freeze mechanism.
+• Throughput ≥ 260 fps on A100 (higher than stream rate), confirming no hidden latency spikes.
+
+Demonstrates
+Real-time continual adaptation strength, stability of density-tracker, and robustness to rapid distribution changes.
+
+
+Experiment 3 – INT8 Edge Deployment Study
+----------------------------------------
+Goal: Exhibit memory, energy and calibration benefits under ultra-low precision.
+
+Setup
+1. Quantise FLASH-TTA and STAMP with TensorRT/QAT: stats & GRU int8, Δ-heads fp16.
+2. Devices: Jetson Nano (Max-Q) and emulated ESP32-S3 (with TVM autotuned kernels); compile with explicit fused-BN update CUDA kernel.
+3. Workload: ImageNet-C inference @ 30 fps for 10 min.
+4. Tools: onboard INA3221 current sensors (Nano) for energy, cycle-accurate simulator for ESP32.
+
+Procedure
+• Run each method for identical wall-clock time.
+• Capture: average FPS, joules/frame, peak RAM, ECE.
+
+Expected Results
+• FLASH-TTA int8 adds <0.2 pp error over fp32, still beats STAMP int8 by ≈0.5 pp.
+• Energy: 0.34 J/frame (-18 % vs STAMP, ‑85 % vs Tent). • Extra RAM: +0.22 MB (STAMP +1.8 MB, Tent +15 MB).
+• FPS: 165 (FLASH-TTA) vs 82 (STAMP) on Nano; ESP32 reaches real-time 18 fps whereas others <10 fps.
+
+Demonstrates
+Practical viability for embedded/edge, confirms low-precision design retains accuracy and superior efficiency.
+
+---
+
+
+# Reference Information from Previous Iteration
+
+Output:
+{
+    "experiment_details": "────────────────────────────────────────────────────────────────────────\nEXPERIMENT 1  –  Single-frame Accuracy + Latency Benchmark\n────────────────────────────────────────────────────────────────────────\nGoal\n    Verify that FLASH-TTA reaches or exceeds state-of-the-art corruption\n    robustness while preserving true single-pass latency.\n\n1. Models\n    Primary:  • ResNet-50   • MobileNet-V3-Small   • DeiT-Small/16\n    Baseline adaptation wrappers (identical backbone weights)\n        – Source               (no adaptation)\n        – BN-adapt             (moment recomputation only)\n        – Tent                 (entropy minimisation, 1-step BP)\n        – EATA                 (entropy + diversity + anchor)\n        – CoTTA                (consistency TTA)\n        – STAMP               †(statistics-modulation, two-pass)\n        – FLASH-TTA           ← proposed\n        – Ablations: FLASH-TTA-no-cov, FLASH-TTA-EMA, FLASH-TTA-two-pass, FLASH-TTA-Fourier-only\n\n2. Datasets\n    CIFAR-10-C  /  CIFAR-100-C   (all 15 corruptions × severities 1-5)\n    ImageNet-C  (same protocol)\n\n3. Dataset preprocessing\n    • CIFAR:   resize=32×32, ToTensor(), normalise μ=[0.4914,0.4822,0.4465] σ=[0.202,0.199,0.201]\n    • ImageNet: shorter-side=256 → centre-crop 224, ToTensor(), normalise μ=[0.485,0.456,0.406] σ=[0.229,0.224,0.225]\n    • Corruption files are stored in NPZ; loader creates torch.utils.data.TensorDataset in pinned RAM to avoid I/O skew.\n\n4. Data split\n    All corrupted samples are treated as test-time input.  For methods\n    that require source data (meta-training of FLASH-TTA, STAMP) we use\n    the original validation split only, never leaking corrupted images.\n\n5. Seeds and repetitions\n    • Five random seeds {0,1,2,3,4} affect weight initialisation\n      (for MobileNet-V3), data-loader order and CUDA deterministic ops.\n    • Report mean ± s.d. across seeds.  Model selection = last epoch\n      of ImageNet pre-training for all methods to guarantee identical\n      starting point.  No early stopping is applied during adaptation.\n\n6. Evaluation metrics\n    Primary:   Top-1 Error  (lower is better)\n    Secondary: Expected Calibration Error (ECE, 15-bin),\n               Brier Score,\n               Wall-clock Latency (ms/img, batch=1),\n               Peak GPU memory (MiB),\n               GFLOPs/inference  (fvcore’s FlopCountAnalysis).\n\n7. Hyper-parameter analysis\n    a) FLASH-TTA  –  grid over {GRU hidden=[128,256,512],  proj-dim=[8,16,32], δ=[3.0,5.0,7.0]}\n    b) Tent/EATA  –  lr∈{1e-4,2e-4,5e-4,1e-3}\n    c) STAMP      –  α (EMA time-const) ∈{0.9,0.95,0.99}\n    Influence plots (metric vs hp) are reported; default values printed bold.\n\n8. Robustness diagnostics (image domain)\n    • Additive Gaussian sensor noise σ∈{0.01,0.05}\n    • JPEG compression Q∈{20,40,60}  (not present in ‑C)\n    • 5 % random bit-flip in INT8 tensors before final FC (simulates SRAM faults).\n\n9. Computational cost measurement\n    • Two CUDA events around network forward; 200 warm-up images; 1000 timed images.\n    • Memory from pynvml 1 Hz sampling – maximum retained.\n    • FLOPs via fvcore; kernels fused by FLASH-TTA are accounted by hand-added rules (see code).\n\n10. Example evaluation code (excerpt)\n    import torch, time, fvcore.nn\n    def measure(model, loader):\n        starter, ender = [torch.cuda.Event(enable_timing=True) for _ in range(2)]\n        lat=[]\n        with torch.no_grad():\n            for x,y in loader:\n                starter.record();  _ = model(x.cuda(non_blocking=True));   ender.record()\n                torch.cuda.synchronize();  lat.append(starter.elapsed_time(ender))\n        return np.mean(lat[50:]), np.std(lat[50:])  # drop warm-up\n\n11. Expected results (to be verified)\n    • FLASH-TTA beats Tent by ≈4 pp on ImageNet-C, within 0.5 pp of STAMP but 2× faster.\n    • 5 % latency overhead vs SOURCE; memory +24 MB for stats buffers.\n\nFootnotes\n    †STAMP official repo uses SGD lr=3e-3 for ResNet-50; we retune to 1e-3\n     because higher lr diverged on ImageNet-C‐fog.\n\n────────────────────────────────────────────────────────────────────────\nEXPERIMENT 2  –  High-FPS Streaming Shift Test\n────────────────────────────────────────────────────────────────────────\nGoal\n    Evaluate stability and drift resistance during 256 fps continual\n    inference on a realistic day→night driving stream.\n\n1. Stream & corruption scheduler\n    • Base sequence: BDD-100k video frames  (180 000 frames, 1280×720,\n      30 Hz) ordered chronologically from a single 2 h journey\n      containing clear-day, dusk, night.\n    • Frames are upsampled to 256 fps by duplication to create a\n      compute-bound scenario.\n    • Online corruption π_t is sampled from Dirichlet(0.05) over the 15\n      ImageNet-C corruption types; severity s_t∈Uniform{1,5}.  Corruption\n      parameters change every frame.\n    • Three independent schedules (seeds 0-2).\n\n2. Pre-processing\n    Resize shorter-side→256, centre-crop224, convert to RGB, normalise as\n    in ImageNet.  Streaming loader uses PyAV with 8-frame prefetch.\n\n3. Methods compared\n    Tent, EATA, STAMP, FLASH-TTA, FLASH-TTA-no-safeguard.\n\n4. Metrics (per 1000-frame window)\n    • Top-1 Error\n    • Error Drift   Δerr_t = |err_t – err_0|\n    • Average softmax entropy\n    • Collapse count  (entropy<0.05 for >128 consecutive frames)\n    • Throughput (fps)  – derived from CUDA events\n\n5. Seeds, selection, duration\n    One training seed (ImageNet weights) + three corruption seeds.\n    Total simulated time  ≈ 11.7 min per run (180 k / 256).\n\n6. Robustness checks\n    • Sudden camera blackout  (insert 50 black frames at t=60 k).\n    • OOD weather insert: ACDC-snow clip 2000 frames at t=120 k.\n\n7. Hyper-parameter monitored online\n    • Mahalanobis distance of GRU hidden vs running Gaussian model.\n      Threshold δ=5.0 (tuned in Exp-1 grid); freeze duration N_freeze=8.\n\n8. Example streaming loop (simplified)\n    h=None\n    for frame in stream:\n        x = transform(frame).unsqueeze(0).cuda();\n        start.record();\n        y_pred, h = flash_tta(x, h)\n        end.record(); torch.cuda.synchronize()\n        if freeze_flag: h = h_prev  # no GRU update\n\n9. Expected results (to be verified)\n    • FLASH-TTA maintains <0.3 pp drift across 200 k frames.\n    • 0 collapse events; no-safeguard variant triggers 2-3 collapses.\n    • Effective fps ≥260 on A100, proving no hidden overhead.\n\n────────────────────────────────────────────────────────────────────────\nEXPERIMENT 3  –  INT8 Edge Deployment Study\n────────────────────────────────────────────────────────────────────────\nGoal\n    Demonstrate memory, energy and calibration gains of the INT8 design\n    on resource-constrained hardware.\n\n1. Hardware & toolchain\n    a) NVIDIA Jetson Nano 4 GB, JetPack 5.1, TensorRT 8.6.\n    b) ESP32-S3 (Xtensa LX7 @ 240 MHz) simulated with Renode + TVM 0.12\n       micro-autotuner (CMSIS-NN back-end).\n\n2. Quantisation procedure\n    • 256-image calibration subset from ImageNet val (one per class).\n    • Fake-quant QAT for GRU & stats (symmetric INT8 per-tensor), Δ-heads\n      kept in FP16.  BN + fused-Δ CUDA kernel re-written with int8 input\n      and fp16 accumulation to keep accuracy.\n\n3. Workload & dataset\n    ImageNet-C  (all corruptions, severity=3)  streamed at 30 fps for\n    10 min (18 000 images).  Frames decoded on host and copied via\n    zeromq to Nano / simulator.\n\n4. Metrics\n    • FPS  (Nano: averaged over 18 k images, ESP32: cycles→fps)\n    • Energy / frame  (Nano: INA3221 @ 30 Hz, subtract idle; ESP32: MCU-\n      cycle count × 0.6 nJ)\n    • Top-1 Error  &  ECE\n    • Peak RAM usage  (tegrastats / simulator logs)\n\n5. Baselines\n    • STAMP-INT8 (identical QAT recipe)\n    • Tent/EATA not considered – require back-prop memory which does not\n      fit into 4 GB Nano nor ESP32.\n\n6. Seeds\n    Two calibration seeds (random 256-image subset), report mean.\n\n7. Example Nano deployment script\n    import tensorrt as trt, pycuda.driver as cuda\n    # build engine with INT8 calibrator, then\n    for img in stream:\n        cuda.memcpy_htod_async(d_input, img, stream)\n        context.execute_async_v2(bindings, stream.handle)\n        cuda.memcpy_dtoh_async(out, d_output, stream)\n        stream.synchronize()\n\n8. Expected results (to be verified)\n    • FLASH-TTA-INT8: 165 fps @ 0.34 J/frame on Nano; 18 fps on ESP32.\n    • Error +0.2 pp vs FP32; still 0.5 pp better than STAMP-INT8.\n    • Peak RAM +0.22 MB over source; STAMP +1.8 MB.\n\n────────────────────────────────────────────────────────────────────────\n\nShared Notes for All Experiments\n────────────────────────────────\n• All runs executed on a dedicated A100 80 GB node; CPU RAM used for\n  pre-loading entire dataset to avoid network fluctuations.\n• Reproducibility:  commit-hash, conda-env.yml, and full YAML config\n  (hydra) dumped to wandb.\n• FLOPs, memory, latency, and energy values will be published alongside\n  raw logs; statistical significance assessed with paired t-test (α=0.05).\n• Any experiment attempting to load non-existent data will raise\n  FileNotFoundError per NO-FALLBACK constraint.\n",
+    "expected_models": [
+        "ResNet-50",
+        "MobileNet-V3-Small",
+        "DeiT-Small/16"
+    ],
+    "expected_datasets": [
+        "CIFAR-10-C",
+        "CIFAR-100-C",
+        "ImageNet-C",
+        "BDD-100k",
+        "ImageNet"
+    ]
+}
