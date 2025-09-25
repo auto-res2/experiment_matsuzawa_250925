@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The proposed methodology, Interval Bound Interpolation (IBI), integrates Interval Bound Propagation (IBP) into few-shot learning. For each training task, a small epsilon-neighborhood is defined around input samples. IBP is then used to obtain axis-aligned bounding boxes around the mapping of this neighborhood in the feature embedding space. The training objective minimizes a weighted sum of three losses: the standard cross-entropy classification loss (LCE), and two new losses (LLB and LUB) which measure the Euclidean distance between the feature embedding and its lower and upper interval bounds, respectively. Dynamic loss weighting, using a softmax across the current loss values, is employed to adaptively balance the importance of these three losses during training. For task augmentation, IBI creates artificial tasks by interpolating between an original task's feature embedding and its corresponding IBP-derived lower or upper bound. This interpolation is performed on both support and query instances in the embedding space using a Beta distribution to sample interpolation coefficients. The mean of the classification losses for the original and artificial tasks is then minimized.
+
+# GitHub URLs List
+['https://github.com/SankhaSubhra/maml-ibp-ibi']
+Output:
+{
+    "index": 0
+}
