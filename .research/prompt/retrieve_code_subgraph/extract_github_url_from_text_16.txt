@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The methodology involves a theoretical derivation of a conservation law for GAT gradient flow dynamics, building on the concept of neuron-wise balancedness from traditional deep neural networks. For GATs with positive homogeneous activation functions (e.g., ReLU) and shared feature weights, the law states that the structure of gradients is conserved, leading to the invariance: d/dt(||Wl[i, :]||^2 		− ||al[i]||^2) = d/dt(||Wl+1[:, i]||^2). An initialization is defined as balanced if a constant 'c' derived from this law is zero. Based on this theory, a balancing procedure is proposed: 1) Initialize attention parameters to zero. 2) Scale initial feature weights in the first layer with a hyperparameter. 3) Recursively scale subsequent layer weights to ensure the norm conservation equality holds across layers. The paper also introduces a Balanced Orthogonal Initialization using a Looks-Linear-Orthogonal (LLortho) structure for feature weights to enhance dynamical isometry.
+
+# GitHub URLs List
+['https://github.com/Diego999/pyGAT']
+Output:
+{
+    "index": 1
+}
