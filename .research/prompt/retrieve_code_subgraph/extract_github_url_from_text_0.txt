@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+GACT formalizes ACT for computational graphs and analyzes a linearized version of its approximate gradient to prove convergence for generic architectures, even with biased stochastic gradients. It automatically determines per-tensor compression rates by inferring sensitivity (cl) at runtime using a numerical algorithm that estimates the impact on gradients, approximating an integer program. This involves using a stochastic rounding quantizer with specific assumptions (element-wise uncorrelated results, compression error structure). The system is implemented as a PyTorch library using low-level hooks to capture and compress only activation tensors, avoiding duplication via tensor footprints. It integrates with memory optimizations like parallel swap/prefetch for compressed tensors, gradient checkpointing (quantizing segment inputs and recompute activations), and memory-efficient self-attention, offering multiple optimization levels.
+
+# GitHub URLs List
+['https://github.com/LiuXiaoxuanPKU/GACT-ICML']
+Output:
+{
+    "index": 0
+}
