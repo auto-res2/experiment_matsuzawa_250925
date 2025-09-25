@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+StructComp operates by first performing 'node compression.' This involves using the METIS algorithm to obtain a graph partition matrix (P), where nodes are grouped into clusters. Compressed features (Xc) are then calculated as the mean of node features within each cluster (Xc = PᵀX). A compressed graph (Ac = PᵀAP) is also constructed for sampling. During training, the GNN encoder is replaced by an MLP encoder, which takes Xc as input. For single-view GCL, positive and negative pairs are sampled from the compressed graph Ac. For multi-view GCL, a novel 'DropMember' data augmentation method is introduced: for each community, a random portion of its nodes are dropped, and new community features are recalculated (X'c) to generate a perturbed view. Contrastive learning then occurs between Xc and X'c. In the inference phase, the trained MLP parameters are transferred back to the original GNN encoder, which then processes the complete graph structure and node features to produce embeddings for all nodes. The framework is theoretically supported by showing that the compressed contrastive loss approximates the original GCL loss and introduces an additional regularization term.
+
+# GitHub URLs List
+['https://github.com/allenhaozhu/COLES', 'https://github.com/CRIPAC-DIG/GRACE', 'https://github.com/hengruizhang98/CCA-SSG', 'https://github.com/pyg-team/pytorch_geometric', 'https://github.com/pyg-team/pytorch_geometric', 'https://github.com/cornell-zhang/GraphZoom']
+Output:
+{
+    "index": 5
+}
