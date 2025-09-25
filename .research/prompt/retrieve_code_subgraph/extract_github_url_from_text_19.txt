@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+TENT optimizes the model during testing by minimizing the Shannon entropy of its predictions. The adaptation is achieved by modulating features, specifically by repurposing and updating the affine transformation parameters (scale $\gamma$ and shift $\beta$) and estimating normalization statistics (mean $\mu$ and standard deviation $\sigma$) of Batch Normalization layers. During each batch, normalization statistics are estimated in the forward pass, and the affine parameters are updated via gradient descent on the entropy loss in the backward pass. Only these low-dimensional, channel-wise affine parameters (which constitute less than 1% of total model parameters) are optimized, while the rest of the model parameters remain fixed. This approach ensures efficiency and prevents divergence from initial training. The method does not alter the original model training process.
+
+# GitHub URLs List
+['https://github.com/DequanWang/tent']
+Output:
+{
+    "index": 0
+}
