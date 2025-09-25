@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The core methodology involves modifying the self-attention mechanism to allow the model to produce very small (or exact zero) attention function outputs without generating outliers. The first method, **Clipped Softmax**, replaces the standard softmax with `clipped_softmax(x; ζ, γ) := clip ((ζ − γ) · softmax(x) +γ, 0, 1)`, where `γ ≤ 0` and `ζ ≥ 1` are stretch factors. This allows exact zeros/ones with a finite input range and prevents outlier growth by halting gradients for clipped values. The second method, **Gated Attention**, introduces an explicit conditional gating mechanism: `Gated_attention(x) := sigmoid (G(x)) ⊙ softmax (Q(x)K(x)T/√dhead) V(x)`. `G(x)` is a lightweight, per-head gating function (e.g., a single linear layer) learned jointly with the model. For quantization, post-training quantization (PTQ) is used, employing uniform affine quantization with symmetric weights and asymmetric activations, and a static activation range determined by running min-max estimation.
+
+# GitHub URLs List
+['https://github.com/rwightman/pytorch-image-models']
+Output:
+{
+    "index": 0
+}
