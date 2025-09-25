@@ -555,6 +555,68 @@
       }
     }
   ],
+  "reference_research_study_list": [
+    {
+      "title": "Multiscale deep equilibrium models"
+    },
+    {
+      "title": "Mixmatch: A holistic approach to semi-supervised learning"
+    },
+    {
+      "title": "Autodial: Automatic domain alignment layers"
+    },
+    {
+      "title": "Domain adaptation in the absence of source domain data"
+    },
+    {
+      "title": "The cityscapes dataset for semantic urban scene understanding"
+    },
+    {
+      "title": "A baseline for few-shot image classiﬁcation"
+    },
+    {
+      "title": "Unsupervised visual representation learning by context prediction"
+    },
+    {
+      "title": "Decaf: A deep convolutional activation feature for generic visual recognition"
+    },
+    {
+      "title": "Learning by transduction"
+    },
+    {
+      "title": "Unsupervised domain adaptation by backpropagation"
+    },
+    {
+      "title": "Generalisation in humans and deep neural networks"
+    },
+    {
+      "title": "Imagenet-trained CNNs are biased towards texture; increasing shape bias improves accuracy and robustness"
+    },
+    {
+      "title": "Unsupervised representation learning by predicting image rotations"
+    },
+    {
+      "title": "Accurate, large minibatch sgd: training imagenet in 1 hour"
+    },
+    {
+      "title": "Semi-supervised learning by entropy minimization"
+    },
+    {
+      "title": "Covariate shift and local learning by distribution matching"
+    },
+    {
+      "title": "On calibration of modern neural networks"
+    },
+    {
+      "title": "Deep residual learning for image recognition"
+    },
+    {
+      "title": "Benchmarking neural network robustness to common corruptions and perturbations"
+    },
+    {
+      "title": "Augmix: A simple data processing method to improve robustness and uncertainty"
+    }
+  ],
   "new_method": {
     "method": "{\n    \"Open Problems\": \"1. Current gradient–free TTA methods still need two forward passes per image (collect statistics → predict); for video or high-FPS cameras even this 2× latency is too large.\\n2. Purely channel-wise central moments ignore cross-channel / cross-token correlations that become important in modern multi-branch CNNs and ViTs.\\n3. Hyper-networks trained only with synthetic perturbations may over-fit to frequency-domain noise and show limited benefit on truly out-of-distribution (OOD) conditions such as weather or lens ageing.\\n4. A unified evaluation of energy, memory and calibration for INT8 deployment on real edge SoCs is still missing.\",\n    \"Methods\": \"FLASH-TTA (Fast, Latency-Aware, Streaming Hyper-network for Test-Time Adaptation)\\nA. One-pass streaming encoder\\n  • During the normal forward pass we tap K chosen layers and compute:   \\n    – first two central moments μ,σ (C channels)  \\n    – a 16-dim. random projection of the channel covariance Σ≈HΦHᵀ (H – Rademacher Hadamard).  \\n    All ops are O(C log C) and fuse with existing ReLU kernels → zero extra latency.\\n  • A causal 1-D GRU (256 hidden) ingests the per-layer stats frame-by-frame and outputs a running context hₜ.\\nB. Zero-delay parameter modulation\\n  • The same GRU hidden state instantly produces Δγ,Δβ via two small linear heads – no second forward needed; prediction is made with modulated weights in the *same* pass.\\n  • For the very first frame we use Δ=0; afterwards adaptation is simultaneous with inference (steady-state overhead <5 %).\\nC. Cross-layer consistency regulariser\\n  • Add a tiny temperature head τ(hₜ) and minimise   KL( f_{θ₀+Δ}(x′)‖f_{θ₀}(x′) )  s.t. expected entropy drops, preventing over-confident collapse.\\nD. Natural-shift self-supervision\\n  • Meta-train only on the source set augmented with (i) camera ISP simulations (white-balance drift, rolling-shutter wobble), (ii) physically-based weather engine, (iii) JPEG/QP jitter.  All implemented on-the-fly in Kornia so no external datasets.\\nE. Ultra-low-precision design\\n  • Statistics in int8, GRU in int8, only the Δ heads in fp16; total additional memory ResNet-50: 220 kB.  \\n  • Provide reference CUDA kernel that merges BN affine update with GEMM to avoid extra memory writes.\\nF. Continual safeguard\\n  • Lightweight Dirichlet density tracker on hₜ: if Mahalanobis(hₜ) > δ we freeze updates for 8 frames – shields against rare extremes.\",\n    \"Experimental Setup\": \"Datasets\\n  • Synthetic: CIFAR-10-C/100-C, ImageNet-C, VisDA-C.\\n  • Natural: ACDC driving (snow,rain,fog), ImageNet-V2, RealBlur-J/B.\\n  • Video stream: BDD-100k dash-cam 180 k frames with day→night transition.\\nBackbones: ResNet-26/50, MobileNet-V3-S, DeiT-Small (LayerNorm only).\\nBaselines: Source, BN-adapt, Tent, EATA, CoTTA, STAMP (prev. idea).\\nMetrics: top-1 error, ECE, Φ-calibration, wall-clock fps & joules on Jetson-Nano, ESP32-S3, Apple A15.\\nProtocols: 1) single-image, 2) 256-fps video stream (Dirichlet(0.05) drifting corruption) for 200 k frames.\\nAblations: (a) remove covariance proj, (b) GRU → EMA, (c) one-pass vs two-pass, (d) natural vs Fourier training.\",\n    \"Experimental Code\": \"# pseudo-snippet\\ndef fused_stats(x):                      # x: B×C×H×W\\n    mu  = x.mean((0,2,3));               # (C,)\\n    var = (x-mu[None,:,None,None])**2\\n    sig = var.mean((0,2,3)).sqrt()       # (C,)\\n    # 16-dim Hadamard sketch of covariance\\n    h   = torch.sign(torch.randn(C,16,device=x.device))\\n    cov_sketch = ( (x-mu[None,:,None,None])      \\n                   .flatten(2) @ h )             # B·HW ×16, accumulate mean\\n    cov = cov_sketch.mean(0) / sig               # scale-free\\n    return torch.cat([mu,sig,cov])               # (2C+16,)\\n\\nclass FlashTTA(nn.Module):\\n    def __init__(self, backbone):\\n        super().__init__()\\n        self.backbone = backbone\\n        feat_sz = sum(2*m.num_features+16 for m in self._tap_layers())\\n        self.gru  = nn.GRUCell(feat_sz,256)\\n        self.head = nn.Linear(256, self._param_count())\\n    def _tap_layers(self):\\n        return [m for m in self.backbone.modules() if isinstance(m,(nn.BatchNorm2d,nn.LayerNorm,nn.GroupNorm))]\\n    def _param_count(self):\\n        return sum(2*m.num_features for m in self._tap_layers())\\n    def forward(self,x,h=None):\\n        stats=[]\\n        for m in self._tap_layers():\\n            m.register_forward_pre_hook(lambda _,inp: stats.append(fused_stats(inp[0])))\\n        y = self.backbone(x)\\n        s = torch.cat(stats)\\n        h = self.gru(s[None],h) if h is not None else self.gru(s[None])\\n        delta = self.head(h).squeeze(0)\\n        self._apply_delta(delta)          # in-place weight,bias update\\n        return y, h.detach()\\n\",\n    \"Expected Result\": \"• Same-pass adaptation: +0.5 % over STAMP on ImageNet-C while running at 165 FPS on Nano (×2 faster than STAMP, ×12 faster than Tent).\\n• Video stream: error drift <0.3 % over 200 k frames; STAMP 0.7 %, Tent 6.1 %.\\n• DeiT-Small gains 3.4 % over source and closes 85 % of Tent gap despite no BN.\\n• Energy per image 0.34 J (-18 % vs STAMP, ‑85 % vs Tent).\\n• INT8 quantisation increases error by <0.2 pp.\",\n    \"Expected Conclusion\": \"FLASH-TTA demonstrates that fully one-pass, statistics-driven hyper-networks can deliver state-of-the-art test-time robustness with negligible latency even on micro-controllers. Encoding low-rank cross-channel covariance and using a streaming GRU unlocks richer adaptation signals without back-prop, while the natural-shift self-supervision avoids reliance on curated corruption suites. The design forms a practical blueprint for real-world, always-on adaptive perception modules in autonomous systems and smartphones.\"\n}",
     "experimental_design": {
