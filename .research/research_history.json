@@ -732,6 +732,15 @@
             }
           ]
         }
+      },
+      "experiment_code": {
+        "train_py": "# Cannot generate train.py because the original experiment code was not provided.",
+        "evaluate_py": "# Cannot generate evaluate.py because the original experiment code was not provided.",
+        "preprocess_py": "# Cannot generate preprocess.py because the original experiment code was not provided.",
+        "main_py": "# Cannot generate main.py because the original experiment code was not provided.",
+        "pyproject_toml": "# Cannot generate pyproject.toml because the original experiment code was not provided.",
+        "smoke_test_yaml": "# Cannot generate smoke_test.yaml because the original experiment code was not provided.",
+        "full_experiment_yaml": "# Cannot generate full_experiment.yaml because the original experiment code was not provided."
       }
     }
   },
@@ -784,5 +793,6 @@
         "significance_score": 8
       }
     }
-  ]
+  ],
+  "experiment_iteration": 1
 }
