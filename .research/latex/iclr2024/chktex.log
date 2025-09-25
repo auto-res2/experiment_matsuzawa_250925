@@ -1,0 +1,153 @@
+Warning 13 in paper.tex line 38: Intersentence spacing (`\@') should perhaps be used.
+\title{FLASH-TTA: One-Pass Hyper-Network Test-Time Adaptation Under a Strict Latency Budget}  
+                ^
+Warning 2 in paper.tex line 50: Non-breaking space (`~') should have been used.
+We study fully test-time adaptation (TTA) for vision models that must keep pace with high-frame-rate sensors and energy-constrained hardware. Existing gradient-free statistics-modulation methods still require two forward passes per image, whereas gradient-based alternatives such as Tent \cite{wang-2020-tent} additionally incur a backward pass; either choice violates sub-frame latency budgets and hampers edge deployment. We introduce FLASH-TTA, a streaming hyper-network that (i) piggy-backs the computation of first- and second-order channel statistics plus a 16-dimensional Hadamard sketch of the covariance on the ordinary forward pass, (ii) feeds these statistics to an int8 causal GRU that outputs per-layer affine deltas, and (iii) applies the deltas in-place so that prediction and adaptation share exactly one pass. A cross-layer KL regulariser and a Dirichlet-based safeguard prevent over-confident collapse, while the entire controller adds only 220 kB on ResNet-50 and is quantisation-ready. Reproducing the CIFAR-10-C benchmark on an NVIDIA A100 confirmed the desired \(<5\%\) latency overhead (3.1 ms absolute) and 240 MB peak-memory increase, but accuracy remained at chance level (10.3\%) because a ten-way classifier head was unintentionally left un-trained. We dissect this failure, relate it to assumptions made by prior TTA literature, and outline the steps required for conclusive robustness evaluation.  
+                                                                                                                                                                                                                                                                                               ^
+Warning 24 in paper.tex line 54: Delete this space to maintain correct pagereferences.
+\label{sec:intro}  
+^
+Warning 2 in paper.tex line 55: Non-breaking space (`~') should have been used.
+Deep models perform impressively when test data resemble the source distribution, yet real-world deployments seldom enjoy such stability. Weather, lens ageing, on-device quantisation, and user behaviour all shift input statistics, degrading accuracy. Test-time adaptation (TTA) tackles this challenge by updating a small subset of parameters online without labels. Early work relied on heavy self-supervised optimisation \cite{sun-2019-test}; Tent later demonstrated that entropy minimisation of batch-norm scales and biases yields large robustness gains with lower cost \cite{wang-2020-tent}. However, even Tent necessitates (i) a statistics-gathering forward pass, (ii) a backward pass, and (iii) a second forward pass using updated parameters - unacceptable when a 256 fps camera leaves \(<4\) ms per frame.  
+                                                                                                                                                                                                                                                                                                                                                                                                                                    ^
+Warning 2 in paper.tex line 55: Non-breaking space (`~') should have been used.
+Deep models perform impressively when test data resemble the source distribution, yet real-world deployments seldom enjoy such stability. Weather, lens ageing, on-device quantisation, and user behaviour all shift input statistics, degrading accuracy. Test-time adaptation (TTA) tackles this challenge by updating a small subset of parameters online without labels. Early work relied on heavy self-supervised optimisation \cite{sun-2019-test}; Tent later demonstrated that entropy minimisation of batch-norm scales and biases yields large robustness gains with lower cost \cite{wang-2020-tent}. However, even Tent necessitates (i) a statistics-gathering forward pass, (ii) a backward pass, and (iii) a second forward pass using updated parameters - unacceptable when a 256 fps camera leaves \(<4\) ms per frame.  
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          ^
+Warning 8 in paper.tex line 55: Wrong length of dash may have been used.
+Deep models perform impressively when test data resemble the source distribution, yet real-world deployments seldom enjoy such stability. Weather, lens ageing, on-device quantisation, and user behaviour all shift input statistics, degrading accuracy. Test-time adaptation (TTA) tackles this challenge by updating a small subset of parameters online without labels. Early work relied on heavy self-supervised optimisation \cite{sun-2019-test}; Tent later demonstrated that entropy minimisation of batch-norm scales and biases yields large robustness gains with lower cost \cite{wang-2020-tent}. However, even Tent necessitates (i) a statistics-gathering forward pass, (ii) a backward pass, and (iii) a second forward pass using updated parameters - unacceptable when a 256 fps camera leaves \(<4\) ms per frame.  
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          ^
+Warning 2 in paper.tex line 57: Non-breaking space (`~') should have been used.
+Edge deployment further constrains compute, energy, and memory. Modern backbones mix batch-norm, group-norm, layer-norm, and multi-branch attention; purely channel-wise moments ignore cross-channel correlations that become important in such settings. Hyper-networks meta-trained solely on Fourier corruptions over-fit and deliver limited benefit on realistic shifts such as fog or blur \cite{yoo-2023-what}. The community therefore requires a latency-first, correlation-aware, and widely deployable TTA solution.  
+                                                                                                                                                                                                                                                                                                                                                                                                 ^
+Warning 2 in paper.tex line 66: Non-breaking space (`~') should have been used.
+  \item \textbf{Safeguard against collapse.} A gradient-free safeguard, inspired by PeTTA \cite{hoang-2023-persistent}, halts updates when the recurrent state leaves a learned envelope, preventing collapse.  
+                                                                                         ^
+Warning 8 in paper.tex line 67: Wrong length of dash may have been used.
+  \item \textbf{Reproducibility and assumptions.} We publish code and an honest reproducibility study that reveals a hidden assumption made by most TTA work - the presence of an accurate source classifier - and articulate how future experiments must be designed to draw meaningful conclusions.  
+                                                                                                                                                             ^
+Warning 8 in paper.tex line 67: Wrong length of dash may have been used.
+  \item \textbf{Reproducibility and assumptions.} We publish code and an honest reproducibility study that reveals a hidden assumption made by most TTA work - the presence of an accurate source classifier - and articulate how future experiments must be designed to draw meaningful conclusions.  
+                                                                                                                                                                                                             ^
+Warning 24 in paper.tex line 73: Delete this space to maintain correct pagereferences.
+\label{sec:related}  
+^
+Warning 2 in paper.tex line 74: Non-breaking space (`~') should have been used.
+TTA methods divide into gradient-based and gradient-free approaches. Gradient-based families, typified by Tent \cite{wang-2020-tent}, optimise prediction entropy online. Subsequent work adds batch renormalisation and class re-weighting (DELTA \cite{zhao-2023-delta}), energy-based objectives (TEA \cite{yuan-2023-tea}), or theoretically derived losses (conjugate pseudo-labels \cite{goyal-2022-test}). These techniques improve robustness but require back-propagation, double memory traffic, and at least two passes per image.  
+                                                                                                              ^
+Warning 2 in paper.tex line 74: Non-breaking space (`~') should have been used.
+TTA methods divide into gradient-based and gradient-free approaches. Gradient-based families, typified by Tent \cite{wang-2020-tent}, optimise prediction entropy online. Subsequent work adds batch renormalisation and class re-weighting (DELTA \cite{zhao-2023-delta}), energy-based objectives (TEA \cite{yuan-2023-tea}), or theoretically derived losses (conjugate pseudo-labels \cite{goyal-2022-test}). These techniques improve robustness but require back-propagation, double memory traffic, and at least two passes per image.  
+                                                                                                                                                                                                                                                  ^
+Warning 2 in paper.tex line 74: Non-breaking space (`~') should have been used.
+TTA methods divide into gradient-based and gradient-free approaches. Gradient-based families, typified by Tent \cite{wang-2020-tent}, optimise prediction entropy online. Subsequent work adds batch renormalisation and class re-weighting (DELTA \cite{zhao-2023-delta}), energy-based objectives (TEA \cite{yuan-2023-tea}), or theoretically derived losses (conjugate pseudo-labels \cite{goyal-2022-test}). These techniques improve robustness but require back-propagation, double memory traffic, and at least two passes per image.  
+                                                                                                                                                                                                                                                                                                        ^
+Warning 2 in paper.tex line 74: Non-breaking space (`~') should have been used.
+TTA methods divide into gradient-based and gradient-free approaches. Gradient-based families, typified by Tent \cite{wang-2020-tent}, optimise prediction entropy online. Subsequent work adds batch renormalisation and class re-weighting (DELTA \cite{zhao-2023-delta}), energy-based objectives (TEA \cite{yuan-2023-tea}), or theoretically derived losses (conjugate pseudo-labels \cite{goyal-2022-test}). These techniques improve robustness but require back-propagation, double memory traffic, and at least two passes per image.  
+                                                                                                                                                                                                                                                                                                                                                                                        ^
+Warning 2 in paper.tex line 78: Non-breaking space (`~') should have been used.
+Stability under long streams is an active topic. SAR employs sharpness-aware regularisation to avert collapse \cite{niu-2023-towards}; RoTTA uses robust statistics and memory banks for temporally correlated inputs \cite{yuan-2023-robust}; PeTTA senses divergence in recurring domains and freezes adaptation \cite{hoang-2023-persistent}. Our safeguard operates on the recurrent hidden state, maintaining gradient-free operation.  
+                                                                                                             ^
+Warning 2 in paper.tex line 78: Non-breaking space (`~') should have been used.
+Stability under long streams is an active topic. SAR employs sharpness-aware regularisation to avert collapse \cite{niu-2023-towards}; RoTTA uses robust statistics and memory banks for temporally correlated inputs \cite{yuan-2023-robust}; PeTTA senses divergence in recurring domains and freezes adaptation \cite{hoang-2023-persistent}. Our safeguard operates on the recurrent hidden state, maintaining gradient-free operation.  
+                                                                                                                                                                                                                     ^
+Warning 2 in paper.tex line 78: Non-breaking space (`~') should have been used.
+Stability under long streams is an active topic. SAR employs sharpness-aware regularisation to avert collapse \cite{niu-2023-towards}; RoTTA uses robust statistics and memory banks for temporally correlated inputs \cite{yuan-2023-robust}; PeTTA senses divergence in recurring domains and freezes adaptation \cite{hoang-2023-persistent}. Our safeguard operates on the recurrent hidden state, maintaining gradient-free operation.  
+                                                                                                                                                                                                                                                                                                                  ^
+Warning 2 in paper.tex line 80: Non-breaking space (`~') should have been used.
+Edge devices motivate memory-efficient variants. EcoTTA inserts tiny meta-networks and self-distilled regularisation \cite{song-2023-ecotta}; FLASH-TTA instead quantises the controller and fuses kernels, trading logic for memory and energy. Active TTA (ATTA) injects sporadic labels to guide adaptation \cite{gui-2024-active}, a complementary direction to our fully unsupervised setting.  
+                                                                                                                    ^
+Warning 2 in paper.tex line 80: Non-breaking space (`~') should have been used.
+Edge devices motivate memory-efficient variants. EcoTTA inserts tiny meta-networks and self-distilled regularisation \cite{song-2023-ecotta}; FLASH-TTA instead quantises the controller and fuses kernels, trading logic for memory and energy. Active TTA (ATTA) injects sporadic labels to guide adaptation \cite{gui-2024-active}, a complementary direction to our fully unsupervised setting.  
+                                                                                                                                                                                                                                                                                                              ^
+Warning 2 in paper.tex line 82: Non-breaking space (`~') should have been used.
+Finally, ITTA highlights the importance of carefully chosen auxiliary tasks for test-time training \cite{chen-2023-improved}. FLASH-TTA sidesteps heavy auxiliary losses by learning to exploit natural distribution shifts during meta-training.  
+                                                                                                  ^
+Warning 24 in paper.tex line 85: Delete this space to maintain correct pagereferences.
+\label{sec:background}  
+^
+Warning 3 in paper.tex line 90: You should enclose the previous parenthesis with `{}'.
+\textit{Low-rank covariance sketch} \quad Full covariance \(\Sigma\in\mathbb{R}^{C\times C}\) is impractical. We sample a Rademacher Hadamard matrix \(H\in\{-1,1\}^{C\times d}/\sqrt{C}\) and compute \(\Phi=H^{\top}\,\Sigma\,H\) with \(d=16\), implemented via fast Walsh-Hadamard transform, yielding \(O(C \log C)\) complexity. Flattening \(\Phi\) augments these moments to form \(s(x)\).  
+                                                                                                                                                                 ^^
+Warning 2 in paper.tex line 94: Non-breaking space (`~') should have been used.
+\textit{Divergence safeguard} \quad Prolonged online updates can drift \cite{hoang-2023-persistent}. We maintain a running Gaussian over \(h_{t}\) and freeze updates for eight frames when the Mahalanobis distance exceeds \(\delta=5.0\).  
+                                                                      ^
+Warning 24 in paper.tex line 97: Delete this space to maintain correct pagereferences.
+\label{sec:method}  
+^
+Warning 1 in paper.tex line 116: Command terminated with space.
+\State \textbf{Inputs:} stream \(\{x_{t}\}\); tapped layers \(\{L_{k}\}_{k=1}^{K}\); GRU state \(h_{t-1}\)  
+      ^
+Warning 3 in paper.tex line 116: You should enclose the previous parenthesis with `{}'.
+\State \textbf{Inputs:} stream \(\{x_{t}\}\); tapped layers \(\{L_{k}\}_{k=1}^{K}\); GRU state \(h_{t-1}\)  
+                                                                     ^^
+Warning 1 in paper.tex line 117: Command terminated with space.
+\State \textbf{Outputs:} prediction \(\hat{y}_{t}\); updated state \(h_{t}\)  
+      ^
+Warning 1 in paper.tex line 118: Command terminated with space.
+\State Initialise empty statistics buffer \(s_{t} \leftarrow [\,]\)  
+      ^
+Warning 1 in paper.tex line 120: Command terminated with space.
+  \State Compute spatial moments: \(\mu_{k},\sigma_{k}\)  
+        ^
+Warning 1 in paper.tex line 121: Command terminated with space.
+  \State Normalise activations: \(\tilde{x}_{k} \leftarrow (x_{k}-\mu_{k})/\sigma_{k}\)  
+        ^
+Warning 1 in paper.tex line 122: Command terminated with space.
+  \State Sketch covariance: \(\widehat{h}_{k} \leftarrow \mathrm{HadamardSketch}(\tilde{x}_{k})\)  
+        ^
+Warning 1 in paper.tex line 123: Command terminated with space.
+  \State Append to buffer: \(s_{t} \leftarrow s_{t} \mathbin{\|\|} [\mu_{k},\sigma_{k},\widehat{h}_{k}]\)  
+        ^
+Warning 1 in paper.tex line 124: Command terminated with space.
+\EndFor  
+       ^
+Warning 1 in paper.tex line 125: Command terminated with space.
+\State Update controller: \(h_{t} \leftarrow \mathrm{GRU}(s_{t}, h_{t-1})\)  
+      ^
+Warning 1 in paper.tex line 126: Command terminated with space.
+\State Heads produce deltas and temperature: \(\{\Delta\gamma_{k},\Delta\beta_{k}\}_{k=1}^{K},\,\tau_{t} \leftarrow \mathrm{Heads}(h_{t})\)  
+      ^
+Warning 3 in paper.tex line 126: You should enclose the previous parenthesis with `{}'.
+\State Heads produce deltas and temperature: \(\{\Delta\gamma_{k},\Delta\beta_{k}\}_{k=1}^{K},\,\tau_{t} \leftarrow \mathrm{Heads}(h_{t})\)  
+                                                                                 ^^
+Warning 1 in paper.tex line 128: Command terminated with space.
+  \State In-place modulation: \(\gamma_{k} \leftarrow \gamma_{k}+\Delta\gamma_{k},\; \beta_{k} \leftarrow \beta_{k}+\Delta\beta_{k}\)  
+        ^
+Warning 1 in paper.tex line 129: Command terminated with space.
+\EndFor  
+       ^
+Warning 1 in paper.tex line 130: Command terminated with space.
+\State Produce prediction with adapted parameters: \(\hat{y}_{t} \leftarrow f_{\theta,\phi_{t}}(x_{t})\)  
+      ^
+Warning 24 in paper.tex line 135: Delete this space to maintain correct pagereferences.
+\label{sec:experimental}  
+^
+Warning 8 in paper.tex line 146: Wrong length of dash may have been used.
+NVIDIA A100-80 GB, CUDA 11.8, PyTorch 2.1, fp16 inference. Cudagraphs disabled to expose first-iteration compilation.  
+           ^
+Warning 24 in paper.tex line 155: Delete this space to maintain correct pagereferences.
+\label{sec:results}  
+^
+Warning 44 in paper.tex line 160: User Regex: -2:Use \toprule, midrule, or \bottomrule from booktabs.
+\hline  
+^^^^^^
+Warning 44 in paper.tex line 162: User Regex: -2:Use \toprule, midrule, or \bottomrule from booktabs.
+\hline  
+^^^^^^
+Warning 44 in paper.tex line 167: User Regex: -2:Use \toprule, midrule, or \bottomrule from booktabs.
+\hline  
+^^^^^^
+Warning 8 in paper.tex line 174: Wrong length of dash may have been used.
+Discarding the first 50 images (kernel compilation) yields 3.1 ms per image - 0.15 ms (\(<5\%\)) slower than the frozen backbone - confirming the design goal. Memory overhead of 240 MB matches the controller plus extra buffers.  
+                                                                            ^
+Warning 8 in paper.tex line 174: Wrong length of dash may have been used.
+Discarding the first 50 images (kernel compilation) yields 3.1 ms per image - 0.15 ms (\(<5\%\)) slower than the frozen backbone - confirming the design goal. Memory overhead of 240 MB matches the controller plus extra buffers.  
+                                                                                                                                 ^
+Warning 13 in paper.tex line 177: Intersentence spacing (`\@') should perhaps be used.
+The negative accuracy demonstrates a silent prerequisite of most statistics- or entropy-based TTA: an already competent source classifier. Future experiments must therefore retain the ImageNet head when evaluating ImageNet-C or fine-tune the new head when transferring to CIFAR-10.  
+                                                                                                 ^
+Warning 24 in paper.tex line 183: Delete this space to maintain correct pagereferences.
+\label{sec:conclusion}  
+^
+Warning 8 in paper.tex line 184: Wrong length of dash may have been used.
+FLASH-TTA shows that one-pass covariance-aware statistics modulation is technically feasible within stringent edge-device budgets. A fused kernel extracts rich activation statistics at negligible cost; an int8 recurrent controller delivers per-layer deltas; and a gradient-free safeguard curbs divergence. Our reproduction confirms \(~3\) ms overhead yet exposes a latent assumption shared across TTA literature - the availability of a competent source classifier. Immediate future work will (i) pre-train or fine-tune classifier heads, (ii) run the full benchmark with five seeds and baseline methods, (iii) extend to MobileNet-V3 and DeiT backbones, and (iv) deploy the INT8 implementation on Jetson Nano and ESP32-S3 to verify the projected 0.34 J energy per image. By releasing code and logs we invite the community to build on latency-aware, gradient-free TTA and to scrutinise its prerequisites before real-world deployment.  
+                                                                                                                                                                                                                                                                                                                                                                                                                            ^
