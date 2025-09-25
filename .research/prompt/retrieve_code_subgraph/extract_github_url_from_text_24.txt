@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+Scatterbrain is inspired by the classical Robust PCA algorithm. It efficiently combines sparse and low-rank matrix approximations of attention. The sparse component identifies large entries of the attention matrix using Locality Sensitive Hashing (LSH) without materializing the full matrix. The low-rank component leverages a randomized kernel feature map (specifically, φ(x) = 1/√m exp(Wx −∥x∥2 /2)) to parameterize the low-rank part. The core insight is that on the support of the sparse matrix S (selected by LSH), the entries of S are set to explicitly discount the contribution from the low-rank part, ensuring the combined approximation S+˜Q˜K⊤ exactly matches the full attention on S's support and matches the low-rank part elsewhere. This results in an unbiased estimator with strictly lower variance compared to low-rank baselines like Performer.
+
+# GitHub URLs List
+['https://github.com/HazyResearch/scatterbrain']
+Output:
+{
+    "index": 0
+}
