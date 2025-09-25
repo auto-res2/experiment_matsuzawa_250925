@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The core methodology involves efficiently approximating the diagonal scaling matrix D and the matrix product of the softmax matrix D^-1A and value matrix V. For estimating D, the method first identifies dominant entries in the attention matrix using a Hamming sorted Locality Sensitive Hashing (LSH) algorithm called sortLSH, which generates a sparse mask (Algorithm 1). This is combined with random sampling of a small subset of keys to estimate row sums of unmasked entries (Algorithm 2). The approximation of the matrix product D^-1AV is achieved through subsampling, where a sampling matrix S is constructed based on squared row norms of V (or uniform sampling in practice), leveraging Approximate Matrix Multiplication (AMM) techniques (Lemma 2). For causal masking, a recursive method (Algorithm 4) is employed to approximate the diagonal DC by partitioning the masked attention matrix into smaller causal and unmasked blocks, applying the unmasked approximation algorithm to the latter. The approach introduces fine-grained parameters to analyze time complexity, allowing for linear time even when matrix entries are unbounded or stable rank is large.
+
+# GitHub URLs List
+['https://github.com/insuhan/hyper-attn']
+Output:
+{
+    "index": 0
+}
