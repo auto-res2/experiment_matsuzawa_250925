@@ -742,6 +742,11 @@
         "smoke_test_yaml": "# Cannot generate smoke_test.yaml because the original experiment code was not provided.",
         "full_experiment_yaml": "# Cannot generate full_experiment.yaml because the original experiment code was not provided."
       }
+    },
+    "experimental_results": {
+      "result": "=== [PHASE 2/2] Full experiment start Thu Sep 25 04:59:49 AM UTC 2025 ===\n=== [PHASE 2/2] Full experiment end Thu Sep 25 04:59:49 AM UTC 2025 ===",
+      "error": "warning: No `requires-python` value found in the workspace. Defaulting to `>=3.11`. ",
+      "image_file_name_list": []
     }
   },
   "idea_info_history": [
@@ -794,5 +799,6 @@
       }
     }
   ],
+  "executed_flag": true,
   "experiment_iteration": 1
 }
