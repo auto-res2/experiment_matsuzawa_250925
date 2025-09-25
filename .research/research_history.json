@@ -590,6 +590,11 @@
         "smoke_test_yaml": "# Smoke-test configuration stub – no real hyper-parameters because the\n# original Experiment Code had no content to extract.\n# The file is required only so that ``src.main`` can load *something* and\n# demonstrate the CLI plumbing.\nexperiment: smoke-test\nwarning: |\n  This configuration is a stub.  No experiment will run because the\n  original script did not contain runnable code.\n",
         "full_experiment_yaml": "# Full-scale configuration stub – mirrors comments from smoke_test.yaml\nexperiment: full-experiment\nwarning: |\n  This configuration is a stub.  No experiment will run because the\n  original script did not contain runnable code.\n"
       }
+    },
+    "experimental_results": {
+      "result": "No runnable experiment code was provided in the original script. All generated modules are therefore stubs that deliberately raise RuntimeError when invoked.  Please supply actual experiment logic to replace these stubs.",
+      "error": "",
+      "image_file_name_list": []
     }
   },
   "idea_info_history": [
@@ -642,5 +647,6 @@
       }
     }
   ],
+  "executed_flag": true,
   "experiment_iteration": 1
 }
