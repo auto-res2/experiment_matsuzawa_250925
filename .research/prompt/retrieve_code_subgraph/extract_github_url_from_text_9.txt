@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+PER regularizes activations by directly matching their distribution to a standard normal distribution (N(0,I)) using the Wasserstein metric. Since direct computation of the Wasserstein distance is intractable, the method utilizes the sliced Wasserstein distance, which projects high-dimensional distributions onto a one-dimensional space. To avoid computational dependency on the batch dimension from sorting required by the sliced Wasserstein, PER minimizes an upper bound of the 1-Wasserstein distance. The regularization loss Lper(νhl) is derived, and its gradient is approximated using the Monte Carlo method with 's' number of samples for the projection vectors, which are drawn uniformly from a unit sphere. This results in a simple modification to the backward pass. Theoretically, PER's approach of matching activations to N(0,I) is motivated by its connection to the natural gradient, aiming to make the Fisher information matrix close to identity.
+
+# GitHub URLs List
+['https://github.com/pytorch/examples']
+Output:
+{
+    "index": null
+}
