@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The study employs a theoretical approach by deriving a conservation law for GATs with positive homogeneous activation functions (e.g., ReLUs), which explains the relationship between model parameters and their gradients under gradient flow. This conservation law reveals that unbalanced initial norms of feature and attention weights hinder gradient propagation. Based on this insight, the authors propose a parameter balancing procedure: 1) initializing all attention parameters to zero, 2) scaling the initial squared norms of incoming feature weights to the first layer, and 3) recursively scaling outgoing feature weights to ensure a balanced state where a specific norm equality holds across layers. Two specific balanced initialization schemes, Balanced Xavier (BalX) and Balanced Orthogonal (BalO) with a looks-linear mirrored block structure, are developed and evaluated.
+
+# GitHub URLs List
+['https://github.com/Diego999/pyGAT']
+Output:
+{
+    "index": 0
+}
