@@ -5,3 +5,667 @@
   publisher = {GitHub},
   url       = {https://github.com/airas-org/airas}
 }
+
+% ===========================================
+% REQUIRED CITATIONS
+% These papers must be cited in the manuscript
+% ===========================================
+
+@article{author-year-accelerating,
+ title = {Accelerating Sparse Convolution with Column Vector-Wise Sparsity}
+}
+
+@article{author-year-adaptive,
+ title = {Adaptive Structural Fingerprints for Graph Attention Networks}
+}
+
+@article{author-year-dynamic,
+ title = {Dynamic Rescaling for Training GNNs}
+}
+
+@article{author-year-fast,
+ title = {Fast Attention Over Long Sequences With Dynamic Sparse Flash Attention}
+}
+
+@article{author-year-graph,
+ title = {A graph similarity for deep learning}
+}
+
+@article{author-year-low,
+ title = {Low-Rank Approximation for Sparse Attention in Multi-Modal LLMs}
+}
+
+@article{author-year-not,
+ title = {Not All Bits have Equal Value: Heterogeneous Precisions via Trainable Noise}
+}
+
+@article{author-year-predicting,
+ title = {Predicting Global Label Relationship Matrix for Graph Neural Networks under Heterophily}
+}
+
+@article{author-year-self,
+ title = {Self-supervised Graph Neural Networks via Low-Rank Decomposition}
+}
+
+@article{bondarenko-2023-quantizable,
+ abstract = {Transformer models have been widely adopted in various domains over the last
+years, and especially large language models have advanced the field of AI
+significantly. Due to their size, the capability of these networks has
+increased tremendously, but this has come at the cost of a significant increase
+in necessary compute. Quantization is one of the most effective ways to reduce
+the computational time and memory consumption of neural networks. Many studies
+have shown, however, that modern transformer models tend to learn strong
+outliers in their activations, making them difficult to quantize. To retain
+acceptable performance, the existence of these outliers requires activations to
+be in higher bitwidth or the use of different numeric formats, extra
+fine-tuning, or other workarounds. We show that strong outliers are related to
+very specific behavior of attention heads that try to learn a "no-op" or just a
+partial update of the residual. To achieve the exact zeros needed in the
+attention matrix for a no-update, the input to the softmax is pushed to be
+larger and larger during training, causing outliers in other parts of the
+network. Based on these observations, we propose two simple (independent)
+modifications to the attention mechanism - clipped softmax and gated attention.
+We empirically show that models pre-trained using our methods learn
+significantly smaller outliers while maintaining and sometimes even improving
+the floating-point task performance. This enables us to quantize transformers
+to full INT8 quantization of the activations without any additional effort. We
+demonstrate the effectiveness of our methods on both language models (BERT,
+OPT) and vision transformers.},
+ arxiv_url = {https://arxiv.org/pdf/2306.12929v2.pdf},
+ author = {Yelysei Bondarenko and Markus Nagel and Tijmen Blankevoort},
+ github_url = {https://github.com/rwightman/pytorch-image-models},
+ title = {Quantizable Transformers: Removing Outliers by Helping Attention Heads Do Nothing},
+ year = {2023}
+}
+
+@article{chen-2020-convolutional,
+ abstract = {We introduce a family of multilayer graph kernels and establish new links
+between graph convolutional neural networks and kernel methods. Our approach
+generalizes convolutional kernel networks to graph-structured data, by
+representing graphs as a sequence of kernel feature maps, where each node
+carries information about local graph substructures. On the one hand, the
+kernel point of view offers an unsupervised, expressive, and easy-to-regularize
+data representation, which is useful when limited samples are available. On the
+other hand, our model can also be trained end-to-end on large-scale data,
+leading to new types of graph convolutional neural networks. We show that our
+method achieves competitive performance on several graph classification
+benchmarks, while offering simple model interpretation. Our code is freely
+available at https://github.com/claying/GCKN.},
+ arxiv_url = {https://arxiv.org/pdf/2003.05189v2.pdf},
+ author = {Dexiong Chen and Laurent Jacob and Julien Mairal},
+ github_url = {https://github.com/claying/GCKN},
+ journal = {International Conference on Machine Learning (ICML), Jul 2020},
+ title = {Convolutional Kernel Networks for Graph-Structured Data},
+ year = {2020}
+}
+
+@article{chen-2021-accelerating,
+ abstract = {Communication overhead hinders the scalability of large-scale distributed
+training. Gossip SGD, where each node averages only with its neighbors, is more
+communication-efficient than the prevalent parallel SGD. However, its
+convergence rate is reversely proportional to quantity $1-\beta$ which measures
+the network connectivity. On large and sparse networks where $1-\beta \to 0$,
+Gossip SGD requires more iterations to converge, which offsets against its
+communication benefit. This paper introduces Gossip-PGA, which adds Periodic
+Global Averaging into Gossip SGD. Its transient stage, i.e., the iterations
+required to reach asymptotic linear speedup stage, improves from
+$\Omega(\beta^4 n^3/(1-\beta)^4)$ to $\Omega(\beta^4 n^3 H^4)$ for non-convex
+problems. The influence of network topology in Gossip-PGA can be controlled by
+the averaging period $H$. Its transient-stage complexity is also superior to
+Local SGD which has order $\Omega(n^3 H^4)$. Empirical results of large-scale
+training on image classification (ResNet50) and language modeling (BERT)
+validate our theoretical findings.},
+ arxiv_url = {https://arxiv.org/pdf/2105.09080v1.pdf},
+ author = {Yiming Chen and Kun Yuan and Yingya Zhang and Pan Pan and Yinghui Xu and Wotao Yin},
+ github_url = {https://github.com/NVIDIA/apex},
+ title = {Accelerating Gossip SGD with Periodic Global Averaging},
+ year = {2021}
+}
+
+@article{chen-2021-scatterbrain,
+ abstract = {Recent advances in efficient Transformers have exploited either the sparsity
+or low-rank properties of attention matrices to reduce the computational and
+memory bottlenecks of modeling long sequences. However, it is still challenging
+to balance the trade-off between model quality and efficiency to perform a
+one-size-fits-all approximation for different tasks. To better understand this
+trade-off, we observe that sparse and low-rank approximations excel in
+different regimes, determined by the softmax temperature in attention, and
+sparse + low-rank can outperform each individually. Inspired by the classical
+robust-PCA algorithm for sparse and low-rank decomposition, we propose
+Scatterbrain, a novel way to unify sparse (via locality sensitive hashing) and
+low-rank (via kernel feature map) attention for accurate and efficient
+approximation. The estimation is unbiased with provably low error. We
+empirically show that Scatterbrain can achieve 2.1x lower error than baselines
+when serving as a drop-in replacement in BigGAN image generation and
+pre-trained T2T-ViT. On a pre-trained T2T Vision transformer, even without
+fine-tuning, Scatterbrain can reduce 98% of attention memory at the cost of
+only 1% drop in accuracy. We demonstrate Scatterbrain for end-to-end training
+with up to 4 points better perplexity and 5 points better average accuracy than
+sparse or low-rank efficient transformers on language modeling and
+long-range-arena tasks.},
+ arxiv_url = {https://arxiv.org/pdf/2110.15343v1.pdf},
+ author = {Beidi Chen and Tri Dao and Eric Winsor and Zhao Song and Atri Rudra and Christopher Ré},
+ github_url = {https://github.com/HazyResearch/scatterbrain},
+ title = {Scatterbrain: Unifying Sparse and Low-rank Attention},
+ year = {2021}
+}
+
+@article{jaszczur-2021-sparse,
+ abstract = {Large Transformer models yield impressive results on many tasks, but are
+expensive to train, or even fine-tune, and so slow at decoding that their use
+and study becomes out of reach. We address this problem by leveraging sparsity.
+We study sparse variants for all layers in the Transformer and propose Scaling
+Transformers, a family of next generation Transformer models that use sparse
+layers to scale efficiently and perform unbatched decoding much faster than the
+standard Transformer as we scale up the model size. Surprisingly, the sparse
+layers are enough to obtain the same perplexity as the standard Transformer
+with the same number of parameters. We also integrate with prior sparsity
+approaches to attention and enable fast inference on long sequences even with
+limited memory. This results in performance competitive to the state-of-the-art
+on long text summarization.},
+ arxiv_url = {https://arxiv.org/pdf/2111.12763v1.pdf},
+ author = {Sebastian Jaszczur and Aakanksha Chowdhery and Afroz Mohiuddin and Łukasz Kaiser and Wojciech Gajewski and Henryk Michalewski and Jonni Kanerva},
+ github_url = {https://github.com/google/trax},
+ title = {Sparse is Enough in Scaling Transformers},
+ year = {2021}
+}
+
+@article{javaloy-2022-learnable,
+ abstract = {Existing Graph Neural Networks (GNNs) compute the message exchange between
+nodes by either aggregating uniformly (convolving) the features of all the
+neighboring nodes, or by applying a non-uniform score (attending) to the
+features. Recent works have shown the strengths and weaknesses of the resulting
+GNN architectures, respectively, GCNs and GATs. In this work, we aim at
+exploiting the strengths of both approaches to their full extent. To this end,
+we first introduce the graph convolutional attention layer (CAT), which relies
+on convolutions to compute the attention scores. Unfortunately, as in the case
+of GCNs and GATs, we show that there exists no clear winner between the three
+(neither theoretically nor in practice) as their performance directly depends
+on the nature of the data (i.e., of the graph and features). This result brings
+us to the main contribution of our work, the learnable graph convolutional
+attention network (L-CAT): a GNN architecture that automatically interpolates
+between GCN, GAT and CAT in each layer, by adding only two scalar parameters.
+Our results demonstrate that L-CAT is able to efficiently combine different GNN
+layers along the network, outperforming competing methods in a wide range of
+datasets, and resulting in a more robust model that reduces the need of
+cross-validating.},
+ arxiv_url = {https://arxiv.org/pdf/2211.11853v2.pdf},
+ author = {Adrián Javaloy and Pablo Sanchez-Martin and Amit Levi and Isabel Valera},
+ github_url = {https://github.com/psanch21/LCAT},
+ title = {Learnable Graph Convolutional Attention Networks},
+ year = {2022}
+}
+
+@article{li-2020-sac,
+ abstract = {While the self-attention mechanism has been widely used in a wide variety of
+tasks, it has the unfortunate property of a quadratic cost with respect to the
+input length, which makes it difficult to deal with long inputs. In this paper,
+we present a method for accelerating and structuring self-attentions: Sparse
+Adaptive Connection (SAC). In SAC, we regard the input sequence as a graph and
+attention operations are performed between linked nodes. In contrast with
+previous self-attention models with pre-defined structures (edges), the model
+learns to construct attention edges to improve task-specific performances. In
+this way, the model is able to select the most salient nodes and reduce the
+quadratic complexity regardless of the sequence length. Based on SAC, we show
+that previous variants of self-attention models are its special cases. Through
+extensive experiments on neural machine translation, language modeling, graph
+representation learning and image classification, we demonstrate SAC is
+competitive with state-of-the-art models while significantly reducing memory
+cost.},
+ arxiv_url = {https://arxiv.org/pdf/2003.09833v3.pdf},
+ author = {Xiaoya Li and Yuxian Meng and Mingxin Zhou and Qinghong Han and Fei Wu and Jiwei Li},
+ title = {SAC: Accelerating and Structuring Self-Attention via Sparse Adaptive Connection},
+ year = {2020}
+}
+
+@article{liu-2020-bandit,
+ abstract = {Several sampling algorithms with variance reduction have been proposed for
+accelerating the training of Graph Convolution Networks (GCNs). However, due to
+the intractable computation of optimal sampling distribution, these sampling
+algorithms are suboptimal for GCNs and are not applicable to more general graph
+neural networks (GNNs) where the message aggregator contains learned weights
+rather than fixed weights, such as Graph Attention Networks (GAT). The
+fundamental reason is that the embeddings of the neighbors or learned weights
+involved in the optimal sampling distribution are changing during the training
+and not known a priori, but only partially observed when sampled, thus making
+the derivation of an optimal variance reduced samplers non-trivial. In this
+paper, we formulate the optimization of the sampling variance as an adversary
+bandit problem, where the rewards are related to the node embeddings and
+learned weights, and can vary constantly. Thus a good sampler needs to acquire
+variance information about more neighbors (exploration) while at the same time
+optimizing the immediate sampling variance (exploit). We theoretically show
+that our algorithm asymptotically approaches the optimal variance within a
+factor of 3. We show the efficiency and effectiveness of our approach on
+multiple datasets.},
+ arxiv_url = {https://arxiv.org/pdf/2006.05806v2.pdf},
+ author = {Ziqi Liu and Zhengwei Wu and Zhiqiang Zhang and Jun Zhou and Shuang Yang and Le Song and Yuan Qi},
+ github_url = {https://github.com/xavierzw/ogb-geniepath-bs},
+ title = {Bandit Samplers for Training Graph Neural Networks},
+ year = {2020}
+}
+
+@article{mustafa-2023-are,
+ abstract = {While the expressive power and computational capabilities of graph neural
+networks (GNNs) have been theoretically studied, their optimization and
+learning dynamics, in general, remain largely unexplored. Our study undertakes
+the Graph Attention Network (GAT), a popular GNN architecture in which a node's
+neighborhood aggregation is weighted by parameterized attention coefficients.
+We derive a conservation law of GAT gradient flow dynamics, which explains why
+a high portion of parameters in GATs with standard initialization struggle to
+change during training. This effect is amplified in deeper GATs, which perform
+significantly worse than their shallow counterparts. To alleviate this problem,
+we devise an initialization scheme that balances the GAT network. Our approach
+i) allows more effective propagation of gradients and in turn enables
+trainability of deeper networks, and ii) attains a considerable speedup in
+training and convergence time in comparison to the standard initialization. Our
+main theorem serves as a stepping stone to studying the learning dynamics of
+positive homogeneous models with attention mechanisms.},
+ arxiv_url = {https://arxiv.org/pdf/2310.07235v2.pdf},
+ author = {Nimrah Mustafa and Aleksandar Bojchevski and Rebekka Burkholz},
+ github_url = {https://github.com/Diego999/pyGAT},
+ title = {Are GATs Out of Balance?},
+ year = {2023}
+}
+
+@article{mustafa-2024-gate,
+ abstract = {Graph Attention Networks (GATs) are designed to provide flexible neighborhood
+aggregation that assigns weights to neighbors according to their importance. In
+practice, however, GATs are often unable to switch off task-irrelevant
+neighborhood aggregation, as we show experimentally and analytically. To
+address this challenge, we propose GATE, a GAT extension that holds three major
+advantages: i) It alleviates over-smoothing by addressing its root cause of
+unnecessary neighborhood aggregation. ii) Similarly to perceptrons, it benefits
+from higher depth as it can still utilize additional layers for (non-)linear
+feature transformations in case of (nearly) switched-off neighborhood
+aggregation. iii) By down-weighting connections to unrelated neighbors, it
+often outperforms GATs on real-world heterophilic datasets. To further validate
+our claims, we construct a synthetic test bed to analyze a model's ability to
+utilize the appropriate amount of neighborhood aggregation, which could be of
+independent interest.},
+ arxiv_url = {https://arxiv.org/pdf/2406.00418v2.pdf},
+ author = {Nimrah Mustafa and Rebekka Burkholz},
+ title = {GATE: How to Keep Out Intrusive Neighbors},
+ year = {2024}
+}
+
+@article{scetbon-2022-low,
+ abstract = {The matching principles behind optimal transport (OT) play an increasingly
+important role in machine learning, a trend which can be observed when OT is
+used to disambiguate datasets in applications (e.g. single-cell genomics) or
+used to improve more complex methods (e.g. balanced attention in transformers
+or self-supervised learning). To scale to more challenging problems, there is a
+growing consensus that OT requires solvers that can operate on millions, not
+thousands, of points. The low-rank optimal transport (LOT) approach advocated
+in \cite{scetbon2021lowrank} holds several promises in that regard, and was
+shown to complement more established entropic regularization approaches, being
+able to insert itself in more complex pipelines, such as quadratic OT. LOT
+restricts the search for low-cost couplings to those that have a
+low-nonnegative rank, yielding linear time algorithms in cases of interest.
+However, these promises can only be fulfilled if the LOT approach is seen as a
+legitimate contender to entropic regularization when compared on properties of
+interest, where the scorecard typically includes theoretical properties
+(statistical complexity and relation to other methods) or practical aspects
+(debiasing, hyperparameter tuning, initialization). We target each of these
+areas in this paper in order to cement the impact of low-rank approaches in
+computational OT.},
+ arxiv_url = {https://arxiv.org/pdf/2205.12365v2.pdf},
+ author = {Meyer Scetbon and Marco Cuturi},
+ title = {Low-rank Optimal Transport: Approximation, Statistics and Debiasing},
+ year = {2022}
+}
+
+@article{tailor-2020-degree,
+ abstract = {Graph neural networks (GNNs) have demonstrated strong performance on a wide
+variety of tasks due to their ability to model non-uniform structured data.
+Despite their promise, there exists little research exploring methods to make
+them more efficient at inference time. In this work, we explore the viability
+of training quantized GNNs, enabling the usage of low precision integer
+arithmetic during inference. We identify the sources of error that uniquely
+arise when attempting to quantize GNNs, and propose an architecturally-agnostic
+method, Degree-Quant, to improve performance over existing quantization-aware
+training baselines commonly used on other architectures, such as CNNs. We
+validate our method on six datasets and show, unlike previous attempts, that
+models generalize to unseen graphs. Models trained with Degree-Quant for INT8
+quantization perform as well as FP32 models in most cases; for INT4 models, we
+obtain up to 26% gains over the baselines. Our work enables up to 4.7x speedups
+on CPU when using INT8 arithmetic.},
+ arxiv_url = {https://arxiv.org/pdf/2008.05000v3.pdf},
+ author = {Shyam A. Tailor and Javier Fernandez-Marques and Nicholas D. Lane},
+ github_url = {https://github.com/camlsys/degree-quant},
+ title = {Degree-Quant: Quantization-Aware Training for Graph Neural Networks},
+ year = {2020}
+}
+
+@article{zeng-2019-graphsaint,
+ abstract = {Graph Convolutional Networks (GCNs) are powerful models for learning
+representations of attributed graphs. To scale GCNs to large graphs,
+state-of-the-art methods use various layer sampling techniques to alleviate the
+"neighbor explosion" problem during minibatch training. We propose GraphSAINT,
+a graph sampling based inductive learning method that improves training
+efficiency and accuracy in a fundamentally different way. By changing
+perspective, GraphSAINT constructs minibatches by sampling the training graph,
+rather than the nodes or edges across GCN layers. Each iteration, a complete
+GCN is built from the properly sampled subgraph. Thus, we ensure fixed number
+of well-connected nodes in all layers. We further propose normalization
+technique to eliminate bias, and sampling algorithms for variance reduction.
+Importantly, we can decouple the sampling from the forward and backward
+propagation, and extend GraphSAINT with many architecture variants (e.g., graph
+attention, jumping connection). GraphSAINT demonstrates superior performance in
+both accuracy and training time on five large graphs, and achieves new
+state-of-the-art F1 scores for PPI (0.995) and Reddit (0.970).},
+ arxiv_url = {https://arxiv.org/pdf/1907.04931v4.pdf},
+ author = {Hanqing Zeng and Hongkuan Zhou and Ajitesh Srivastava and Rajgopal Kannan and Viktor Prasanna},
+ github_url = {https://github.com/GraphSAINT/GraphSAINT},
+ title = {GraphSAINT: Graph Sampling Based Inductive Learning Method},
+ year = {2019}
+}
+
+@article{zhang-2023-structcomp,
+ abstract = {Graph contrastive learning (GCL) has become a powerful tool for learning
+graph data, but its scalability remains a significant challenge. In this work,
+we propose a simple yet effective training framework called Structural
+Compression (StructComp) to address this issue. Inspired by a sparse low-rank
+approximation on the diffusion matrix, StructComp trains the encoder with the
+compressed nodes. This allows the encoder not to perform any message passing
+during the training stage, and significantly reduces the number of sample pairs
+in the contrastive loss. We theoretically prove that the original GCL loss can
+be approximated with the contrastive loss computed by StructComp. Moreover,
+StructComp can be regarded as an additional regularization term for GCL models,
+resulting in a more robust encoder. Empirical studies on various datasets show
+that StructComp greatly reduces the time and memory consumption while improving
+model performance compared to the vanilla GCL models and scalable training
+methods.},
+ arxiv_url = {https://arxiv.org/pdf/2312.04865v4.pdf},
+ author = {Shengzhong Zhang and Wenjie Yang and Xinyuan Cao and Hongwei Zhang and Zengfeng Huang},
+ github_url = {https://github.com/cornell-zhang/GraphZoom},
+ title = {StructComp: Substituting propagation with Structural Compression in Training Graph Contrastive Learning},
+ year = {2023}
+}
+
+@article{zhu-2023-aggregation,
+ abstract = {As graph data size increases, the vast latency and memory consumption during
+inference pose a significant challenge to the real-world deployment of Graph
+Neural Networks (GNNs). While quantization is a powerful approach to reducing
+GNNs complexity, most previous works on GNNs quantization fail to exploit the
+unique characteristics of GNNs, suffering from severe accuracy degradation.
+Through an in-depth analysis of the topology of GNNs, we observe that the
+topology of the graph leads to significant differences between nodes, and most
+of the nodes in a graph appear to have a small aggregation value. Motivated by
+this, in this paper, we propose the Aggregation-Aware mixed-precision
+Quantization ($\rm A^2Q$) for GNNs, where an appropriate bitwidth is
+automatically learned and assigned to each node in the graph. To mitigate the
+vanishing gradient problem caused by sparse connections between nodes, we
+propose a Local Gradient method to serve the quantization error of the node
+features as the supervision during training. We also develop a Nearest Neighbor
+Strategy to deal with the generalization on unseen graphs. Extensive
+experiments on eight public node-level and graph-level datasets demonstrate the
+generality and robustness of our proposed method. Compared to the FP32 models,
+our method can achieve up to a 18.6x (i.e., 1.70bit) compression ratio with
+negligible accuracy degradation. Morever, compared to the state-of-the-art
+quantization method, our method can achieve up to 11.4\% and 9.5\% accuracy
+improvements on the node-level and graph-level tasks, respectively, and up to
+2x speedup on a dedicated hardware accelerator.},
+ arxiv_url = {https://arxiv.org/pdf/2302.00193v1.pdf},
+ author = {Zeyu Zhu and Fanrong Li and Zitao Mo and Qinghao Hu and Gang Li and Zejian Liu and Xiaoyao Liang and Jian Cheng},
+ title = {$\rm A^2Q$: Aggregation-Aware Quantization for Graph Neural Networks},
+ year = {2023}
+}
+
+% ===========================================
+% REFERENCE CANDIDATES
+% Additional reference papers for context
+% ===========================================
+
+@article{author-year-benchmark,
+ title = {Benchmark data sets for graph kernels}
+}
+
+@article{author-year-biological,
+ title = {Biological sequence modeling with convolutional kernel networks}
+}
+
+@article{author-year-marginalized,
+ title = {Marginalized ker- nels between labeled graphs}
+}
+
+@article{author-year-prop,
+ title = {A prop- erty testing framework for the theoretical expressivity of graph kernels}
+}
+
+@article{author-year-protein,
+ title = {Protein function prediction via graph kernels}
+}
+
+@article{author-year-the,
+ title = {The spectrum ker- nel: A string kernel for svm protein classiﬁcation}
+}
+
+@article{bach-2007-graph,
+ abstract = {Point clouds are sets of points in two or three dimensions. Most kernel
+methods for learning on sets of points have not yet dealt with the specific
+geometrical invariances and practical constraints associated with point clouds
+in computer vision and graphics. In this paper, we present extensions of graph
+kernels for point clouds, which allow to use kernel methods for such ob jects
+as shapes, line drawings, or any three-dimensional point clouds. In order to
+design rich and numerically efficient kernels with as few free parameters as
+possible, we use kernels between covariance matrices and their factorizations
+on graphical models. We derive polynomial time dynamic programming recursions
+and present applications to recognition of handwritten digits and Chinese
+characters from few training examples.},
+ arxiv_url = {https://arxiv.org/pdf/0712.3402v1.pdf},
+ author = {Francis Bach},
+ title = {Graph kernels between point clouds},
+ year = {2007}
+}
+
+@article{chen-2019-recurrent,
+ abstract = {Substring kernels are classical tools for representing biological sequences
+or text. However, when large amounts of annotated data are available, models
+that allow end-to-end training such as neural networks are often preferred.
+Links between recurrent neural networks (RNNs) and substring kernels have
+recently been drawn, by formally showing that RNNs with specific activation
+functions were points in a reproducing kernel Hilbert space (RKHS). In this
+paper, we revisit this link by generalizing convolutional kernel
+networks---originally related to a relaxation of the mismatch kernel---to model
+gaps in sequences. It results in a new type of recurrent neural network which
+can be trained end-to-end with backpropagation, or without supervision by using
+kernel approximation techniques. We experimentally show that our approach is
+well suited to biological sequences, where it outperforms existing methods for
+protein classification tasks.},
+ arxiv_url = {https://arxiv.org/pdf/1906.03200v2.pdf},
+ author = {Dexiong Chen and Laurent Jacob and Julien Mairal},
+ journal = {Advances in Neural Information Processing Systems (NeurIPS), Dec
+  2019, Vancouver, Canada},
+ title = {Recurrent kernel networks},
+ year = {2019}
+}
+
+@article{du-2019-graph,
+ abstract = {While graph kernels (GKs) are easy to train and enjoy provable theoretical
+guarantees, their practical performances are limited by their expressive power,
+as the kernel function often depends on hand-crafted combinatorial features of
+graphs. Compared to graph kernels, graph neural networks (GNNs) usually achieve
+better practical performance, as GNNs use multi-layer architectures and
+non-linear activation functions to extract high-order information of graphs as
+features. However, due to the large number of hyper-parameters and the
+non-convex nature of the training procedure, GNNs are harder to train.
+Theoretical guarantees of GNNs are also not well-understood. Furthermore, the
+expressive power of GNNs scales with the number of parameters, and thus it is
+hard to exploit the full power of GNNs when computing resources are limited.
+The current paper presents a new class of graph kernels, Graph Neural Tangent
+Kernels (GNTKs), which correspond to infinitely wide multi-layer GNNs trained
+by gradient descent. GNTKs enjoy the full expressive power of GNNs and inherit
+advantages of GKs. Theoretically, we show GNTKs provably learn a class of
+smooth functions on graphs. Empirically, we test GNTKs on graph classification
+datasets and show they achieve strong performance.},
+ arxiv_url = {https://arxiv.org/pdf/1905.13192v2.pdf},
+ author = {Simon S. Du and Kangcheng Hou and Barnabás Póczos and Ruslan Salakhutdinov and Ruosong Wang and Keyulu Xu},
+ title = {Graph neural tangent kernel: Fusing graph neural networks with graph kernels},
+ year = {2019}
+}
+
+@article{kingma-2014-adam,
+ abstract = {We introduce Adam, an algorithm for first-order gradient-based optimization
+of stochastic objective functions, based on adaptive estimates of lower-order
+moments. The method is straightforward to implement, is computationally
+efficient, has little memory requirements, is invariant to diagonal rescaling
+of the gradients, and is well suited for problems that are large in terms of
+data and/or parameters. The method is also appropriate for non-stationary
+objectives and problems with very noisy and/or sparse gradients. The
+hyper-parameters have intuitive interpretations and typically require little
+tuning. Some connections to related algorithms, on which Adam was inspired, are
+discussed. We also analyze the theoretical convergence properties of the
+algorithm and provide a regret bound on the convergence rate that is comparable
+to the best known results under the online convex optimization framework.
+Empirical results demonstrate that Adam works well in practice and compares
+favorably to other stochastic optimization methods. Finally, we discuss AdaMax,
+a variant of Adam based on the infinity norm.},
+ arxiv_url = {https://arxiv.org/pdf/1412.6980v9.pdf},
+ author = {Diederik P. Kingma and Jimmy Ba},
+ title = {Adam: A method for stochastic optimization},
+ year = {2014}
+}
+
+@article{kipf-2016-semi,
+ abstract = {We present a scalable approach for semi-supervised learning on
+graph-structured data that is based on an efficient variant of convolutional
+neural networks which operate directly on graphs. We motivate the choice of our
+convolutional architecture via a localized first-order approximation of
+spectral graph convolutions. Our model scales linearly in the number of graph
+edges and learns hidden layer representations that encode both local graph
+structure and features of nodes. In a number of experiments on citation
+networks and on a knowledge graph dataset we demonstrate that our approach
+outperforms related methods by a significant margin.},
+ arxiv_url = {https://arxiv.org/pdf/1609.02907v4.pdf},
+ author = {Thomas N. Kipf and Max Welling},
+ title = {Semi-supervised classiﬁca- tion with graph convolutional networks},
+ year = {2016}
+}
+
+@article{kriege-2019-survey,
+ abstract = {Graph kernels have become an established and widely-used technique for
+solving classification tasks on graphs. This survey gives a comprehensive
+overview of techniques for kernel-based graph classification developed in the
+past 15 years. We describe and categorize graph kernels based on properties
+inherent to their design, such as the nature of their extracted graph features,
+their method of computation and their applicability to problems in practice. In
+an extensive experimental evaluation, we study the classification accuracy of a
+large suite of graph kernels on established benchmarks as well as new datasets.
+We compare the performance of popular kernels with several baseline methods and
+study the effect of applying a Gaussian RBF kernel to the metric induced by a
+graph kernel. In doing so, we find that simple baselines become competitive
+after this transformation on some datasets. Moreover, we study the extent to
+which existing graph kernels agree in their predictions (and prediction errors)
+and obtain a data-driven categorization of kernels as result. Finally, based on
+our experimental results, we derive a practitioner's guide to kernel-based
+graph classification.},
+ arxiv_url = {https://arxiv.org/pdf/1903.11835v2.pdf},
+ author = {Nils M. Kriege and Fredrik D. Johansson and Christopher Morris},
+ doi = {10.1007/s41109-019-0195-3},
+ journal = {Applied Network Science 5 (2020)},
+ title = {A survey on graph kernels},
+ year = {2019}
+}
+
+@article{lei-2017-deriving,
+ abstract = {The design of neural architectures for structured objects is typically guided
+by experimental insights rather than a formal process. In this work, we appeal
+to kernels over combinatorial structures, such as sequences and graphs, to
+derive appropriate neural operations. We introduce a class of deep recurrent
+neural operations and formally characterize their associated kernel spaces. Our
+recurrent modules compare the input to virtual reference objects (cf. filters
+in CNN) via the kernels. Similar to traditional neural operations, these
+reference objects are parameterized and directly optimized in end-to-end
+training. We empirically evaluate the proposed class of neural architectures on
+standard applications such as language modeling and molecular graph regression,
+achieving state-of-the-art results across these applications.},
+ arxiv_url = {https://arxiv.org/pdf/1705.09037v3.pdf},
+ author = {Tao Lei and Wengong Jin and Regina Barzilay and Tommi Jaakkola},
+ title = {Deriving neural architectures from sequence and graph kernels},
+ year = {2017}
+}
+
+@article{mairal-2016-end,
+ abstract = {In this paper, we introduce a new image representation based on a multilayer
+kernel machine. Unlike traditional kernel methods where data representation is
+decoupled from the prediction task, we learn how to shape the kernel with
+supervision. We proceed by first proposing improvements of the
+recently-introduced convolutional kernel networks (CKNs) in the context of
+unsupervised learning; then, we derive backpropagation rules to take advantage
+of labeled training data. The resulting model is a new type of convolutional
+neural network, where optimizing the filters at each layer is equivalent to
+learning a linear subspace in a reproducing kernel Hilbert space (RKHS). We
+show that our method achieves reasonably competitive performance for image
+classification on some standard "deep learning" datasets such as CIFAR-10 and
+SVHN, and also for image super-resolution, demonstrating the applicability of
+our approach to a large variety of image-related tasks.},
+ arxiv_url = {https://arxiv.org/pdf/1605.06265v2.pdf},
+ author = {Julien Mairal},
+ title = {End-to-end kernel learning with supervised con- volutional kernel networks},
+ year = {2016}
+}
+
+@article{morris-2018-weisfeiler,
+ abstract = {In recent years, graph neural networks (GNNs) have emerged as a powerful
+neural architecture to learn vector representations of nodes and graphs in a
+supervised, end-to-end fashion. Up to now, GNNs have only been evaluated
+empirically -- showing promising results. The following work investigates GNNs
+from a theoretical point of view and relates them to the $1$-dimensional
+Weisfeiler-Leman graph isomorphism heuristic ($1$-WL). We show that GNNs have
+the same expressiveness as the $1$-WL in terms of distinguishing non-isomorphic
+(sub-)graphs. Hence, both algorithms also have the same shortcomings. Based on
+this, we propose a generalization of GNNs, so-called $k$-dimensional GNNs
+($k$-GNNs), which can take higher-order graph structures at multiple scales
+into account. These higher-order structures play an essential role in the
+characterization of social networks and molecule graphs. Our experimental
+evaluation confirms our theoretical findings as well as confirms that
+higher-order information is useful in the task of graph classification and
+regression.},
+ arxiv_url = {https://arxiv.org/pdf/1810.02244v5.pdf},
+ author = {Christopher Morris and Martin Ritzert and Matthias Fey and William L. Hamilton and Jan Eric Lenssen and Gaurav Rattan and Martin Grohe},
+ title = {Weisfeiler and Leman go neural: Higher-order graph neural networks},
+ year = {2018}
+}
+
+@article{murray-2014-generalized,
+ abstract = {State-of-the-art patch-based image representations involve a pooling
+operation that aggregates statistics computed from local descriptors. Standard
+pooling operations include sum- and max-pooling. Sum-pooling lacks
+discriminability because the resulting representation is strongly influenced by
+frequent yet often uninformative descriptors, but only weakly influenced by
+rare yet potentially highly-informative ones. Max-pooling equalizes the
+influence of frequent and rare descriptors but is only applicable to
+representations that rely on count statistics, such as the bag-of-visual-words
+(BOV) and its soft- and sparse-coding extensions. We propose a novel pooling
+mechanism that achieves the same effect as max-pooling but is applicable beyond
+the BOV and especially to the state-of-the-art Fisher Vector -- hence the name
+Generalized Max Pooling (GMP). It involves equalizing the similarity between
+each patch and the pooled representation, which is shown to be equivalent to
+re-weighting the per-patch statistics. We show on five public image
+classification benchmarks that the proposed GMP can lead to significant
+performance gains with respect to heuristic alternatives.},
+ arxiv_url = {https://arxiv.org/pdf/1406.0312v1.pdf},
+ author = {Naila Murray and Florent Perronnin},
+ title = {Generalized max pooling},
+ year = {2014}
+}
+
+@article{navarin-2018-pre,
+ abstract = {Many machine learning techniques have been proposed in the last few years to
+process data represented in graph-structured form. Graphs can be used to model
+several scenarios, from molecules and materials to RNA secondary structures.
+Several kernel functions have been defined on graphs that coupled with
+kernelized learning algorithms, have shown state-of-the-art performances on
+many tasks. Recently, several definitions of Neural Networks for Graph (GNNs)
+have been proposed, but their accuracy is not yet satisfying. In this paper, we
+propose a task-independent pre-training methodology that allows a GNN to learn
+the representation induced by state-of-the-art graph kernels. Then, the
+supervised learning phase will fine-tune this representation for the task at
+hand. The proposed technique is agnostic on the adopted GNN architecture and
+kernel function, and shows consistent improvements in the predictive
+performance of GNNs in our preliminary experimental results.},
+ arxiv_url = {https://arxiv.org/pdf/1811.06930v1.pdf},
+ author = {Nicolò Navarin and Dinh V. Tran and Alessandro Sperduti},
+ title = {Pre-training graph neural networks with kernels},
+ year = {2018}
+}
