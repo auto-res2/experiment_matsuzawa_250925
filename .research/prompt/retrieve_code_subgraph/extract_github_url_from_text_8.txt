@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The core methodology, Spexphormer, involves a two-phase training process. The first phase trains an 'Attention Score Estimator Network,' a narrow-width (e.g., 4-8) network with one attention head, designed to learn important neighbor connections. This network uses a higher-degree expander graph (30-200) and learnable embeddings for different edge types. Two architectural changes enhance consistency: V-normalization with a learnable global scale and a variable temperature annealing schedule (starting at 1.0, gradually reducing to 0.05) to sharpen attention scores. The second phase uses the learned attention scores from the first network to create a layer-wise sparsified interaction graph by sampling a fixed number of edges (degree 'degℓ') per node per layer, without replacement. This sampling is task-dependent and utilizes reservoir sampling for GPU-friendly, parallel execution. The final, wider network is then trained on this much sparser graph, benefiting from regular matrix calculations due to fixed node degrees. The model also incorporates a novel batching technique based on neighborhood expansion to efficiently process large graphs.
+
+# GitHub URLs List
+['https://github.com/hamed1375/Sp_Exphormer']
+Output:
+{
+    "index": 0
+}
