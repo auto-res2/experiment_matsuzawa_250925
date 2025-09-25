@@ -1,0 +1,163 @@
+
+Input:
+# Instructions:
+You determine whether the Python script has succeeded or failed based on the given information.
+Output True if the script SUCCEEDED, False if it FAILED.
+Follow the rules below:
+
+# Rules:
+- Output False if "Error Data" contains any error messages or exceptions.
+- Output False if both "Error Data" and "Output Data" are empty.
+- Output False if "Output Data" does not contain clear experimental results such as:
+  - Quantitative results or measurements
+  - Numerical comparisons or improvements
+  - Completion messages indicating successful execution
+  - Statistical analysis or evaluation results
+- Output True ONLY if "Output Data" contains clear evidence of successful experimental execution with meaningful results.
+
+# Error Data:
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/main.py", line 6, in <module>
+    from .train import train
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/train.py", line 19, in <module>
+    from torch_geometric.nn import (
+ImportError: cannot import name 'GeniePathConv' from 'torch_geometric.nn' (/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/.venv/lib/python3.11/site-packages/torch_geometric/nn/__init__.py)
+
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/main.py", line 6, in <module>
+    from .train import train
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/train.py", line 29, in <module>
+    from .utils.energy import EnergyMeter
+ModuleNotFoundError: No module named 'src.utils'
+
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/main.py", line 35, in <module>
+    main()
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/main.py", line 32, in main
+    train(cfg, run_name)
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/train.py", line 178, in train
+    data = load_dataset(config["dataset"], device)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/preprocess.py", line 51, in load_dataset
+    data = _ogb_loader("ogbn-products", root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/preprocess.py", line 14, in _ogb_loader
+    dset = PygNodePropPredDataset(name=name, root=root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/.venv/lib/python3.11/site-packages/ogb/nodeproppred/dataset_pyg.py", line 125, in download
+    if decide_download(url):
+       ^^^^^^^^^^^^^^^^^^^^
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/.venv/lib/python3.11/site-packages/ogb/utils/url.py", line 17, in decide_download
+    return input("This will download %.2fGB. Will you proceed? (y/N)\n" % (size)).lower() == "y"
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+EOFError: EOF when reading a line
+
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/main.py", line 35, in <module>
+    main()
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/main.py", line 32, in main
+    train(cfg, run_name)
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/train.py", line 178, in train
+    data = load_dataset(config["dataset"], device)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/preprocess.py", line 51, in load_dataset
+    data = _ogb_loader("ogbn-products", root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/preprocess.py", line 55, in _ogb_loader
+    if input('Will you update the dataset now? (y/N)\n').lower() == 'y':
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+EOFError: EOF when reading a line
+
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/main.py", line 35, in <module>
+    main()
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/main.py", line 32, in main
+    train(cfg, run_name)
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/train.py", line 178, in train
+    data = load_dataset(config["dataset"], device)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/preprocess.py", line 66, in load_dataset
+    data = _ogb_loader("ogbn-products", root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/preprocess.py", line 25, in _ogb_loader
+    dset = PygNodePropPredDataset(name=name, root=root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/.venv/lib/python3.11/site-packages/ogb/nodeproppred/dataset_pyg.py", line 69, in __init__
+    self.data, self.slices = torch.load(self.processed_paths[0])
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/.venv/lib/python3.11/site-packages/torch/serialization.py", line 1529, in load
+    raise pickle.UnpicklingError(_get_wo_message(str(e))) from None
+_pickle.UnpicklingError: Weights only load failed. This file can still be loaded, to do so you have two options, [1mdo those steps only if you trust the source of the checkpoint[0m. 
+	(1) In PyTorch 2.6, we changed the default value of the `weights_only` argument in `torch.load` from `False` to `True`. Re-running `torch.load` with `weights_only` set to `False` will likely succeed, but it can result in arbitrary code execution. Do it only if you got the file from a trusted source.
+	(2) Alternatively, to load with `weights_only=True` please check the recommended steps in the following error message.
+	WeightsUnpickler error: Unsupported global: GLOBAL torch_geometric.data.data.DataEdgeAttr was not an allowed global by default. Please use `torch.serialization.add_safe_globals([torch_geometric.data.data.DataEdgeAttr])` or the `torch.serialization.safe_globals([torch_geometric.data.data.DataEdgeAttr])` context manager to allowlist this global if you trust this class/function.
+
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/main.py", line 35, in <module>
+    main()
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/main.py", line 32, in main
+    train(cfg, run_name)
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/train.py", line 178, in train
+    data = load_dataset(config["dataset"], device)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/preprocess.py", line 74, in load_dataset
+    data = _ogb_loader("ogbn-products", root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/preprocess.py", line 46, in _ogb_loader
+    data.train_mask[torch.from_numpy(split['train'])] = True
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: expected np.ndarray (got Tensor)
+
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/main.py", line 35, in <module>
+    main()
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/main.py", line 32, in main
+    train(cfg, run_name)
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/train.py", line 218, in train
+    out = model(data.x, data.edge_index)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/.venv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/.venv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1784, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/train.py", line 53, in forward
+    x = conv(x, edge_index)
+        ^^^^^^^^^^^^^^^^^^^
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/.venv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/.venv/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1784, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/.venv/lib/python3.11/site-packages/torch_geometric/nn/conv/gat_conv.py", line 366, in forward
+    out = self.propagate(edge_index, x=x, alpha=alpha, size=size)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/torch_geometric.nn.conv.gat_conv_GATConv_propagate_3is0jr5h.py", line 176, in propagate
+    out = self.message(
+          ^^^^^^^^^^^^^
+  File "/home/toma/pt80-1-a-27/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/.venv/lib/python3.11/site-packages/torch_geometric/nn/conv/gat_conv.py", line 414, in message
+    return alpha.unsqueeze(-1) * x_j
+           ~~~~~~~~~~~~~~~~~~~~^~~~~
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 60.16 GiB. GPU 0 has a total capacity of 79.15 GiB of which 7.00 GiB is free. Including non-PyTorch memory, this process has 72.15 GiB memory in use. Of the allocated memory 70.03 GiB is allocated by PyTorch, and 1.63 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+# Output Data:
+
+Output:
+{
+    "is_experiment_successful": false
+}
