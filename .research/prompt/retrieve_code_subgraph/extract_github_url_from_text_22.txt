@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The proposed ANS-GT model consists of two core components: 1. Adaptive Node Sampling (ANS): This module adaptively assigns weights to multiple sampling heuristics (1-hop neighbors, 2-hop neighbors, Personalized PageRank (PPR), and KNN based on cosine similarity of attributes) by formulating the optimization as an adversary bandit problem, modifying the Exp4.P method. Rewards are calculated based on the attention weights and the sampling probabilities, aiming to align sampling distributions with node significance. Weights are updated periodically during training. 2. Hierarchical Graph Attention: This scheme combines fine-grained local attention (using the adaptive node sampling) and coarse-grained global attention. For global attention, graph coarsening algorithms (e.g., Variational Neighborhoods) are applied to generate a smaller coarse graph, and sampled super-nodes from this graph, along with learnable global nodes, are incorporated into the attention mechanism to capture long-range dependencies efficiently. Positional encoding uses proximity encoding. The model uses a standard Transformer architecture with multi-head self-attention and feed-forward networks, optimized with AdamW and cross-entropy loss with bagging aggregation during inference.
+
+# GitHub URLs List
+['https://github.com/zaixizhang/ANS-GT']
+Output:
+{
+    "index": 0
+}
