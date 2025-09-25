@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+Sketch-GNN's methodology centers on sketching high-dimensional graph data structures (n x n adjacency matrix and n x d node feature matrix) to lower dimensions (c x c and c x d respectively). The core technique is Polynomial Tensor Sketch (PTS), which approximates non-linear activation functions by expanding them into a power series and then sketching each power using count/tensor sketches. The coefficients of this power series are learned online via gradient descent with L2 regularization. For approximating GNN update rules, Sketch-GNN propagates sketches of node representations between layers using pairwise-independent count sketches and FFT-based tensor sketch formulations. To enhance sketch quality and adapt to changing hidden representations, the framework employs a learnable Locality Sensitive Hashing (LSH) technique. This involves updating LSH projection matrices using a sampled triplet loss on a dynamically selected subset of nodes (those with largest gradient signals), without needing to unsketch full representations. Furthermore, to avoid O(n) complexity in loss evaluation, the paper introduces sparse forward-pass and back-propagation, utilizing LSH hash tables per class to identify nodes with poor predictions and compute loss only on a subset.
+
+# GitHub URLs List
+['https://github.com/pyg-team/pytorch_geometric', 'https://github.com/rusty1s/pytorch_sparse', 'https://github.com/devnkong/VQ-GNN', 'https://github.com/szzhang17/Scaling-Up-Graph-Neural-Networks-Via-Graph-Coarsening']
+Output:
+{
+    "index": 2
+}
