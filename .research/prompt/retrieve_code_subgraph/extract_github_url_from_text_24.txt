@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The GPS architecture is a hybrid MPNN+Transformer model composed of three main ingredients: (i) Positional/Structural Encodings (PE/SE), (ii) a local Message Passing Neural Network (MPNN) mechanism, and (iii) a global attention mechanism. PE/SEs are categorized into local, global, and relative types, integrated as node or edge features. The GPS layer updates features by aggregating the output of an MPNN layer (e.g., GINE, GatedGCN, PNA) with edge features and a global attention layer (e.g., Performer, BigBird for linear complexity, or standard Transformer). The design uses linear attention mechanisms to achieve O(N) complexity for global attention. Edge features are explicitly processed only by the MPNN layer, with the argument that node features implicitly encode edge information for the global attention. The architecture is theoretically shown to be a universal function approximator on graphs, capable of preserving edge information and being more powerful than the 1-WL test when combined with rich PE/SEs.
+
+# GitHub URLs List
+['https://github.com/rampasek/GraphGPS']
+Output:
+{
+    "index": 0
+}
