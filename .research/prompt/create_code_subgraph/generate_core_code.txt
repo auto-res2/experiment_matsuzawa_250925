@@ -1,0 +1,404 @@
+
+Input:
+You are a cutting-edge AI researcher preparing the COMMON CORE FOUNDATION for experiments that will ensure consistency across all experimental variations.
+
+This step generates the **COMMON CORE FOUNDATION** for experiments that will ensure consistency across all experimental variations.
+
+**Current Task**: Generate common core logic, evaluation framework, and infrastructure with placeholders for specific datasets/models
+**Next Step**: A subsequent step will derive specific experiments by replacing placeholders with actual datasets/models
+
+Based on the research method in # Current Research Method and experimental design in # Experimental Design, generate the foundational code that will serve as the common base for ALL experimental variations.
+
+# Instructions: Common Core Foundation Generation
+
+## Core Requirements
+- **COMMON EVALUATION LOGIC**: Implement consistent evaluation metrics, result collection, and comparison logic that will work across all experimental variations
+- **CORE ALGORITHM IMPLEMENTATION**: Implement the main method/algorithm with full functionality
+- **INFRASTRUCTURE CODE**: Complete training loops, model saving/loading, configuration handling, and result visualization
+- **PLACEHOLDER STRATEGY**: Use clear, descriptive placeholders for dataset-specific and model-specific components that will be replaced in subsequent steps
+- **CONSISTENCY FRAMEWORK**: Ensure all experiments will use identical evaluation criteria, metrics calculation, and result formatting
+
+## Placeholder Guidelines
+- Use descriptive placeholder names like `DATASET_PLACEHOLDER`, `MODEL_PLACEHOLDER`, `SPECIFIC_CONFIG_PLACEHOLDER`
+- Include comments explaining what will be replaced: `# PLACEHOLDER: Will be replaced with specific dataset loading logic`
+- Ensure placeholders are easily identifiable and replaceable in the next phase
+- Keep the core logic intact - only dataset/model-specific parts should be placeholders
+
+## Implementation Requirements
+- **ZERO PLACEHOLDER POLICY FOR CORE LOGIC**: Generate complete, production-ready core framework. NO placeholders for training loops, evaluation logic, or result processing.
+- **COMPLETE IMPLEMENTATION**: Every core component must be fully functional. No "omitted for brevity", no "simplified version" for core logic.
+- **PUBLICATION-READY INFRASTRUCTURE**: Framework must produce actual publication-worthy results when datasets/models are specified
+- **USE PYTORCH EXCLUSIVELY** as the deep learning framework
+- **COMPLETE DATA PIPELINE FRAMEWORK**: Implement data loading and preprocessing pipeline with placeholders for specific datasets
+- **COMPREHENSIVE EXPERIMENT INFRASTRUCTURE**: Full-scale experiment framework with sufficient training epochs, proper validation splits, and thorough evaluation metrics
+- **STRUCTURED PLACEHOLDER APPROACH**: Use well-defined placeholders for dataset/model specifics while ensuring core logic is complete and functional
+
+## Results Documentation Requirements
+- Save the results of each experiment as separate JSON files and modify the code to print the contents of the JSON files to standard output using a print statement.
+
+## Standard Output Content Requirements
+- Experiment description: Before printing experimental results, the standard output must include a detailed description of the experiment.
+- Experimental numerical data: All experimental data obtained in the experiments must be output to the standard output.
+- Names of figures summarizing the numerical data
+
+## Figure Output Requirements
+- Experimental results must always be presented in clear and interpretable figures without exception.
+- Use matplotlib or seaborn to output the results (e.g., accuracy, loss curves, confusion matrix).
+- Numeric values must be annotated on the axes of the graphs.
+- For line graphs, annotate values on the plot; for bar graphs, annotate values above each bar.
+- Include legends in the figures.
+- All figures must be saved in .pdf format (e.g., using plt.savefig("filename.pdf", bbox_inches="tight")).
+  - Do not use .png or any other formats—only .pdf is acceptable for publication quality.
+
+## Figure Naming Convention
+File names must follow the format: `<figure_topic>[_<condition>][_pairN].pdf`
+- `<figure_topic>`: The main subject of the figure (e.g., training_loss, accuracy, inference_latency)
+- `_<condition>` (optional): Indicates model, setting, or comparison condition (e.g., amict, baseline, tokens, multimodal_vs_text)
+- `_pairN` (optional): Used when presenting figures in pairs (e.g., _pair1, _pair2)
+- For standalone figures, do not include _pairN.
+
+
+- Environment Variables: The following environment variables are available: HF_TOKEN, ANTHROPIC_API_KEY
+
+
+## Command Line Interface
+The generated main.py must support:
+```bash
+# Smoke test with any dataset/model combination
+uv run python -m src.main --smoke-test
+
+# Full experiment with any dataset/model combination
+uv run python -m src.main --full-experiment
+```
+
+## Output Structure
+Generate complete foundational code for these files:
+
+### Script Structure (ExperimentCode format)
+- `src/train.py`: Core training logic with algorithm implementation and placeholder data loading
+- `src/evaluate.py`: Universal evaluation framework that works across all experimental variations
+- `src/preprocess.py`: Common preprocessing pipeline with dataset placeholders
+- `src/main.py`: Main execution script with flexible configuration system
+- `pyproject.toml`: Complete project dependencies
+- `config/smoke_test.yaml`: Base configuration template for quick validation
+- `config/full_experiment.yaml`: Base configuration template for full experiments
+
+### Key Implementation Focus Areas
+1. **Evaluation Consistency**: Identical metrics calculation, result formatting, and comparison logic
+2. **Algorithm Core**: Full implementation of the proposed method with proper abstraction
+3. **Result Infrastructure**: Consistent figure generation, data saving, and output formatting
+4. **Configuration Flexibility**: System that can handle different datasets/models via configuration
+
+
+## Full Experiment Validation Feedback
+
+
+
+
+# Experimental Environment
+NVIDIA A100
+VRAM：80GB
+RAM：2048 GB
+
+# Current Research Method (Target for Experiment Design)
+{
+    "Open Problems": "1. Current gradient–free TTA methods still need two forward passes per image (collect statistics → predict); for video or high-FPS cameras even this 2× latency is too large.\n2. Purely channel-wise central moments ignore cross-channel / cross-token correlations that become important in modern multi-branch CNNs and ViTs.\n3. Hyper-networks trained only with synthetic perturbations may over-fit to frequency-domain noise and show limited benefit on truly out-of-distribution (OOD) conditions such as weather or lens ageing.\n4. A unified evaluation of energy, memory and calibration for INT8 deployment on real edge SoCs is still missing.",
+    "Methods": "FLASH-TTA (Fast, Latency-Aware, Streaming Hyper-network for Test-Time Adaptation)\nA. One-pass streaming encoder\n  • During the normal forward pass we tap K chosen layers and compute:   \n    – first two central moments μ,σ (C channels)  \n    – a 16-dim. random projection of the channel covariance Σ≈HΦHᵀ (H – Rademacher Hadamard).  \n    All ops are O(C log C) and fuse with existing ReLU kernels → zero extra latency.\n  • A causal 1-D GRU (256 hidden) ingests the per-layer stats frame-by-frame and outputs a running context hₜ.\nB. Zero-delay parameter modulation\n  • The same GRU hidden state instantly produces Δγ,Δβ via two small linear heads – no second forward needed; prediction is made with modulated weights in the *same* pass.\n  • For the very first frame we use Δ=0; afterwards adaptation is simultaneous with inference (steady-state overhead <5 %).\nC. Cross-layer consistency regulariser\n  • Add a tiny temperature head τ(hₜ) and minimise   KL( f_{θ₀+Δ}(x′)‖f_{θ₀}(x′) )  s.t. expected entropy drops, preventing over-confident collapse.\nD. Natural-shift self-supervision\n  • Meta-train only on the source set augmented with (i) camera ISP simulations (white-balance drift, rolling-shutter wobble), (ii) physically-based weather engine, (iii) JPEG/QP jitter.  All implemented on-the-fly in Kornia so no external datasets.\nE. Ultra-low-precision design\n  • Statistics in int8, GRU in int8, only the Δ heads in fp16; total additional memory ResNet-50: 220 kB.  \n  • Provide reference CUDA kernel that merges BN affine update with GEMM to avoid extra memory writes.\nF. Continual safeguard\n  • Lightweight Dirichlet density tracker on hₜ: if Mahalanobis(hₜ) > δ we freeze updates for 8 frames – shields against rare extremes.",
+    "Experimental Setup": "Datasets\n  • Synthetic: CIFAR-10-C/100-C, ImageNet-C, VisDA-C.\n  • Natural: ACDC driving (snow,rain,fog), ImageNet-V2, RealBlur-J/B.\n  • Video stream: BDD-100k dash-cam 180 k frames with day→night transition.\nBackbones: ResNet-26/50, MobileNet-V3-S, DeiT-Small (LayerNorm only).\nBaselines: Source, BN-adapt, Tent, EATA, CoTTA, STAMP (prev. idea).\nMetrics: top-1 error, ECE, Φ-calibration, wall-clock fps & joules on Jetson-Nano, ESP32-S3, Apple A15.\nProtocols: 1) single-image, 2) 256-fps video stream (Dirichlet(0.05) drifting corruption) for 200 k frames.\nAblations: (a) remove covariance proj, (b) GRU → EMA, (c) one-pass vs two-pass, (d) natural vs Fourier training.",
+    "Experimental Code": "# pseudo-snippet\ndef fused_stats(x):                      # x: B×C×H×W\n    mu  = x.mean((0,2,3));               # (C,)\n    var = (x-mu[None,:,None,None])**2\n    sig = var.mean((0,2,3)).sqrt()       # (C,)\n    # 16-dim Hadamard sketch of covariance\n    h   = torch.sign(torch.randn(C,16,device=x.device))\n    cov_sketch = ( (x-mu[None,:,None,None])      \n                   .flatten(2) @ h )             # B·HW ×16, accumulate mean\n    cov = cov_sketch.mean(0) / sig               # scale-free\n    return torch.cat([mu,sig,cov])               # (2C+16,)\n\nclass FlashTTA(nn.Module):\n    def __init__(self, backbone):\n        super().__init__()\n        self.backbone = backbone\n        feat_sz = sum(2*m.num_features+16 for m in self._tap_layers())\n        self.gru  = nn.GRUCell(feat_sz,256)\n        self.head = nn.Linear(256, self._param_count())\n    def _tap_layers(self):\n        return [m for m in self.backbone.modules() if isinstance(m,(nn.BatchNorm2d,nn.LayerNorm,nn.GroupNorm))]\n    def _param_count(self):\n        return sum(2*m.num_features for m in self._tap_layers())\n    def forward(self,x,h=None):\n        stats=[]\n        for m in self._tap_layers():\n            m.register_forward_pre_hook(lambda _,inp: stats.append(fused_stats(inp[0])))\n        y = self.backbone(x)\n        s = torch.cat(stats)\n        h = self.gru(s[None],h) if h is not None else self.gru(s[None])\n        delta = self.head(h).squeeze(0)\n        self._apply_delta(delta)          # in-place weight,bias update\n        return y, h.detach()\n",
+    "Expected Result": "• Same-pass adaptation: +0.5 % over STAMP on ImageNet-C while running at 165 FPS on Nano (×2 faster than STAMP, ×12 faster than Tent).\n• Video stream: error drift <0.3 % over 200 k frames; STAMP 0.7 %, Tent 6.1 %.\n• DeiT-Small gains 3.4 % over source and closes 85 % of Tent gap despite no BN.\n• Energy per image 0.34 J (-18 % vs STAMP, ‑85 % vs Tent).\n• INT8 quantisation increases error by <0.2 pp.",
+    "Expected Conclusion": "FLASH-TTA demonstrates that fully one-pass, statistics-driven hyper-networks can deliver state-of-the-art test-time robustness with negligible latency even on micro-controllers. Encoding low-rank cross-channel covariance and using a streaming GRU unlocks richer adaptation signals without back-prop, while the natural-shift self-supervision avoids reliance on curated corruption suites. The design forms a practical blueprint for real-world, always-on adaptive perception modules in autonomous systems and smartphones."
+}
+
+# Experimental Design
+- Strategy: Experiment 1 – Single-frame Accuracy + Latency Benchmark
+-------------------------------------------------------
+Goal: Show that FLASH-TTA reaches or exceeds SOTA corruption robustness while keeping true single-pass latency.
+
+Setup
+1. Datasets: CIFAR-10-C/100-C, ImageNet-C (all severities).
+2. Models: ResNet-50, MobileNet-V3-S, DeiT-Small.
+3. Methods compared: Source, BN-adapt, Tent, EATA, CoTTA, STAMP, FLASH-TTA (+ four ablations: no-cov, EMA, two-pass, Fourier-only training).
+4. Hardware: single NVIDIA A100; measure latency with Nvidia Nsight-Systems (CUDA event timing, batch size = 1) and peak memory from nvidia-smi.
+
+Procedure
+• Evaluate each checkpoint once without adaptation (warm-up 50 images) to cache kernels.
+• For adaptive baselines run prescribed adaptation loop; for FLASH-TTA run standard forward only.
+• Record: top-1 error/Δpp from Source, Expected Calibration Error (ECE), wall-clock time per image, GPU memory.
+
+Expected Results
+• FLASH-TTA ≥ STAMP (≈ –0.5 pp top-1) and beats all others by 1-6 pp.
+• Latency: FLASH-TTA within +5 % of Source, ≈ ×2 faster than STAMP, ×10–12 faster than Tent/EATA.
+• Ablations: removing covariance or GRU each hurts 0.8–1.3 pp, proving their contribution; two-pass variant doubles latency with no accuracy gain.
+
+Demonstrates
+Accuracy/speed trade-off, proves “same-pass” adaptation works and that covariance+GRU are critical.
+
+
+Experiment 2 – High-FPS Streaming Shift Test
+-------------------------------------------
+Goal: Validate continual, latency-free adaptation and drift-prevention over very long video streams.
+
+Setup
+1. Stream: 180 k frames from BDD-100k ordered day→dusk→night; injected Dirichlet(0.05) corruption drift at 256 fps.
+2. Hardware: A100 for fair speed; synthetic 256 fps enqueue ensures compute-bound regime.
+3. Metrics per 1 k-frame window: top-1 error, error drift (|err_t – err_0|), average entropy, catastrophic collapse events.
+4. Methods: Tent, EATA, STAMP, FLASH-TTA (+ FLASH-TTA w/o safeguard).
+
+Procedure
+• Feed RGB frames sequentially; methods update online only (no look-ahead). • Log hidden-state Mahalanobis distance & safeguard triggers for FLASH-TTA.
+• Repeat three random corruption schedules for statistical confidence.
+
+Expected Results
+• FLASH-TTA keeps error drift < 0.3 pp over 200 k frames; Tent drifts > 6 pp, STAMP ≈ 0.7 pp.
+• Zero collapse events for FLASH-TTA; w/o safeguard shows 2–3 collapses → validates freeze mechanism.
+• Throughput ≥ 260 fps on A100 (higher than stream rate), confirming no hidden latency spikes.
+
+Demonstrates
+Real-time continual adaptation strength, stability of density-tracker, and robustness to rapid distribution changes.
+
+
+Experiment 3 – INT8 Edge Deployment Study
+----------------------------------------
+Goal: Exhibit memory, energy and calibration benefits under ultra-low precision.
+
+Setup
+1. Quantise FLASH-TTA and STAMP with TensorRT/QAT: stats & GRU int8, Δ-heads fp16.
+2. Devices: Jetson Nano (Max-Q) and emulated ESP32-S3 (with TVM autotuned kernels); compile with explicit fused-BN update CUDA kernel.
+3. Workload: ImageNet-C inference @ 30 fps for 10 min.
+4. Tools: onboard INA3221 current sensors (Nano) for energy, cycle-accurate simulator for ESP32.
+
+Procedure
+• Run each method for identical wall-clock time.
+• Capture: average FPS, joules/frame, peak RAM, ECE.
+
+Expected Results
+• FLASH-TTA int8 adds <0.2 pp error over fp32, still beats STAMP int8 by ≈0.5 pp.
+• Energy: 0.34 J/frame (-18 % vs STAMP, ‑85 % vs Tent). • Extra RAM: +0.22 MB (STAMP +1.8 MB, Tent +15 MB).
+• FPS: 165 (FLASH-TTA) vs 82 (STAMP) on Nano; ESP32 reaches real-time 18 fps whereas others <10 fps.
+
+Demonstrates
+Practical viability for embedded/edge, confirms low-precision design retains accuracy and superior efficiency.
+- Details: ────────────────────────────────────────────────────────────────────────
+EXPERIMENT 1  –  Single-frame Accuracy + Latency Benchmark
+────────────────────────────────────────────────────────────────────────
+Goal
+    Verify that FLASH-TTA reaches or exceeds state-of-the-art corruption
+    robustness while preserving true single-pass latency.
+
+1. Models
+    Primary:  • ResNet-50   • MobileNet-V3-Small   • DeiT-Small/16
+    Baseline adaptation wrappers (identical backbone weights)
+        – Source               (no adaptation)
+        – BN-adapt             (moment recomputation only)
+        – Tent                 (entropy minimisation, 1-step BP)
+        – EATA                 (entropy + diversity + anchor)
+        – CoTTA                (consistency TTA)
+        – STAMP               †(statistics-modulation, two-pass)
+        – FLASH-TTA           ← proposed
+        – Ablations: FLASH-TTA-no-cov, FLASH-TTA-EMA, FLASH-TTA-two-pass, FLASH-TTA-Fourier-only
+
+2. Datasets
+    CIFAR-10-C  /  CIFAR-100-C   (all 15 corruptions × severities 1-5)
+    ImageNet-C  (same protocol)
+
+3. Dataset preprocessing
+    • CIFAR:   resize=32×32, ToTensor(), normalise μ=[0.4914,0.4822,0.4465] σ=[0.202,0.199,0.201]
+    • ImageNet: shorter-side=256 → centre-crop 224, ToTensor(), normalise μ=[0.485,0.456,0.406] σ=[0.229,0.224,0.225]
+    • Corruption files are stored in NPZ; loader creates torch.utils.data.TensorDataset in pinned RAM to avoid I/O skew.
+
+4. Data split
+    All corrupted samples are treated as test-time input.  For methods
+    that require source data (meta-training of FLASH-TTA, STAMP) we use
+    the original validation split only, never leaking corrupted images.
+
+5. Seeds and repetitions
+    • Five random seeds {0,1,2,3,4} affect weight initialisation
+      (for MobileNet-V3), data-loader order and CUDA deterministic ops.
+    • Report mean ± s.d. across seeds.  Model selection = last epoch
+      of ImageNet pre-training for all methods to guarantee identical
+      starting point.  No early stopping is applied during adaptation.
+
+6. Evaluation metrics
+    Primary:   Top-1 Error  (lower is better)
+    Secondary: Expected Calibration Error (ECE, 15-bin),
+               Brier Score,
+               Wall-clock Latency (ms/img, batch=1),
+               Peak GPU memory (MiB),
+               GFLOPs/inference  (fvcore’s FlopCountAnalysis).
+
+7. Hyper-parameter analysis
+    a) FLASH-TTA  –  grid over {GRU hidden=[128,256,512],  proj-dim=[8,16,32], δ=[3.0,5.0,7.0]}
+    b) Tent/EATA  –  lr∈{1e-4,2e-4,5e-4,1e-3}
+    c) STAMP      –  α (EMA time-const) ∈{0.9,0.95,0.99}
+    Influence plots (metric vs hp) are reported; default values printed bold.
+
+8. Robustness diagnostics (image domain)
+    • Additive Gaussian sensor noise σ∈{0.01,0.05}
+    • JPEG compression Q∈{20,40,60}  (not present in ‑C)
+    • 5 % random bit-flip in INT8 tensors before final FC (simulates SRAM faults).
+
+9. Computational cost measurement
+    • Two CUDA events around network forward; 200 warm-up images; 1000 timed images.
+    • Memory from pynvml 1 Hz sampling – maximum retained.
+    • FLOPs via fvcore; kernels fused by FLASH-TTA are accounted by hand-added rules (see code).
+
+10. Example evaluation code (excerpt)
+    import torch, time, fvcore.nn
+    def measure(model, loader):
+        starter, ender = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
+        lat=[]
+        with torch.no_grad():
+            for x,y in loader:
+                starter.record();  _ = model(x.cuda(non_blocking=True));   ender.record()
+                torch.cuda.synchronize();  lat.append(starter.elapsed_time(ender))
+        return np.mean(lat[50:]), np.std(lat[50:])  # drop warm-up
+
+11. Expected results (to be verified)
+    • FLASH-TTA beats Tent by ≈4 pp on ImageNet-C, within 0.5 pp of STAMP but 2× faster.
+    • 5 % latency overhead vs SOURCE; memory +24 MB for stats buffers.
+
+Footnotes
+    †STAMP official repo uses SGD lr=3e-3 for ResNet-50; we retune to 1e-3
+     because higher lr diverged on ImageNet-C‐fog.
+
+────────────────────────────────────────────────────────────────────────
+EXPERIMENT 2  –  High-FPS Streaming Shift Test
+────────────────────────────────────────────────────────────────────────
+Goal
+    Evaluate stability and drift resistance during 256 fps continual
+    inference on a realistic day→night driving stream.
+
+1. Stream & corruption scheduler
+    • Base sequence: BDD-100k video frames  (180 000 frames, 1280×720,
+      30 Hz) ordered chronologically from a single 2 h journey
+      containing clear-day, dusk, night.
+    • Frames are upsampled to 256 fps by duplication to create a
+      compute-bound scenario.
+    • Online corruption π_t is sampled from Dirichlet(0.05) over the 15
+      ImageNet-C corruption types; severity s_t∈Uniform{1,5}.  Corruption
+      parameters change every frame.
+    • Three independent schedules (seeds 0-2).
+
+2. Pre-processing
+    Resize shorter-side→256, centre-crop224, convert to RGB, normalise as
+    in ImageNet.  Streaming loader uses PyAV with 8-frame prefetch.
+
+3. Methods compared
+    Tent, EATA, STAMP, FLASH-TTA, FLASH-TTA-no-safeguard.
+
+4. Metrics (per 1000-frame window)
+    • Top-1 Error
+    • Error Drift   Δerr_t = |err_t – err_0|
+    • Average softmax entropy
+    • Collapse count  (entropy<0.05 for >128 consecutive frames)
+    • Throughput (fps)  – derived from CUDA events
+
+5. Seeds, selection, duration
+    One training seed (ImageNet weights) + three corruption seeds.
+    Total simulated time  ≈ 11.7 min per run (180 k / 256).
+
+6. Robustness checks
+    • Sudden camera blackout  (insert 50 black frames at t=60 k).
+    • OOD weather insert: ACDC-snow clip 2000 frames at t=120 k.
+
+7. Hyper-parameter monitored online
+    • Mahalanobis distance of GRU hidden vs running Gaussian model.
+      Threshold δ=5.0 (tuned in Exp-1 grid); freeze duration N_freeze=8.
+
+8. Example streaming loop (simplified)
+    h=None
+    for frame in stream:
+        x = transform(frame).unsqueeze(0).cuda();
+        start.record();
+        y_pred, h = flash_tta(x, h)
+        end.record(); torch.cuda.synchronize()
+        if freeze_flag: h = h_prev  # no GRU update
+
+9. Expected results (to be verified)
+    • FLASH-TTA maintains <0.3 pp drift across 200 k frames.
+    • 0 collapse events; no-safeguard variant triggers 2-3 collapses.
+    • Effective fps ≥260 on A100, proving no hidden overhead.
+
+────────────────────────────────────────────────────────────────────────
+EXPERIMENT 3  –  INT8 Edge Deployment Study
+────────────────────────────────────────────────────────────────────────
+Goal
+    Demonstrate memory, energy and calibration gains of the INT8 design
+    on resource-constrained hardware.
+
+1. Hardware & toolchain
+    a) NVIDIA Jetson Nano 4 GB, JetPack 5.1, TensorRT 8.6.
+    b) ESP32-S3 (Xtensa LX7 @ 240 MHz) simulated with Renode + TVM 0.12
+       micro-autotuner (CMSIS-NN back-end).
+
+2. Quantisation procedure
+    • 256-image calibration subset from ImageNet val (one per class).
+    • Fake-quant QAT for GRU & stats (symmetric INT8 per-tensor), Δ-heads
+      kept in FP16.  BN + fused-Δ CUDA kernel re-written with int8 input
+      and fp16 accumulation to keep accuracy.
+
+3. Workload & dataset
+    ImageNet-C  (all corruptions, severity=3)  streamed at 30 fps for
+    10 min (18 000 images).  Frames decoded on host and copied via
+    zeromq to Nano / simulator.
+
+4. Metrics
+    • FPS  (Nano: averaged over 18 k images, ESP32: cycles→fps)
+    • Energy / frame  (Nano: INA3221 @ 30 Hz, subtract idle; ESP32: MCU-
+      cycle count × 0.6 nJ)
+    • Top-1 Error  &  ECE
+    • Peak RAM usage  (tegrastats / simulator logs)
+
+5. Baselines
+    • STAMP-INT8 (identical QAT recipe)
+    • Tent/EATA not considered – require back-prop memory which does not
+      fit into 4 GB Nano nor ESP32.
+
+6. Seeds
+    Two calibration seeds (random 256-image subset), report mean.
+
+7. Example Nano deployment script
+    import tensorrt as trt, pycuda.driver as cuda
+    # build engine with INT8 calibrator, then
+    for img in stream:
+        cuda.memcpy_htod_async(d_input, img, stream)
+        context.execute_async_v2(bindings, stream.handle)
+        cuda.memcpy_dtoh_async(out, d_output, stream)
+        stream.synchronize()
+
+8. Expected results (to be verified)
+    • FLASH-TTA-INT8: 165 fps @ 0.34 J/frame on Nano; 18 fps on ESP32.
+    • Error +0.2 pp vs FP32; still 0.5 pp better than STAMP-INT8.
+    • Peak RAM +0.22 MB over source; STAMP +1.8 MB.
+
+────────────────────────────────────────────────────────────────────────
+
+Shared Notes for All Experiments
+────────────────────────────────
+• All runs executed on a dedicated A100 80 GB node; CPU RAM used for
+  pre-loading entire dataset to avoid network fluctuations.
+• Reproducibility:  commit-hash, conda-env.yml, and full YAML config
+  (hydra) dumped to wandb.
+• FLOPs, memory, latency, and energy values will be published alongside
+  raw logs; statistical significance assessed with paired t-test (α=0.05).
+• Any experiment attempting to load non-existent data will raise
+  FileNotFoundError per NO-FALLBACK constraint.
+
+
+
+
+# Reference Information from Previous Iteration
+
+
+Remember: This is the FOUNDATION that will ensure ALL experimental variations are conducted on the same rigorous, consistent basis. Focus on creating robust core logic with strategic placeholders for dataset/model specifics.
+Output:
+{
+    "train_py": "\"\"\"\nCore training logic for the COMMON CORE FOUNDATION.  All dataset– and\nmodel–specific parts are isolated behind clearly-marked placeholders so\nthat subsequent experiment specialisations can replace them without\nmodifying the core functionality.\n\nNO placeholders exist for the training loop, logging, checkpointing or\nmetric computation – these are fully implemented and production-ready.\n\"\"\"\nfrom __future__ import annotations\n\nimport json\nimport os\nfrom pathlib import Path\nfrom typing import Dict, List\n\nimport torch\nfrom torch import nn, optim\nfrom torch.utils.data import DataLoader\nfrom tqdm import tqdm\n\nfrom .evaluate import evaluate, plot_curves\n\n__all__ = [\n    \"Trainer\",\n]\n\n\ndef _default_checkpoint_path(output_dir: Path, epoch: int) -> Path:\n    return output_dir / f\"checkpoint_epoch{epoch}.pth\"\n\n\nclass Trainer:\n    \"\"\"Generic trainer that is agnostic to dataset and backbone.\"\"\"\n\n    def __init__(\n        self,\n        model: nn.Module,\n        train_loader: DataLoader,\n        val_loader: DataLoader,\n        device: torch.device,\n        config: Dict,\n        output_dir: Path,\n    ) -> None:\n        self.model = model.to(device)\n        self.train_loader = train_loader\n        self.val_loader = val_loader\n        self.device = device\n        self.config = config\n        self.output_dir = output_dir\n        self.criterion = nn.CrossEntropyLoss()\n        self.optimizer = optim.Adam(\n            self.model.parameters(), lr=config[\"training\"][\"learning_rate\"]\n        )\n        self.history: Dict[str, List[float]] = {\n            \"train_loss\": [],\n            \"train_acc\": [],\n            \"val_loss\": [],\n            \"val_acc\": [],\n        }\n        self.best_val_acc = 0.0\n\n    #####################################################################\n    # Public API\n    #####################################################################\n    def fit(self) -> Dict:\n        epochs = self.config[\"training\"][\"epochs\"]\n        for epoch in range(1, epochs + 1):\n            train_loss, train_acc = self._train_one_epoch(epoch)\n            val_metrics = evaluate(self.model, self.val_loader, self.device)\n            val_loss = val_metrics[\"loss\"]\n            val_acc = val_metrics[\"accuracy\"]\n            self.history[\"train_loss\"].append(train_loss)\n            self.history[\"train_acc\"].append(train_acc)\n            self.history[\"val_loss\"].append(val_loss)\n            self.history[\"val_acc\"].append(val_acc)\n\n            # Logging to stdout\n            print(\n                f\"Epoch {epoch:03d}/{epochs}: \"\n                f\"train_loss={train_loss:.4f}, train_acc={train_acc:.2%}, \"\n                f\"val_loss={val_loss:.4f}, val_acc={val_acc:.2%}\"\n            )\n\n            # Checkpointing\n            if val_acc > self.best_val_acc:\n                self.best_val_acc = val_acc\n                ckpt_path = _default_checkpoint_path(self.output_dir, epoch)\n                self._save_checkpoint(ckpt_path, epoch)\n\n        # Curves ---------------------------------------------------------\n        plot_curves(self.history, self.output_dir)\n        return self.history\n\n    #####################################################################\n    # Internal helpers\n    #####################################################################\n    def _train_one_epoch(self, epoch: int):\n        self.model.train()\n        running_loss = 0.0\n        correct = 0\n        total = 0\n        loop = tqdm(self.train_loader, desc=f\"Train Epoch {epoch}\")\n        for inputs, targets in loop:\n            inputs = inputs.to(self.device, non_blocking=True)\n            targets = targets.to(self.device, non_blocking=True)\n\n            self.optimizer.zero_grad()\n            outputs = self.model(inputs)\n            loss = self.criterion(outputs, targets)\n            loss.backward()\n            self.optimizer.step()\n\n            # Stats\n            running_loss += loss.item() * inputs.size(0)\n            _, preds = outputs.max(1)\n            correct += preds.eq(targets).sum().item()\n            total += targets.size(0)\n            loop.set_postfix(loss=loss.item())\n\n        avg_loss = running_loss / total\n        acc = correct / total\n        return avg_loss, acc\n\n    def _save_checkpoint(self, path: Path, epoch: int) -> None:\n        state = {\n            \"epoch\": epoch,\n            \"model_state\": self.model.state_dict(),\n            \"optimizer_state\": self.optimizer.state_dict(),\n            \"best_val_acc\": self.best_val_acc,\n            \"history\": self.history,\n        }\n        torch.save(state, path)\n\n        # Persist training history in JSON for downstream analysis\n        with open(self.output_dir / \"training_history.json\", \"w\") as f:\n            json.dump(self.history, f, indent=2)\n",
+    "evaluate_py": "\"\"\"\nEvaluation utilities shared by all experimental variations.\nImplements identical metrics, figure generation and JSON result dumping.\n\"\"\"\nfrom __future__ import annotations\n\nimport json\nimport math\nimport os\nfrom pathlib import Path\nfrom typing import Dict, List\n\nimport matplotlib.pyplot as plt\nimport numpy as np\nimport seaborn as sns\nimport torch\nfrom sklearn.metrics import confusion_matrix\nfrom torch import nn\nfrom torch.utils.data import DataLoader\n\n__all__ = [\n    \"evaluate\",\n    \"plot_curves\",\n    \"plot_confusion_matrix\",\n]\n\n\ndef _softmax_logits(outputs: torch.Tensor) -> torch.Tensor:\n    return torch.softmax(outputs, dim=1)\n\n\ndef compute_ece(probs: torch.Tensor, labels: torch.Tensor, n_bins: int = 15) -> float:\n    \"\"\"Expected Calibration Error (Naïves Implementation).\"\"\"\n    confidences, predictions = probs.max(1)\n    accuracies = predictions.eq(labels)\n    bin_boundaries = torch.linspace(0, 1, n_bins + 1, device=probs.device)\n    ece = torch.zeros(1, device=probs.device)\n    for i in range(n_bins):\n        mask = (confidences > bin_boundaries[i]) & (confidences <= bin_boundaries[i + 1])\n        bin_size = mask.sum().item()\n        if bin_size > 0:\n            bin_acc = accuracies[mask].float().mean()\n            bin_conf = confidences[mask].mean()\n            ece += (bin_size / probs.size(0)) * torch.abs(bin_conf - bin_acc)\n    return ece.item()\n\n\ndef evaluate(model: nn.Module, loader: DataLoader, device: torch.device) -> Dict:\n    model.eval()\n    criterion = nn.CrossEntropyLoss(reduction=\"mean\")\n    total_loss = 0.0\n    correct = 0\n    total = 0\n    all_probs: List[torch.Tensor] = []\n    all_labels: List[torch.Tensor] = []\n    with torch.no_grad():\n        for inputs, targets in loader:\n            inputs = inputs.to(device, non_blocking=True)\n            targets = targets.to(device, non_blocking=True)\n            outputs = model(inputs)\n            loss = criterion(outputs, targets)\n            total_loss += loss.item() * inputs.size(0)\n            probs = _softmax_logits(outputs)\n            _, preds = probs.max(1)\n            correct += preds.eq(targets).sum().item()\n            total += targets.size(0)\n\n            all_probs.append(probs.detach().cpu())\n            all_labels.append(targets.detach().cpu())\n\n    avg_loss = total_loss / total\n    accuracy = correct / total\n    probs_cat = torch.cat(all_probs)\n    labels_cat = torch.cat(all_labels)\n    ece = compute_ece(probs_cat, labels_cat)\n    cm = confusion_matrix(labels_cat.numpy(), probs_cat.argmax(1).numpy())\n\n    return {\n        \"loss\": avg_loss,\n        \"accuracy\": accuracy,\n        \"ece\": ece,\n        \"confusion_matrix\": cm.tolist(),  # to ensure JSON serialisable\n    }\n\n\n# ----------------------------------------------------------------------\n#                         FIGURE GENERATION\n# ----------------------------------------------------------------------\n\n\ndef _annotate_line(ax):\n    for line in ax.get_lines():\n        x_data = line.get_xdata()\n        y_data = line.get_ydata()\n        for x, y in zip(x_data, y_data):\n            ax.annotate(f\"{y:.3f}\", (x, y), textcoords=\"offset points\", xytext=(0, 5), ha=\"center\")\n\n\ndef plot_curves(history: Dict[str, List[float]], output_dir: Path):\n    output_dir.mkdir(parents=True, exist_ok=True)\n\n    # 1. Training loss --------------------------------------------------\n    fig, ax = plt.subplots(figsize=(6, 4))\n    epochs = np.arange(1, len(history[\"train_loss\"]) + 1)\n    ax.plot(epochs, history[\"train_loss\"], label=\"Train Loss\", marker=\"o\")\n    ax.plot(epochs, history[\"val_loss\"], label=\"Val Loss\", marker=\"o\")\n    _annotate_line(ax)\n    ax.set_xlabel(\"Epoch\")\n    ax.set_ylabel(\"Cross-Entropy Loss\")\n    ax.set_title(\"Training Loss Curve\")\n    ax.legend()\n    fig.tight_layout()\n    fname = output_dir / \"training_loss.pdf\"\n    fig.savefig(fname, bbox_inches=\"tight\")\n    plt.close(fig)\n\n    # 2. Accuracy -------------------------------------------------------\n    fig, ax = plt.subplots(figsize=(6, 4))\n    ax.plot(epochs, np.array(history[\"train_acc\"]) * 100.0, label=\"Train Acc (%)\", marker=\"o\")\n    ax.plot(epochs, np.array(history[\"val_acc\"]) * 100.0, label=\"Val Acc (%)\", marker=\"o\")\n    _annotate_line(ax)\n    ax.set_xlabel(\"Epoch\")\n    ax.set_ylabel(\"Accuracy (%)\")\n    ax.set_title(\"Accuracy Curve\")\n    ax.legend()\n    fig.tight_layout()\n    fname = output_dir / \"training_accuracy.pdf\"\n    fig.savefig(fname, bbox_inches=\"tight\")\n    plt.close(fig)\n\n\ndef plot_confusion_matrix(cm: np.ndarray, class_names: List[str], output_dir: Path):\n    fig, ax = plt.subplots(figsize=(7, 6))\n    sns.heatmap(cm, annot=True, fmt=\"d\", cmap=\"Blues\", ax=ax, cbar=False)\n    ax.set_xlabel(\"Predicted\")\n    ax.set_ylabel(\"True\")\n    ax.set_title(\"Confusion Matrix\")\n    ax.set_xticklabels(class_names, rotation=45, ha=\"right\")\n    ax.set_yticklabels(class_names, rotation=0)\n    fig.tight_layout()\n    fname = output_dir / \"confusion_matrix.pdf\"\n    fig.savefig(fname, bbox_inches=\"tight\")\n    plt.close(fig)\n\n\n# ----------------------------------------------------------------------\n#                         JSON DUMPING UTILS\n# ----------------------------------------------------------------------\n\n\ndef dump_results_json(results: Dict, output_dir: Path):\n    output_dir.mkdir(parents=True, exist_ok=True)\n    path = output_dir / \"results.json\"\n    with open(path, \"w\") as f:\n        json.dump(results, f, indent=2)\n    return path\n",
+    "preprocess_py": "\"\"\"\nCommon data-loading and preprocessing utilities.  Dataset-specific logic\nis intentionally isolated behind placeholders so that future experiment\nfiles can substitute real loaders without touching the core code.\n\"\"\"\nfrom __future__ import annotations\n\nimport random\nfrom pathlib import Path\nfrom typing import Dict, Tuple\n\nimport torch\nimport torchvision.transforms as T\nfrom torch.utils.data import DataLoader, Dataset\n\n# ----------------------------------------------------------------------\n#                          PLACEHOLDER DATASET\n# ----------------------------------------------------------------------\n\n\nclass _SyntheticDataset(Dataset):\n    \"\"\"Light-weight synthetic dataset for smoke tests.\"\"\"\n\n    def __init__(self, num_samples: int, num_classes: int, image_size: Tuple[int, int] = (3, 32, 32)):\n        self.num_samples = num_samples\n        self.num_classes = num_classes\n        self.image_size = image_size\n        self.rng = torch.Generator().manual_seed(0)\n\n    def __len__(self):\n        return self.num_samples\n\n    def __getitem__(self, idx):\n        img = torch.randn(self.image_size, generator=self.rng)\n        label = random.randint(0, self.num_classes - 1)\n        return img, label\n\n\n# ----------------------------------------------------------------------\n#                            PUBLIC API\n# ----------------------------------------------------------------------\n\n\ndef get_transforms(config: Dict):\n    \"\"\"Return torchvision transforms based on config.  If the dataset-specific\n    transform is unknown, a conservative ToTensor+Normalise pipeline is\n    returned as fallback.\n    \"\"\"\n\n    dataset_name = config[\"dataset\"][\"name\"]\n\n    # PLACEHOLDER: Will be replaced with dataset-specific transforms\n    if dataset_name == \"DATASET_PLACEHOLDER\":\n        return T.Compose([\n            # identity transform (input is already tensor for synthetic)\n        ])\n    else:\n        raise NotImplementedError(\n            \"Dataset-specific transforms have not been implemented – \"\n            \"replace this placeholder with real preprocessing logic.\"\n        )\n\n\n\ndef load_dataset(config: Dict, split: str):\n    \"\"\"Returns a PyTorch Dataset object based on the YAML config.\n\n    Parameters\n    ----------\n    config : Dict\n        Parsed YAML configuration.\n    split : str\n        One of {\"train\", \"val\", \"test\"}.\n    \"\"\"\n\n    ds_cfg = config[\"dataset\"]\n    name = ds_cfg[\"name\"]\n\n    # ------------------------------------------------------------------\n    # Placeholder logic – synthetic dataset for smoke tests  ==========\n    # ------------------------------------------------------------------\n    if name == \"DATASET_PLACEHOLDER\" and ds_cfg.get(\"synthetic\", False):\n        num_classes = ds_cfg.get(\"num_classes\", 10)\n        num_samples = ds_cfg.get(\"synthetic_num_samples\", 100)\n        ds = _SyntheticDataset(num_samples, num_classes)\n        return ds\n\n    # ------------------------------------------------------------------\n    # Real dataset loading (to be inserted in later experiment steps)\n    # ------------------------------------------------------------------\n    # PLACEHOLDER: Will be replaced with specific dataset loading logic\n    raise NotImplementedError(\n        \"Dataset loader placeholder: please inject specific dataset logic.\"  # noqa: E501\n    )\n\n\n\ndef build_dataloader(config: Dict, split: str):\n    dataset = load_dataset(config, split)\n    shuffle = split == \"train\"\n    dl = DataLoader(\n        dataset,\n        batch_size=config[\"training\"][\"batch_size\"],\n        shuffle=shuffle,\n        num_workers=config[\"training\"].get(\"num_workers\", 4),\n        pin_memory=True,\n    )\n    return dl\n",
+    "main_py": "\"\"\"\nEntry-point for running experiments.  Provides two commands:\n    1. smoke-test      – quick synthetic run to validate infrastructure\n    2. full-experiment – full run with real dataset/model (placeholders)\n\nUsage (inside project root):\n    uv run python -m src.main --smoke-test\n    uv run python -m src.main --full-experiment\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport json\nimport os\nimport random\nimport sys\nfrom datetime import datetime\nfrom pathlib import Path\nfrom typing import Dict\n\nimport numpy as np\nimport torch\n\n# Local imports – all relative to src\nfrom .evaluate import dump_results_json, evaluate, plot_confusion_matrix\nfrom .preprocess import build_dataloader, get_transforms\nfrom .train import Trainer\n\n# ----------------------------------------------------------------------\n#                       MODEL PLACEHOLDER SECTION\n# ----------------------------------------------------------------------\n\nimport torch.nn as nn\nimport torch.nn.functional as F\n\n\nclass _PlaceholderCNN(nn.Module):\n    \"\"\"Extremely small CNN to keep smoke tests fast.\"\"\"\n\n    def __init__(self, num_classes: int = 10):\n        super().__init__()\n        self.conv1 = nn.Conv2d(3, 32, 3, padding=1)\n        self.conv2 = nn.Conv2d(32, 64, 3, padding=1)\n        self.pool = nn.MaxPool2d(2, 2)\n        self.fc = nn.Linear(64 * 8 * 8, num_classes)\n\n    def forward(self, x):\n        x = self.pool(F.relu(self.conv1(x)))  # 16×16\n        x = self.pool(F.relu(self.conv2(x)))  # 8×8\n        x = x.flatten(1)\n        return self.fc(x)\n\n\n# ----------------------------------------------------------------------\n#                             UTILITIES\n# ----------------------------------------------------------------------\n\n\ndef set_seeds(seed: int = 0):\n    random.seed(seed)\n    np.random.seed(seed)\n    torch.manual_seed(seed)\n    torch.cuda.manual_seed_all(seed)\n    torch.backends.cudnn.deterministic = True\n    torch.backends.cudnn.benchmark = False\n\n\n# ----------------------------------------------------------------------\n#                             MAIN LOGIC\n# ----------------------------------------------------------------------\n\n\ndef load_yaml(path: Path) -> Dict:\n    import yaml  # local import to keep global namespace clean\n\n    with open(path, \"r\") as f:\n        return yaml.safe_load(f)\n\n\n\ndef build_model(config: Dict):\n    model_cfg = config[\"model\"]\n    arch = model_cfg.get(\"architecture\", \"placeholder_cnn\")\n    num_classes = config[\"dataset\"].get(\"num_classes\", 10)\n\n    # PLACEHOLDER: Will be replaced with backbone-specific factory\n    if arch == \"placeholder_cnn\":\n        return _PlaceholderCNN(num_classes=num_classes)\n    else:\n        raise NotImplementedError(\"Model architecture placeholder – replace with real backbone.\")\n\n\n\ndef main(args):\n    ###################################################################\n    # 1.  Config & Environment\n    ###################################################################\n    root_dir = Path(__file__).resolve().parent.parent\n    if args.smoke_test:\n        cfg_path = root_dir / \"config/smoke_test.yaml\"\n    elif args.full_experiment:\n        cfg_path = root_dir / \"config/full_experiment.yaml\"\n    else:\n        if args.config is None:\n            print(\"ERROR: Please provide --config for custom run, or use --smoke-test / --full-experiment.\")\n            sys.exit(1)\n        cfg_path = Path(args.config)\n\n    config = load_yaml(cfg_path)\n    timestamp = datetime.now().strftime(\"%Y%m%d_%H%M%S\")\n    out_dir = root_dir / \"outputs\" / f\"{config['experiment']}_{timestamp}\"\n    out_dir.mkdir(parents=True, exist_ok=True)\n\n    # Persist effective config for provenance\n    with open(out_dir / \"config_effective.json\", \"w\") as f:\n        json.dump(config, f, indent=2)\n\n    # Seeds -----------------------------------------------------------\n    set_seeds(config.get(\"seed\", 0))\n\n    # Device ----------------------------------------------------------\n    device = torch.device(\"cuda\" if torch.cuda.is_available() else \"cpu\")\n    print(f\"Running on device: {device}\")\n\n    ###################################################################\n    # 2.  Data\n    ###################################################################\n    # (Transforms may not be used by synthetic dataset but the call\n    #  ensures the same API across experiments.)\n    _ = get_transforms(config)\n    train_loader = build_dataloader(config, split=\"train\")\n    val_loader = build_dataloader(config, split=\"val\")\n\n    ###################################################################\n    # 3.  Model & Trainer\n    ###################################################################\n    model = build_model(config)\n    trainer = Trainer(model, train_loader, val_loader, device, config, out_dir)\n\n    ###################################################################\n    # 4.  Train & Evaluate\n    ###################################################################\n    history = trainer.fit()\n    eval_metrics = evaluate(model, val_loader, device)\n\n    # Confusion matrix figure ----------------------------------------\n    class_names = [str(i) for i in range(config[\"dataset\"].get(\"num_classes\", 10))]\n    from numpy import array as _np_array  # alias to avoid confusion later\n\n    plot_confusion_matrix(\n        _np_array(eval_metrics[\"confusion_matrix\"]), class_names, out_dir\n    )\n\n    # Store JSON results ---------------------------------------------\n    res_path = dump_results_json(eval_metrics, out_dir)\n\n    ###################################################################\n    # 5.  Standard Output (per spec)\n    ###################################################################\n    print(\"\\n================  EXPERIMENT DESCRIPTION  ================\")\n    print(config[\"description\"])\n    print(\"\\n================  NUMERICAL RESULTS  =====================\")\n    print(json.dumps(eval_metrics, indent=2))\n    print(\"\\n================  FIGURE FILES  ==========================\")\n    for pdf in sorted(out_dir.glob(\"*.pdf\")):\n        print(pdf.name)\n    print(\"\\nResults JSON written to:\", res_path)\n\n\n# ----------------------------------------------------------------------\n#                             CLI PARSER\n# ----------------------------------------------------------------------\n\nif __name__ == \"__main__\":\n    parser = argparse.ArgumentParser()\n    parser.add_argument(\"--config\", type=str, default=None, help=\"Path to YAML config file.\")\n    parser.add_argument(\"--smoke-test\", action=\"store_true\", help=\"Run quick synthetic test.\")\n    parser.add_argument(\"--full-experiment\", action=\"store_true\", help=\"Run full experiment with placeholders.\")\n    args = parser.parse_args()\n    main(args)\n",
+    "pyproject_toml": "[project]\nname = \"flash_tta_core\"\nversion = \"0.1.0\"\ndescription = \"Common core foundation for FLASH-TTA experimental suite.\"\nreadme = \"README.md\"\nrequires-python = \">=3.10\"\nlicense = {text = \"MIT\"}\nauthors = [\n    {name = \"Research Team\", email = \"research@example.com\"}\n]\n\n# ---------------------------------------------------------------------\n#                         RUNTIME DEPENDENCIES\n# ---------------------------------------------------------------------\n\ndependencies = [\n    \"torch>=2.0.0\",\n    \"torchvision>=0.15.0\",\n    \"numpy>=1.23\",\n    \"matplotlib>=3.7\",\n    \"seaborn>=0.12\",\n    \"tqdm>=4.65\",\n    \"PyYAML>=6.0\",\n    \"scikit-learn>=1.2\",\n]\n\n[tool.setuptools.packages.find]\nwhere = [\"src\"]\n",
+    "smoke_test_yaml": "# ============================================================\n#     SMOKE TEST CONFIGURATION\n# ============================================================\nexperiment: smoke_test\nseed: 0\n\ndescription: |\n  Infrastructure smoke-test using a synthetic random dataset and a tiny\n  CNN.  Ensures that training loop, evaluation, JSON dumping and figure\n  generation all work correctly.\n\ndataset:\n  name: DATASET_PLACEHOLDER          # PLACEHOLDER: real dataset name will replace this\n  synthetic: true                   # use synthetic random data\n  synthetic_num_samples: 200        # tiny dataset for quick run\n  num_classes: 10\n\nmodel:\n  name: MODEL_PLACEHOLDER            # PLACEHOLDER: real backbone name will replace this\n  architecture: placeholder_cnn\n\ntraining:\n  epochs: 2\n  batch_size: 32\n  learning_rate: 0.001\n  num_workers: 0  # keep 0 to avoid multiprocessing in smoke test\n\nevaluation:\n  metrics: [accuracy, ece]\n\noutput:\n  dir: outputs/smoke_test\n",
+    "full_experiment_yaml": "# ============================================================\n#     FULL EXPERIMENT BASE CONFIGURATION -- TO BE SPECIALISED\n# ============================================================\nexperiment: full_experiment\nseed: 0\n\ndescription: |\n  Baseline full experiment.  Dataset and model placeholders must be\n  replaced in the next phase with concrete ImageNet-C, CIFAR-C etc.\n\ndataset:\n  name: DATASET_PLACEHOLDER          # PLACEHOLDER: supply e.g. \"ImageNetC\"\n  data_dir: DATA_DIR_PLACEHOLDER     # PLACEHOLDER: path to data root\n  num_classes: NUM_CLASSES_PLACEHOLDER  # PLACEHOLDER: integer\n\nmodel:\n  name: MODEL_PLACEHOLDER            # PLACEHOLDER: supply e.g. \"resnet50\"\n  architecture: MODEL_ARCH_PLACEHOLDER  # PLACEHOLDER: details for factory\n\ntraining:\n  epochs: 90                         # typical ImageNet training regime\n  batch_size: 256\n  learning_rate: 0.1\n  weight_decay: 0.0001\n  num_workers: 8\n\nevaluation:\n  metrics: [accuracy, ece, confusion_matrix]\n\noutput:\n  dir: outputs/full_experiment\n  save_checkpoints: true\n  save_figures: true\n  save_json: true\n\n# Hyper-parameters for optional grid search could be appended here\n# when specialising the experiment.\n# ============================================================\n#                    END OF CONFIG FILE\n# ============================================================\n"
+}
