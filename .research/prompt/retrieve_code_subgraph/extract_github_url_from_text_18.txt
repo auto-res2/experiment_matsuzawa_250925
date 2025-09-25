@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The methodology involves a theoretical derivation of a conservation law for GATs (specifically GATv2) with positive homogeneous activation functions (e.g., ReLU, LeakyReLU). This derivation leverages the concept of rescale invariance and relates the scalar products of parameters and their gradients for incoming and outgoing weights at each neuron. Based on this theoretical insight, a 'balanced initialization scheme' (Procedure 2.6) is devised. This scheme first sets all attention parameters to zero. Then, it scales the incoming feature weights of the first layer and recursively scales the outgoing feature weights of subsequent layers to ensure that the l2-norms of feature and attention weights incoming to and outgoing from a neuron are balanced (i.e., Wl[i, :]^2 - al[i]^2 = Wl+1[: i]^2, making the 'degree of balancedness' c=0). Additionally, a balanced orthogonal initialization is explored, which uses a Looks-Linear (LL) mirrored block structure for feature weights before applying the balancing procedure, aimed at inducing dynamical isometry.
+
+# GitHub URLs List
+['https://github.com/Diego999/pyGAT']
+Output:
+{
+    "index": 0
+}
