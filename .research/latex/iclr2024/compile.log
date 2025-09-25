@@ -250,16 +250,6 @@ ntourlua.code.tex))
 zlibraryplotmarks.code.tex
 (/usr/share/texlive/texmf-dist/tex/generic/pgf/libraries/pgflibraryplotmarks.co
 de.tex))) (/usr/share/texlive/texmf-dist/tex/latex/tools/tabularx.sty)
-(/usr/share/texlive/texmf-dist/tex/latex/newunicodechar/newunicodechar.sty)
-
-! Package newunicodechar Error: Invalid argument.
-
-See the newunicodechar package documentation for explanation.
-Type  H <return>  for immediate help.
- ...                                              
-                                                  
-l.38 \newunicodechar{\u2009}{\,}
-                                 % map to an ordinary LaTeX thin-space
 (/usr/share/texlive/texmf-dist/tex/latex/l3backend/l3backend-pdftex.def)
 No file paper.aux.
 (/usr/share/texlive/texmf-dist/tex/context/base/mkii/supp-pdf.mkii
@@ -271,10 +261,10 @@ Package pgfplots notification 'compat/show suggested version=true': document ha
 s been generated with the most recent feature set (\pgfplotsset{compat=1.18}).
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 58--58
+Underfull \hbox (badness 10000) in paragraph at lines 56--56
 []\T1/ptm/m/sc/17.28 (+20) Temporal-Adaptive Di-ver-sity and Power-
 
-Underfull \hbox (badness 10000) in paragraph at lines 58--58
+Underfull \hbox (badness 10000) in paragraph at lines 56--56
 \T1/ptm/m/sc/17.28 (+20) Aware Sam-pling for Budget-Constrained
 (/usr/share/texlive/texmf-dist/tex/latex/microtype/mt-cmr.cfg)
 (/usr/share/texlive/texmf-dist/tex/latex/amsfonts/umsa.fd)
@@ -283,54 +273,54 @@ Underfull \hbox (badness 10000) in paragraph at lines 58--58
 (/usr/share/texlive/texmf-dist/tex/latex/microtype/mt-msb.cfg)
 
 Package natbib Warning: Citation `brody-2021-how' on page 1 undefined on input 
-line 64.
+line 62.
 
 
 Package natbib Warning: Citation `baln-2022-layer' on page 1 undefined on input
- line 64.
+ line 62.
 
 
 Package natbib Warning: Citation `liu-2020-bandit' on page 1 undefined on input
- line 64.
+ line 62.
 
 (/usr/share/texlive/texmf-dist/tex/latex/psnfss/ts1ptm.fd) [1{/var/lib/texmf/fo
 nts/map/pdftex/updmap/pdftex.map}{/usr/share/texlive/texmf-dist/fonts/enc/dvips
 /base/8r.enc}]
 
 Package natbib Warning: Citation `liu-2020-bandit' on page 2 undefined on input
- line 84.
+ line 82.
 
 
 Package natbib Warning: Citation `baln-2022-layer' on page 2 undefined on input
- line 84.
+ line 82.
 
 
 Package natbib Warning: Citation `zeng-2019-graphsaint' on page 2 undefined on 
-input line 84.
+input line 82.
 
 
 Package natbib Warning: Citation `zhang-2022-hierarchical' on page 2 undefined 
-on input line 84.
+on input line 82.
 
 
 Package natbib Warning: Citation `yun-2020-connections' on page 2 undefined on 
-input line 85.
+input line 83.
 
 
 Package natbib Warning: Citation `shirzad-2024-even' on page 2 undefined on inp
-ut line 85.
+ut line 83.
 
 
 Package natbib Warning: Citation `chen-2021-accelerating' on page 2 undefined o
-n input line 86.
+n input line 84.
 
 
 Package natbib Warning: Citation `liu-2022-rsc' on page 2 undefined on input li
-ne 86.
+ne 84.
 
 
 Package natbib Warning: Citation `li-2020-sac' on page 2 undefined on input lin
-e 87.
+e 85.
 
 No file paper.bbl.
 
@@ -622,16 +612,6 @@ ntourlua.code.tex))
 zlibraryplotmarks.code.tex
 (/usr/share/texlive/texmf-dist/tex/generic/pgf/libraries/pgflibraryplotmarks.co
 de.tex))) (/usr/share/texlive/texmf-dist/tex/latex/tools/tabularx.sty)
-(/usr/share/texlive/texmf-dist/tex/latex/newunicodechar/newunicodechar.sty)
-
-! Package newunicodechar Error: Invalid argument.
-
-See the newunicodechar package documentation for explanation.
-Type  H <return>  for immediate help.
- ...                                              
-                                                  
-l.38 \newunicodechar{\u2009}{\,}
-                                 % map to an ordinary LaTeX thin-space
 (/usr/share/texlive/texmf-dist/tex/latex/l3backend/l3backend-pdftex.def)
 (./paper.aux)
 (/usr/share/texlive/texmf-dist/tex/context/base/mkii/supp-pdf.mkii
@@ -644,10 +624,10 @@ Package pgfplots notification 'compat/show suggested version=true': document ha
 s been generated with the most recent feature set (\pgfplotsset{compat=1.18}).
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 58--58
+Underfull \hbox (badness 10000) in paragraph at lines 56--56
 []\T1/ptm/m/sc/17.28 (+20) Temporal-Adaptive Di-ver-sity and Power-
 
-Underfull \hbox (badness 10000) in paragraph at lines 58--58
+Underfull \hbox (badness 10000) in paragraph at lines 56--56
 \T1/ptm/m/sc/17.28 (+20) Aware Sam-pling for Budget-Constrained
 (/usr/share/texlive/texmf-dist/tex/latex/microtype/mt-cmr.cfg)
 (/usr/share/texlive/texmf-dist/tex/latex/amsfonts/umsa.fd)
@@ -656,54 +636,54 @@ Underfull \hbox (badness 10000) in paragraph at lines 58--58
 (/usr/share/texlive/texmf-dist/tex/latex/microtype/mt-msb.cfg)
 
 Package natbib Warning: Citation `brody-2021-how' on page 1 undefined on input 
-line 64.
+line 62.
 
 
 Package natbib Warning: Citation `baln-2022-layer' on page 1 undefined on input
- line 64.
+ line 62.
 
 
 Package natbib Warning: Citation `liu-2020-bandit' on page 1 undefined on input
- line 64.
+ line 62.
 
 (/usr/share/texlive/texmf-dist/tex/latex/psnfss/ts1ptm.fd) [1{/var/lib/texmf/fo
 nts/map/pdftex/updmap/pdftex.map}{/usr/share/texlive/texmf-dist/fonts/enc/dvips
 /base/8r.enc}]
 
 Package natbib Warning: Citation `liu-2020-bandit' on page 2 undefined on input
- line 84.
+ line 82.
 
 
 Package natbib Warning: Citation `baln-2022-layer' on page 2 undefined on input
- line 84.
+ line 82.
 
 
 Package natbib Warning: Citation `zeng-2019-graphsaint' on page 2 undefined on 
-input line 84.
+input line 82.
 
 
 Package natbib Warning: Citation `zhang-2022-hierarchical' on page 2 undefined 
-on input line 84.
+on input line 82.
 
 
 Package natbib Warning: Citation `yun-2020-connections' on page 2 undefined on 
-input line 85.
+input line 83.
 
 
 Package natbib Warning: Citation `shirzad-2024-even' on page 2 undefined on inp
-ut line 85.
+ut line 83.
 
 
 Package natbib Warning: Citation `chen-2021-accelerating' on page 2 undefined o
-n input line 86.
+n input line 84.
 
 
 Package natbib Warning: Citation `liu-2022-rsc' on page 2 undefined on input li
-ne 86.
+ne 84.
 
 
 Package natbib Warning: Citation `li-2020-sac' on page 2 undefined on input lin
-e 87.
+e 85.
 
 (./paper.bbl [2])
 
@@ -976,16 +956,6 @@ ntourlua.code.tex))
 zlibraryplotmarks.code.tex
 (/usr/share/texlive/texmf-dist/tex/generic/pgf/libraries/pgflibraryplotmarks.co
 de.tex))) (/usr/share/texlive/texmf-dist/tex/latex/tools/tabularx.sty)
-(/usr/share/texlive/texmf-dist/tex/latex/newunicodechar/newunicodechar.sty)
-
-! Package newunicodechar Error: Invalid argument.
-
-See the newunicodechar package documentation for explanation.
-Type  H <return>  for immediate help.
- ...                                              
-                                                  
-l.38 \newunicodechar{\u2009}{\,}
-                                 % map to an ordinary LaTeX thin-space
 (/usr/share/texlive/texmf-dist/tex/latex/l3backend/l3backend-pdftex.def)
 (./paper.aux)
 (/usr/share/texlive/texmf-dist/tex/context/base/mkii/supp-pdf.mkii
@@ -998,10 +968,10 @@ Package pgfplots notification 'compat/show suggested version=true': document ha
 s been generated with the most recent feature set (\pgfplotsset{compat=1.18}).
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 58--58
+Underfull \hbox (badness 10000) in paragraph at lines 56--56
 []\T1/ptm/m/sc/17.28 (+20) Temporal-Adaptive Di-ver-sity and Power-
 
-Underfull \hbox (badness 10000) in paragraph at lines 58--58
+Underfull \hbox (badness 10000) in paragraph at lines 56--56
 \T1/ptm/m/sc/17.28 (+20) Aware Sam-pling for Budget-Constrained
 (/usr/share/texlive/texmf-dist/tex/latex/microtype/mt-cmr.cfg)
 (/usr/share/texlive/texmf-dist/tex/latex/amsfonts/umsa.fd)
