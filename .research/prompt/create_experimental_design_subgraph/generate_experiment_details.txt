@@ -1,0 +1,133 @@
+
+Input:
+You are a cutting-edge AI researcher. Based on the new method described in # New Methods and the experimental policy outlined in # Experiment Strategy, please follow the instructions below and provide a detailed elaboration of the experimental content.
+
+# Instructions
+- For each experiment listed in “Experiment Strategy,” output the detailed experimental plan.
+- Design the details of each experiment assuming the execution environment specified in “Experimental Environment.”
+- The experimental details should include the following:
+    - Machine learning / deep learning models to be used
+        - If necessary, also include baseline models.
+    - Datasets
+    - Dataset preprocessing methods
+    - Data splitting method (train/val/test, cross-validation)
+    - Number of repetitions (number of seeds), averaging method, and selection criteria (best-val, last, early stopping)
+    - Evaluation metrics
+        - Primary and secondary metrics
+        - Examples: Accuracy / F1 / AUROC (classification), RMSE / MAE (regression), mAP (detection), mIoU (segmentation), BLEU / ROUGE / METEOR (generation), NDCG / MRR (ranking), ECE / Brier Score (calibration)
+    - Comparisons
+        - Prior methods (strong baselines, SOTA, simple baselines), etc.
+        - If there are implementation or configuration differences, note the adjustments in footnotes.
+    - Methods for analyzing important hyperparameters (e.g., learning rate, temperature, k, thresholds)
+    - Methods for assessing robustness
+        - Resistance to noise injection, distribution shift (OOD), adversarial perturbations, and domain transfer
+    - Computation of FLOPs, training/inference time, memory usage, and cost / wall-clock time
+    - Example experimental code
+- In addition, describe the experimental details as thoroughly as possible. It is acceptable if the output is long.
+- Avoid excessive redundancy across experiments. When a single experiment can cover multiple validation items, integrate them appropriately.
+- NO-FALLBACK CONSTRAINT: Never suggest using synthetic/dummy/placeholder data - if real datasets are unavailable, the experiment must terminate with clear error messages.
+- "Reference Information from Previous Iteration"
+
+## Output Format
+Please provide:
+- experiment_details: Detailed experimental plan following all the instructions above
+- expected_models: A list of specific model names/architectures that will be used in the experiments (e.g., ["ResNet-50", "BERT-base", "GPT-3.5-turbo"])
+- expected_datasets: A list of specific dataset names that will be used in the experiments (e.g., ["CIFAR-10", "ImageNet", "IMDB Reviews"])
+
+
+# Experimental Environment
+NVIDIA A100×8
+VRAM：80GB×8
+RAM：2048 GB
+
+# Current Research Method (Target for Experiment Design)
+{
+    "Open Problems": "1. A single global spectral basis may still be sub-optimal when domains differ strongly (e.g. natural vs. medical images) or when tasks require different intrinsic ranks. 2. Spectral-ProtoNet does not quantify uncertainty; mis-calibration hurts safety-critical uses. 3. Feature sub-spaces can collapse during meta-training, harming interpretability and leading to over-fitting on common directions. 4. No mechanism exists to extend the basis after deployment when the system faces novel domains or classes (continual few-shot).",
+    "Methods": "We propose AdaSProNet (Adaptive Spectral Prototype Network).\nKey novelties:\nA. Domain-conditioned spectral basis – Instead of a single V, we learn a lightweight hyper-network H_ϕ that maps a task-level domain descriptor d (mean of support embeddings) to a small set of R basis vectors V_d.  During meta-training H_ϕ is learned jointly, enabling the subspace to bend to each episode while sharing parameters.\nB. Rank-sparsity with Gumbel gates –  We attach per-basis Bernoulli gates g_r trained with the Gumbel-Softmax trick, so the effective rank R_t is selected automatically per episode.  Expected rank is regularised (λ_rank≈0.1) → adaptive model capacity.\nC. Uncertainty-aware scoring –  Replace deterministic distances with a Student-t Mahalanobis:  d_c(q)= (ν+R)/(ν) *[(q−μ_c)^T Σ_c^{-1} (q−μ_c)] where Σ_c is reconstructed from V_d, σ_c², and ν>2 degrees of freedom is learnable.  Closed-form predictive variance gives calibrated confidence.\nD. Continual sub-space update –  In deployment, we keep a FIFO buffer of recent support embeddings (≤1 k).  A periodic low-rank incremental PCA updates H_ϕ via a small SGD step using pseudo-labels; this avoids catastrophic forgetting without re-training the backbone.\nE. Topological regulariser –  We add the β-connected loss of TDD on the projected embeddings z=V_d^T e to avoid collapse and maintain coverage of the sub-space.\nComplexity: H_ϕ is a 2-layer MLP O(DR) ≈ 0.05 M params; gates add <1 k params.  All ops differentiable, buffer update runs off-line.",
+    "Experimental Setup": "Benchmarks: mini-ImageNet, tieredImageNet, CIFAR-FS, Meta-Dataset, plus a medical dermoscopy subset (PAD-UFES-20) for out-of-domain test.\nBackbones: Conv-4 (32d) and ResNet-12 (640d).\nProtocols: 5-way {1,5}-shot; continual few-shot stream with 20 sequential domains.\nBaselines: ProtoNet, Spectral-ProtoNet, ProtoDiff, CWR-ProtoNet, FLUTE.\nMetrics: Accuracy, expected calibration error (ECE), adaptive rank statistics, memory/CPU cost, forgetting measure in continual stream.\nAblations: remove hyper-net, fixed rank, no gates, no uncertainty layer, no TDD regulariser, no continual update.\nSafety test: flag low-confidence (<0.3) predictions; report FNR/coverage.",
+    "Experimental Code": "# hyper-network generating basis\ndef make_basis(H, d):\n    B = H(d)                              # [D*R]\n    V = B.view(D, R)\n    V = torch.linalg.qr(V, mode='reduced').Q   # orthonormalise\n    return V\n# gated rank selection\ndef apply_gates(V, logits):\n    g = F.gumbel_softmax(logits, tau=0.5, hard=False)  # [R]\n    return V * g                                       # broadcast\n# Student-t distance\ndef student_t_dist(q, mu, V, sigma2, nu):\n    proj = V.T @ (q-mu)\n    maha = (proj**2 / (sigma2+1e-6)).sum(-1)\n    return (nu+proj.size(-1))/nu * torch.log1p(maha/nu)\n",
+    "Expected Result": "• +1.5-3 % over Spectral-ProtoNet on mini-ImageNet 1-shot, +4 % on cross-domain dermoscopy.\n• Calibration: ECE ↓ from 11 % (ProtoNet) to 4 %.\n• Average active rank drops from 7 (ImageNet-like) to 3 (medical) showing adaptivity; compute overhead <1.3×.\n• Continual stream: forgetting ≤1 % vs. 7 % for fixed-basis.\n• Low-confidence rejection yields 2× reduction in critical false positives.",
+    "Expected Conclusion": "AdaSProNet demonstrates that conditioning a low-rank covariance model on task statistics, together with learnable rank sparsity and uncertainty estimation, yields robust, calibrated and computationally efficient few-shot classification.  The hyper-network adapts the spectral sub-space per domain without storing full covariances, while the Student-t head delivers principled confidence scores valuable in high-risk applications (e.g. medical triage).  Continual lightweight updates keep the basis relevant over time.  The method bridges meta-learning, Bayesian distance metrics, and topological regularisation, opening avenues for safe deployment of few-shot systems in dynamically evolving, data-scarce environments."
+}
+
+# Experiment Strategy
+Experiment 1: Cross-domain Few-shot Benchmark (Domain-conditioned Spectral Basis)
+Goal: Show that AdaSProNet’s hyper-network H_ϕ can bend the spectral sub-space to each domain, outperforming single-basis methods when source and target differ strongly.
+Setup
+• Datasets: mini-ImageNet → test on natural images (Meta-Dataset/Imagenet), AND train on mini-ImageNet but test on dermatology PAD-UFES-20 (medical) and Birds (fine-grained). 500 episodes each.
+• 5-way 1-shot & 5-shot.
+• Models: AdaSProNet (full), Spectral-ProtoNet (global basis), ProtoNet, FLUTE.
+• Hardware: single A100 (batching 16 episodes). Runs <48 h.
+Metrics
+• Mean episode accuracy; paired t-test at 95 % CI.
+• Expected Calibration Error (ECE).
+• Active rank R_t distribution per domain.
+• Inference latency per query.
+Expected Result
+• AdaSProNet wins +2 – 3 % acc. on natural, +4 – 6 % on medical; ECE halves vs. Spectral-ProtoNet.
+• Active rank adapts: avg 7 for natural, 3 for medical, 10 for fine-grained; latency scales accordingly (<1.3× ProtoNet).
+Demonstrates
+Adaptive, domain-conditioned basis yields higher accuracy and better calibration without global overhead.
+
+Experiment 2: Rank-Sparsity & Capacity Efficiency Stress-Test
+Goal: Quantify how Gumbel-gated rank selection lets the network match task intrinsic complexity, avoiding over-/under-fitting and saving FLOPs.
+Setup
+• Synthetic controllable dataset: Omniglot characters (low intrinsic dimension), CUB-200 fine-grained birds (high).
+• Generate “mixed” meta-episodes where intrinsic rank is controlled by adding Gaussian directions to embeddings before support/query split.
+• Compare: (a) AdaSProNet, (b) AdaSProNet w/ rank fixed to median 8, (c) Spectral-ProtoNet (global rank 10), (d) ProtoNet.
+• Measure: accuracy vs. injected intrinsic rank (1…15), average active rank, GFLOPs/query.
+Expected Result
+• Accuracy of AdaSProNet tracks oracle upper bound within <1 %; fixed-rank degrades outside sweet spot (±4 %).
+• FLOPs scale linearly with active rank; up to 40 % saving on low-rank tasks.
+• Gumbel gates select correct rank ±1 in 85 % episodes.
+Demonstrates
+Automatic rank-sparsity matches capacity to task difficulty, maintaining performance while reducing computation.
+
+Experiment 3: Continual Few-shot Stream with Safety Monitoring
+Goal: Validate continual sub-space update and uncertainty-aware rejection in a deployment-like stream.
+Setup
+• 20 sequential domains from Meta-Dataset (ordered: Aircraft→Flowers→Signs→Dermatology, etc.). 5-way 5-shot per domain, 1,000 episodes/domain in arrival order. FIFO buffer size 1 k.
+• Models: AdaSProNet (with/without online update), CWR-ProtoNet, FLUTE.
+• After each new domain, replay 200 held-out episodes from all previous domains to measure forgetting and calibration drift.
+Metrics
+• Accuracy current domain; forgetting Δacc previous domains.
+• ECE drift over time.
+• Coverage vs. risk when rejecting predictions with confidence <τ (τ∈{0.1…0.5}).
+• GPU memory & update time.
+Expected Result
+• AdaSProNet w/ updates retains ≥97 % of original accuracy on earlier domains (forgetting ≤1 %); no-update variant drops 6 %. Baselines ≥7 %.
+• ECE remains ≤5 % for updated AdaSProNet, drifts to 12 % without updates.
+• At τ=0.3, critical false positives drop 2× with only 8 % coverage loss.
+• Update step <0.5 s on A100, <500 MB RAM.
+Demonstrates
+Lightweight continual adaptation preserves knowledge, sustains calibration, and provides actionable uncertainty estimates suitable for safety-critical continual few-shot deployment.
+
+
+---
+
+
+# Reference Information from Previous Iteration
+
+Output:
+{
+    "experiment_details": "────────────────────────────────────────────────────────\nExperiment 1  Cross-domain Few-shot Benchmark\n────────────────────────────────────────────────────────\n1. Goal\n   Quantitatively verify that the hyper-network H_φ lets AdaSProNet bend its spectral basis to different domains, outperforming single-basis alternatives while remaining well-calibrated and computationally frugal.\n\n2. Datasets & Episode Construction\n   • mini-ImageNet (Train/Val)  : 64 × 84×84 classes\n   • Meta-Dataset-ImageNet (Test natural)  :   1 000 held-out episodes\n   • PAD-UFES-20 dermoscopy (Test medical)  :     500 episodes (filtered to ≥20 images/class)\n   • Meta-Dataset-Birds (CUB-200) (Test fine-grained)  : 500 episodes\n   All episodes are 5-way {1,5}-shot, 15 queries / class.\n\n3. Pre-processing\n   • Resize shorter side → 92, centre-crop 84 (for Conv-4 & ResNet-12)\n   • Per-image mean / std normalisation using ImageNet statistics\n   • Data-augmentation (support only): random horizontal flip, colour jitter (±0.1) – identical for all methods\n   • Medical images: Dermoscopy hair artefacts removed with DullRazor v3 (footnote¹).\n\n4. Models\n   AdaSProNet-Conv4-32d,  AdaSProNet-ResNet12-640d  (ours)\n   Baselines: Spectral-ProtoNet (global V); ProtoNet; FLUTE; (*optionally*) ProtoDiff†\n   †ProtoDiff is excluded from dermoscopy due to unavailable public weights – a re-implementation is provided.\n\n5. Hyper-parameters & Search (performed on validation split of mini-ImageNet only)\n   • Backbone lr ∈ {1e-3, 5e-4}; Hyper-network lr ∈ {5e-4, 1e-4}; cosine decay\n   • Gumbel τ ∈ {0.3, 0.5, 0.7}; λ_rank ∈ {0.05, 0.1, 0.2}\n   • β for topological regulariser ∈ {0.3, 1.0}\n   • ν initialised to 5, learned with lr 1e-4\n   Grid size 2×3×3×2×1 = 36;  handled with Ray-Tune on 4 GPUs (≈7 h)\n\n6. Train/Val/Test Protocol\n   • Meta-train on mini-ImageNet, 1 000 episodes/epoch × 120 epochs\n   • 5 random seeds {11,19,23,29,31}.  Observe mean ± std over seeds.\n   • Selection: best val accuracy (early stopping patience = 20 episodes).\n   • Final metrics reported as average over all seeds; paired t-test computed episode-wise.\n\n7. Evaluation Metrics\n   Primary: Mean episode accuracy\n   Secondary: Expected Calibration Error (15 bins), Negative Log-Likelihood (NLL), Active rank 𝔼[R_t], latency (ms / query) on single A100.\n\n8. Robustness Checks\n   • Additive Gaussian pixel noise σ∈{0.04,0.08}; accuracy-drop measured.\n   • 50 % query images JPEG-compressed Q=30 (distribution shift).\n   • FGSM ε=2/255 adversarial queries – using backbone gradients.\n\n9. Resource Logging\n   • FLOPs: measured with ptflops per query averaged over 200 episodes\n   • Memory: peak GPU util from nvidia-smi logging\n   • Wall-clock: training + inference time (reported as median over seeds)\n\n10. Example Code Snippet\n   ```python\n   from adaspronet.model import AdaSProNet\n   from meta_learn.train import MetaTrainer\n   net = AdaSProNet(backbone='ResNet12', D=640, R_max=16)\n   trainer = MetaTrainer(net, episodic_loader, optim='Adam', lr=5e-4,\n                         lr_hyper=1e-4, tau=0.5, lambda_rank=0.1)\n   trainer.fit(epochs=120, early_stop=20, seeds=[11,19,23,29,31])\n   acc, ece = trainer.evaluate(meta_test_loader)\n   print(f'Acc={acc:.2f}  ECE={ece:.2f}')\n   ```\n\n11. Reporting\n   Provide table (natural / medical / fine-grained × 1-shot /5-shot) and confidence intervals; include ablation “AdaSProNet w/o H_φ” (fixed global basis) to isolate contribution A.\n\n────────────────────────────────────────────────────────\nExperiment 2  Rank-Sparsity & Capacity-Efficiency Stress-Test\n────────────────────────────────────────────────────────\n1. Goal\n   Demonstrate that Gumbel-gated rank selection (novelty B) tracks intrinsic task dimensionality, preserving accuracy while reducing computation.\n\n2. Datasets\n   • Omniglot-background (low-dim): episodes built with 20×28×28 images per class\n   • CUB-200-2011 (high-dim fine-grained): 84×84\n   • Synthetic rank control: for each task, post-embedding Gaussian noise is added in k orthogonal directions (k∈{1..15}) before the support/query split.  The oracle intrinsic rank = k + rank(original).\n\n3. Models\n   (a) AdaSProNet (full)  (b) AdaSProNet-Fixed-8  (c) Spectral-ProtoNet-10  (d) ProtoNet\n\n4. Protocol\n   • Meta-train on both datasets separately\n   • For each k, sample 500 episodes (5-way 5-shot) – repeated for 3 seeds\n   • Selection criterion: last-epoch weights (no early stop, to reveal over/under-fitting).\n\n5. Metrics\n   Primary: Accuracy vs. k curve\n   Secondary: Mean active rank, GFLOPs/query, slope of FLOPs saving, RMSE between selected rank and oracle rank.\n\n6. Hyper-parameter Sweep (sensitivity study)\n   • τ∈{0.3,0.5,0.7}; λ_rank∈{0.0,0.05,0.1,0.2}\n   • Visualise heat-maps (accuracy, expected rank)\n\n7. Robustness / Stress Scenarios\n   • Randomly drop a proportion p∈{0.2,0.4,0.6} of support shots – effect on selected rank.\n\n8. Compute Tracing\n   • Time-stamped nvprof to export FLOPs histogram; integrate to wall-clock cost on A100.\n\n9. Illustrative Code Fragment\n   ```python\n   from utils.flops import get_gflops_per_rank\n   for k in range(1,16):\n       eps = sample_episode(k)\n       out = model(eps)\n       gflops.append(get_gflops_per_rank(model.active_rank))\n   ```\n\n────────────────────────────────────────────────────────\nExperiment 3  Continual Few-shot Stream with Safety Monitoring\n────────────────────────────────────────────────────────\n1. Goal\n   Assess continual basis updates (novelty D) and uncertainty-aware rejection (novelty C) in a realistic domain stream.\n\n2. Dataset Stream & Splits\n   Sequential domains drawn from Meta-Dataset (Aircraft → QuickDraw → Fungi → … → Dermoscopy) – total 20.\n   Per domain: 5-way 5-shot support, 15 queries/class, 1 000 episodes.\n   Held-out Replay Buffer: randomly reserve 200 episodes/domain (never used for update – only forgetting evaluation).\n\n3. Models & Variants\n   • AdaSProNet + online update (ours)\n   • AdaSProNet – frozen (no update)\n   • CWR-ProtoNet (continual baseline)\n   • FLUTE (continual transformer-based)\n\n4. Continual Update Implementation\n   • FIFO buffer max 1 000 support embeddings\n   • Every 250 incoming episodes do: Incremental PCA (rank≤16) → 1 SGD step on H_φ (lr 2e-4, 20 iters)\n   • No backbone gradients (frozen) → memory ≤500 MB, time <0.5 s on A100\n\n5. Metrics\n   • Acc_current, Acc_prev (average over all previous domains) → Forget = Acc_prev_before – Acc_prev_after\n   • ECE drift (15 bins) per domain\n   • Coverage-Risk curve: vary τ∈{0.1…0.5}; report AUROC_reject = ∫(1-coverage)×TPR dτ\n   • Runtime: update_time, additional GPU memory\n\n6. Hyper-parameters Fixed (validated in Exp-1)\n   lr_hyper = 2e-4; τ = 0.5; ν initial = 5; buffer=1 k.\n\n7. Robustness – Abrupt Domain Shift\n   After 10 domains, inject adversarial domain “Textures” with high-frequency patterns; measure detection by confidence <0.3.\n\n8. Example Pseudocode\n   ```python\n   for domain in domains:\n       for episode in stream(domain):\n           acc = model.forward_episode(episode)\n           if episode.is_support:\n               buffer.push(episode.support_emb)\n       if step % 250 == 0:\n           model.incremental_update(buffer)\n       evaluate_forgetting(model, replay_loader)\n   ```\n\n9. Reporting\n   Plot forgetting vs. time, ECE drift, and coverage-risk; tabulate update overhead.\n\n────────────────────────────────────────────────────────\nCommon Experimental Notes\n────────────────────────────────────────────────────────\nA. Number of Seeds & Averaging\n   • All experiments use exactly 5 independent seeds.  When reporting, mean ±1 standard error of the mean (SEM) is shown.\n\nB. Hardware Allocation\n   • Training: 1 × A100 for Conv-4 models, 2 × A100 (DDP) for ResNet-12 to keep <48 h.\n   • RAM consumption <200 GB; node has 2 TB so no swapping.\n\nC. Exact FLOPs & Time Measurement\n   • ptflops==0.7, torch.cuda.Event for latency.  FLOPs measured with batchsize=5-way×15 queries.\n\nD. Statistical Significance\n   • Episode-wise paired t-test (p<0.05) between AdaSProNet and strongest baseline for each domain— report ✓/✗.\n\nE. Reproducibility Package\n   • conda env file, full YAML of all grids, SLURM scripts, and log parser provided in code release.\n\nF. NO-FALLBACK Guarantee\n   • All datasets are publicly available under permissive licences.  If any dataset fails to download, the runner aborts with ValueError(\"Dataset <name> unavailable – experiment terminated per policy\").\n\n────────────────────────────────────────────────────────\nFootnotes\n1. DullRazor v3 implementation from https://github.com/jacksonliam/dullrazor used with default parameters (kernel=17).  Applied uniformly across all compared models.\n",
+    "expected_models": [
+        "AdaSProNet-Conv4-32d",
+        "AdaSProNet-ResNet12-640d",
+        "Spectral-ProtoNet",
+        "ProtoNet",
+        "FLUTE",
+        "CWR-ProtoNet",
+        "ProtoDiff"
+    ],
+    "expected_datasets": [
+        "mini-ImageNet",
+        "Meta-Dataset ImageNet",
+        "PAD-UFES-20",
+        "Meta-Dataset Birds (CUB-200)",
+        "Omniglot",
+        "CUB-200-2011",
+        "Meta-Dataset (20-domain stream)",
+        "Textures (DTD)"
+    ]
+}
