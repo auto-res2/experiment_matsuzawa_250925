@@ -559,7 +559,13 @@
         "Friendster",
         "Reddit-Temporal",
         "Yelp-Timeline"
-      ]
+      ],
+      "external_resources": {
+        "hugging_face": {
+          "models": [],
+          "datasets": []
+        }
+      }
     }
   },
   "idea_info_history": [
