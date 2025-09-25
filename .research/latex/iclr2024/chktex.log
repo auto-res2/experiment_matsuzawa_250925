@@ -1,0 +1,186 @@
+Warning 13 in paper.tex line 50: Intersentence spacing (`\@') should perhaps be used.
+Training attention-based graph neural networks on billion-edge graphs is now limited as much by energy and memory budgets as by statistical variance. Existing samplers minimise variance inside each mini-batch but neglect redundancy across time and across workers; importance scores arrive one iteration late, and determinantal point-process (DPP) similarity kernels become a new bottleneck. We introduce TADP-HABLS, a drop-in sampler that unifies variance, temporal diversity and full-system energy into a single online objective. A sliding-window reservoir DPP maximises novelty over the last \(W\) batches with \(O(K d^2)\) cost and a provable \(1 - 1/e\) coverage guarantee. A lightweight two-layer GRU predicts one-step-ahead attention weights, eliminating stale importance. CountSketch combined with random Fourier features compresses embeddings eight-fold, enabling 100 k-node DPP kernels on one GPU. Finally, a constrained Lagrangian balances an accuracy proxy, variance, redundancy and Joule cost under global GPU-memory caps, while a unified meter logs GPU, CPU, DRAM and PCIe power. Experiments on six static and dynamic benchmarks, three hardware regimes and seven strong baselines show that TADP-HABLS strictly dominates every prior Pareto point, delivering up to +0.9 percentage-point accuracy while halving energy and cutting neighbour overlap by 57 \%. Module-wise ablations confirm that every component is necessary.  
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         ^
+Warning 24 in paper.tex line 54: Delete this space to maintain correct pagereferences.
+\label{sec:intro}  
+^
+Warning 2 in paper.tex line 55: Non-breaking space (`~') should have been used.
+Graph Attention Networks (GAT) \cite{brody-2021-how} and their transformer descendants have become core primitives in chemistry, recommendation and social media analytics, yet mini-batch training on graphs with \(10^8\)-\(10^9\) edges remains challenging. The dominant research line designs samplers that reduce the variance of stochastic gradients computed within a single batch, for example LABOR and HABLS \cite{baln-2022-layer} or BanditSampler \cite{liu-2020-bandit}. Unfortunately, these samplers overlook two phenomena that dominate in large-scale practice. First, successive batches as well as parallel workers often visit highly overlapping neighbourhoods, wasting compute and widening confidence intervals. Second, practitioners increasingly care about energy and memory budgets: a model may be refused deployment if it exceeds a fixed Joule cap even when its training time is acceptable.  
+                              ^
+Warning 2 in paper.tex line 55: Non-breaking space (`~') should have been used.
+Graph Attention Networks (GAT) \cite{brody-2021-how} and their transformer descendants have become core primitives in chemistry, recommendation and social media analytics, yet mini-batch training on graphs with \(10^8\)-\(10^9\) edges remains challenging. The dominant research line designs samplers that reduce the variance of stochastic gradients computed within a single batch, for example LABOR and HABLS \cite{baln-2022-layer} or BanditSampler \cite{liu-2020-bandit}. Unfortunately, these samplers overlook two phenomena that dominate in large-scale practice. First, successive batches as well as parallel workers often visit highly overlapping neighbourhoods, wasting compute and widening confidence intervals. Second, practitioners increasingly care about energy and memory budgets: a model may be refused deployment if it exceeds a fixed Joule cap even when its training time is acceptable.  
+                                                                                                                                                                                                                                                                                                                                                                                                                        ^
+Warning 2 in paper.tex line 55: Non-breaking space (`~') should have been used.
+Graph Attention Networks (GAT) \cite{brody-2021-how} and their transformer descendants have become core primitives in chemistry, recommendation and social media analytics, yet mini-batch training on graphs with \(10^8\)-\(10^9\) edges remains challenging. The dominant research line designs samplers that reduce the variance of stochastic gradients computed within a single batch, for example LABOR and HABLS \cite{baln-2022-layer} or BanditSampler \cite{liu-2020-bandit}. Unfortunately, these samplers overlook two phenomena that dominate in large-scale practice. First, successive batches as well as parallel workers often visit highly overlapping neighbourhoods, wasting compute and widening confidence intervals. Second, practitioners increasingly care about energy and memory budgets: a model may be refused deployment if it exceeds a fixed Joule cap even when its training time is acceptable.  
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                ^
+Warning 10 in paper.tex line 56: Solo `)' found.
+Three obstacles prevent today\u2019s samplers from meeting these emerging constraints. 1) Importance scores\u2014whether attention weights or gradient norms\u2014are obtained during the forward pass that just ended, therefore they are already stale when the next batch is sampled; the effect is amplified on dynamic graphs. 2) Diversity-promoting samplers such as k-DPPs need a similarity kernel whose construction becomes the new wall-clock and memory bottleneck at \(10^6\) nodes or beyond. 3) Energy accounting usually stops at the GPU, so published \"green AI\" numbers are not comparable across machines with different CPU or PCIe usage.  
+                                                                                        ^
+Warning 10 in paper.tex line 56: Solo `)' found.
+Three obstacles prevent today\u2019s samplers from meeting these emerging constraints. 1) Importance scores\u2014whether attention weights or gradient norms\u2014are obtained during the forward pass that just ended, therefore they are already stale when the next batch is sampled; the effect is amplified on dynamic graphs. 2) Diversity-promoting samplers such as k-DPPs need a similarity kernel whose construction becomes the new wall-clock and memory bottleneck at \(10^6\) nodes or beyond. 3) Energy accounting usually stops at the GPU, so published \"green AI\" numbers are not comparable across machines with different CPU or PCIe usage.  
+                                                                                                                                                                                                                                                                                                                                     ^
+Warning 10 in paper.tex line 56: Solo `)' found.
+Three obstacles prevent today\u2019s samplers from meeting these emerging constraints. 1) Importance scores\u2014whether attention weights or gradient norms\u2014are obtained during the forward pass that just ended, therefore they are already stale when the next batch is sampled; the effect is amplified on dynamic graphs. 2) Diversity-promoting samplers such as k-DPPs need a similarity kernel whose construction becomes the new wall-clock and memory bottleneck at \(10^6\) nodes or beyond. 3) Energy accounting usually stops at the GPU, so published \"green AI\" numbers are not comparable across machines with different CPU or PCIe usage.  
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              ^
+Warning 24 in paper.tex line 69: Delete this space to maintain correct pagereferences.
+\label{sec:related}  
+^
+Warning 2 in paper.tex line 70: Non-breaking space (`~') should have been used.
+Variance-reduced samplers. BanditSampler \cite{liu-2020-bandit} and its extensions optimise a surrogate variance objective within each batch; temporal redundancy therefore remains uncontrolled. LABOR and HABLS \cite{baln-2022-layer} share this limitation and further ignore energy consumption. GraphSAINT \cite{zeng-2019-graphsaint} samples entire sub-graphs, which improves within-batch connectivity but increases overlap between successive iterations; our sliding window addresses exactly this redundancy with an explicit DPP objective. Adaptive Node Sampling for graph transformers \cite{zhang-2022-hierarchical} casts selection as a contextual bandit but again optimises within a single forward pass and assumes unlimited power.  
+                                        ^
+Warning 2 in paper.tex line 70: Non-breaking space (`~') should have been used.
+Variance-reduced samplers. BanditSampler \cite{liu-2020-bandit} and its extensions optimise a surrogate variance objective within each batch; temporal redundancy therefore remains uncontrolled. LABOR and HABLS \cite{baln-2022-layer} share this limitation and further ignore energy consumption. GraphSAINT \cite{zeng-2019-graphsaint} samples entire sub-graphs, which improves within-batch connectivity but increases overlap between successive iterations; our sliding window addresses exactly this redundancy with an explicit DPP objective. Adaptive Node Sampling for graph transformers \cite{zhang-2022-hierarchical} casts selection as a contextual bandit but again optimises within a single forward pass and assumes unlimited power.  
+                                                                                                                                                                                                                 ^
+Warning 2 in paper.tex line 70: Non-breaking space (`~') should have been used.
+Variance-reduced samplers. BanditSampler \cite{liu-2020-bandit} and its extensions optimise a surrogate variance objective within each batch; temporal redundancy therefore remains uncontrolled. LABOR and HABLS \cite{baln-2022-layer} share this limitation and further ignore energy consumption. GraphSAINT \cite{zeng-2019-graphsaint} samples entire sub-graphs, which improves within-batch connectivity but increases overlap between successive iterations; our sliding window addresses exactly this redundancy with an explicit DPP objective. Adaptive Node Sampling for graph transformers \cite{zhang-2022-hierarchical} casts selection as a contextual bandit but again optimises within a single forward pass and assumes unlimited power.  
+                                                                                                                                                                                                                                                                                                                ^
+Warning 2 in paper.tex line 70: Non-breaking space (`~') should have been used.
+Variance-reduced samplers. BanditSampler \cite{liu-2020-bandit} and its extensions optimise a surrogate variance objective within each batch; temporal redundancy therefore remains uncontrolled. LABOR and HABLS \cite{baln-2022-layer} share this limitation and further ignore energy consumption. GraphSAINT \cite{zeng-2019-graphsaint} samples entire sub-graphs, which improves within-batch connectivity but increases overlap between successive iterations; our sliding window addresses exactly this redundancy with an explicit DPP objective. Adaptive Node Sampling for graph transformers \cite{zhang-2022-hierarchical} casts selection as a contextual bandit but again optimises within a single forward pass and assumes unlimited power.  
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        ^
+Warning 2 in paper.tex line 71: Non-breaking space (`~') should have been used.
+Diversity mechanisms in attention. Sparse transformers retain expressiveness with \(O(n)\) edges \cite{yun-2020-connections}, while two-stage sparsification can eliminate redundant attention connections \cite{shirzad-2024-even}. We adapt these insights to DPP kernels, enabling diversity at node scale rather than edge scale.  
+                                                                                                ^
+Warning 2 in paper.tex line 71: Non-breaking space (`~') should have been used.
+Diversity mechanisms in attention. Sparse transformers retain expressiveness with \(O(n)\) edges \cite{yun-2020-connections}, while two-stage sparsification can eliminate redundant attention connections \cite{shirzad-2024-even}. We adapt these insights to DPP kernels, enabling diversity at node scale rather than edge scale.  
+                                                                                                                                                                                                          ^
+Warning 2 in paper.tex line 72: Non-breaking space (`~') should have been used.
+Energy and communication. Periodic global averaging improves the energy efficiency of distributed SGD \cite{chen-2021-accelerating}, yet it focuses on dense models and measures only network and GPU wattage. RSC accelerates sparse GNNs through approximate computation \cite{liu-2022-rsc} but neither tracks full-system power nor addresses diversity. JEPE closes this gap.  
+                                                                                                     ^
+Warning 2 in paper.tex line 72: Non-breaking space (`~') should have been used.
+Energy and communication. Periodic global averaging improves the energy efficiency of distributed SGD \cite{chen-2021-accelerating}, yet it focuses on dense models and measures only network and GPU wattage. RSC accelerates sparse GNNs through approximate computation \cite{liu-2022-rsc} but neither tracks full-system power nor addresses diversity. JEPE closes this gap.  
+                                                                                                                                                                                                                                                                          ^
+Warning 2 in paper.tex line 73: Non-breaking space (`~') should have been used.
+Temporal importance prediction. SAC smooths attention in sequence models \cite{li-2020-sac}; we import the idea to graphs and combine it with a constrained optimisation framework. None of the above works jointly considers temporal diversity, full-system energy, kernel scalability and automatic budget tuning, positioning TADP-HABLS as complementary rather than incremental.  
+                                                                        ^
+Warning 24 in paper.tex line 76: Delete this space to maintain correct pagereferences.
+\label{sec:background}  
+^
+Warning 24 in paper.tex line 83: Delete this space to maintain correct pagereferences.
+\label{sec:method}  
+^
+Warning 1 in paper.tex line 94: Command terminated with space.
+\State Initialize fan-outs \(\mathbf{f}\), DPP size \(k\), duals \(\lambda_M, \lambda_E \ge 0\), step sizes \(\eta, \gamma\)  
+      ^
+Warning 1 in paper.tex line 96: Command terminated with space.
+  \State Estimate gradients of proxy accuracy \(\hat{A}(\mathbf{f},k)\), variance \(\widehat{\mathrm{Var}}\), redundancy \(\hat{R}\), and energy \(\hat{J}\)  
+        ^
+Warning 1 in paper.tex line 97: Command terminated with space.
+  \State \(\mathbf{f} \leftarrow \mathbf{f} + \eta\, \nabla_{\mathbf{f}} \big( \hat{A} - \lambda_1 \widehat{\mathrm{Var}} - \lambda_2 \hat{R} - \lambda_3 \hat{J} \big)\)  
+        ^
+Warning 1 in paper.tex line 98: Command terminated with space.
+  \State \(k \leftarrow k + \eta\, \nabla_{k} \big( \hat{A} - \lambda_1 \widehat{\mathrm{Var}} - \lambda_2 \hat{R} - \lambda_3 \hat{J} \big)\)  
+        ^
+Warning 1 in paper.tex line 99: Command terminated with space.
+  \State Measure memory use \(M\) and energy per epoch \(E\)  
+        ^
+Warning 1 in paper.tex line 100: Command terminated with space.
+  \State \(\lambda_M \leftarrow \max\big(0, \lambda_M + \gamma (M - \hat{M})\big)\), \(\lambda_E \leftarrow \max\big(0, \lambda_E + \gamma (E - \hat{E})\big)\)  
+        ^
+Warning 1 in paper.tex line 101: Command terminated with space.
+  \State Project \(\mathbf{f}\) and \(k\) to feasible integer ranges  
+        ^
+Warning 1 in paper.tex line 102: Command terminated with space.
+\EndFor  
+       ^
+Warning 1 in paper.tex line 112: Command terminated with space.
+\State Input: window size \(W\), reservoir size \(K\), sketch dim \(d\), current candidate embeddings \(H_{\text{curr}}\)  
+      ^
+Warning 1 in paper.tex line 113: Command terminated with space.
+\State Maintain queue of sketches \(\mathcal{Q} = [\Phi_{t-W+1}, \ldots, \Phi_t]\)  
+      ^
+Warning 1 in paper.tex line 114: Command terminated with space.
+\State Compute CountSketch + RFF: \(\Phi_{\text{curr}} \leftarrow \mathrm{SketchRFF}(H_{\text{curr}}, d)\)  
+      ^
+Warning 13 in paper.tex line 114: Intersentence spacing (`\@') should perhaps be used.
+\State Compute CountSketch + RFF: \(\Phi_{\text{curr}} \leftarrow \mathrm{SketchRFF}(H_{\text{curr}}, d)\)  
+                                ^
+Warning 1 in paper.tex line 115: Command terminated with space.
+\State Form concatenated sketch: \(\bar{\Phi}} \leftarrow \mathrm{Concat}(\mathcal{Q}, \Phi_{\text{curr}})\)  
+      ^
+Warning 10 in paper.tex line 115: Solo `}' found.
+\State Form concatenated sketch: \(\bar{\Phi}} \leftarrow \mathrm{Concat}(\mathcal{Q}, \Phi_{\text{curr}})\)  
+                                             ^
+Warning 1 in paper.tex line 116: Command terminated with space.
+\State Kernel: \(K \leftarrow \bar{\Phi}^{\top} \bar{\Phi} / d\)  
+      ^
+Warning 1 in paper.tex line 117: Command terminated with space.
+\State Initialize \(S \leftarrow \emptyset\)  
+      ^
+Warning 1 in paper.tex line 119: Command terminated with space.
+  \State Select \(v \leftarrow \arg\max_{u \notin S}\; \Delta_{\det}(u \mid S; K)\) \Comment{Greedy k-DPP marginal gain}  
+        ^
+Warning 1 in paper.tex line 120: Command terminated with space.
+  \State \(S \leftarrow S \cup \{v\}\)  
+        ^
+Warning 1 in paper.tex line 121: Command terminated with space.
+\EndFor  
+       ^
+Warning 1 in paper.tex line 122: Command terminated with space.
+\State Update reservoir: push \(\Phi_{\text{curr}}\) to \(\mathcal{Q}\), pop oldest if \(|\mathcal{Q}|>W\)  
+      ^
+Warning 1 in paper.tex line 123: Command terminated with space.
+\State Output: selected nodes \(S\)  
+      ^
+Warning 1 in paper.tex line 134: Command terminated with space.
+\State Input: historical features \(\{f^{(\tau)}_j\}_{\tau=t-W}^{t}\), current attention \(\alpha^t_j\)  
+      ^
+Warning 3 in paper.tex line 134: You should enclose the previous parenthesis with `{}'.
+\State Input: historical features \(\{f^{(\tau)}_j\}_{\tau=t-W}^{t}\), current attention \(\alpha^t_j\)  
+                                                  ^^
+Warning 1 in paper.tex line 135: Command terminated with space.
+\State Hidden states: \(h_0 \leftarrow 0\)  
+      ^
+Warning 1 in paper.tex line 137: Command terminated with space.
+  \State \(h_{\tau+1} \leftarrow \mathrm{GRU}(f^{(\tau)}_j, h_{\tau})\)  
+        ^
+Warning 1 in paper.tex line 138: Command terminated with space.
+\EndFor  
+       ^
+Warning 1 in paper.tex line 139: Command terminated with space.
+\State \(\hat{\alpha}^{t+1}_j \leftarrow \sigma(W_o h_{t+1})\)  
+      ^
+Warning 1 in paper.tex line 140: Command terminated with space.
+\State Reward: \(r_j \leftarrow -\lVert g_j \rVert^2 ( \beta \hat{\alpha}^{t+1}_j + (1-\beta)\alpha^t_j )\)  
+      ^
+Warning 1 in paper.tex line 141: Command terminated with space.
+\State Use \(r_j\) for sampling probabilities and for updating GRU via backprop-through-time every \(p\) steps  
+      ^
+Warning 13 in paper.tex line 152: Intersentence spacing (`\@') should perhaps be used.
+Core pseudocode for SW-DPP and the GRU predictor is published under CC-BY-SA; the sampler adds fewer than 50 lines to a standard PyTorch-Geometric DataLoader.  
+                                                                            ^
+Warning 24 in paper.tex line 155: Delete this space to maintain correct pagereferences.
+\label{sec:experimental}  
+^
+Warning 13 in paper.tex line 157: Intersentence spacing (`\@') should perhaps be used.
+Static: ogbn-products, ogbn-papers100M, Friendster. Dynamic: Reddit-Temporal, Yelp-Timeline. Heterophilic control: MolPCBA.  
+                                                                                                                          ^
+Warning 2 in paper.tex line 166: Non-breaking space (`~') should have been used.
+Node sampling with 25 neighbours (NS-25), LABOR, HABLS, DPA-HABLS, GraphSAINT-rw, RSC \cite{liu-2022-rsc} and five ablations that disable one module at a time (\(-\)M1 \dots \(-\)M5).  
+                                                                                     ^
+Warning 24 in paper.tex line 183: Delete this space to maintain correct pagereferences.
+\label{sec:results}  
+^
+Warning 8 in paper.tex line 185: Wrong length of dash may have been used.
+At the 10 GB / 0.3 kWh point on ogbn-products, TADP-HABLS attains 83.8 \(\pm\) 0.2 \% test accuracy versus 82.9 \(\pm\) 0.3 \% for DPA-HABLS, while consuming 1.42 \(\pm\) 0.05 kJ versus 2.29 \(\pm\) 0.07 kJ. Across all 27 (budget, dataset) combinations every baseline point is strictly dominated: on average +0.7 pp accuracy and \(-\)38 \% JEPE relative to DPA-HABLS, \(-\)55 \% versus NS-25. Under the tight 6 GB cap accuracy retains 95 \% (products) and 93 \% (papers100M) of the 14 GB score; baselines lose 7-12 \%. Ablations show \(-\)M1 doubles inter-batch Jaccard (0.18\(\rightarrow\)0.40) and costs 1.1 pp accuracy; \(-\)M4 raises energy by 18 \%.  
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               ^
+Warning 13 in paper.tex line 188: Intersentence spacing (`\@') should perhaps be used.
+On Reddit-Temporal the inter-GPU neighbour overlap stays \(\le\) 0.19 for the full 48 h with TADP-HABLS; HABLS drifts from 0.22 to 0.47 after 12 h; GraphSAINT stabilises at 0.51. Coverage of new high-attention vertices per window averages 64.3 \%, matching the \(1 - 1/e\) theoretical bound. The look-ahead GRU removes 21.7 \% of the forward-pass latency, keeping throughput within 1.8 \% of GraphSAINT, whereas HABLS slows by 24 \% after 30 k steps. Area under the accuracy-time curve is +1.3 \% in the first 15 k batches and final accuracy is +0.8 pp over HABLS, +1.6 pp over GraphSAINT. Energy per processed edge falls by 35 \% versus GraphSAINT and 18 \% versus HABLS.  
+                                                                                                       ^
+Warning 13 in paper.tex line 188: Intersentence spacing (`\@') should perhaps be used.
+On Reddit-Temporal the inter-GPU neighbour overlap stays \(\le\) 0.19 for the full 48 h with TADP-HABLS; HABLS drifts from 0.22 to 0.47 after 12 h; GraphSAINT stabilises at 0.51. Coverage of new high-attention vertices per window averages 64.3 \%, matching the \(1 - 1/e\) theoretical bound. The look-ahead GRU removes 21.7 \% of the forward-pass latency, keeping throughput within 1.8 \% of GraphSAINT, whereas HABLS slows by 24 \% after 30 k steps. Area under the accuracy-time curve is +1.3 \% in the first 15 k batches and final accuracy is +0.8 pp over HABLS, +1.6 pp over GraphSAINT. Energy per processed edge falls by 35 \% versus GraphSAINT and 18 \% versus HABLS.  
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            ^
+Warning 13 in paper.tex line 188: Intersentence spacing (`\@') should perhaps be used.
+On Reddit-Temporal the inter-GPU neighbour overlap stays \(\le\) 0.19 for the full 48 h with TADP-HABLS; HABLS drifts from 0.22 to 0.47 after 12 h; GraphSAINT stabilises at 0.51. Coverage of new high-attention vertices per window averages 64.3 \%, matching the \(1 - 1/e\) theoretical bound. The look-ahead GRU removes 21.7 \% of the forward-pass latency, keeping throughput within 1.8 \% of GraphSAINT, whereas HABLS slows by 24 \% after 30 k steps. Area under the accuracy-time curve is +1.3 \% in the first 15 k batches and final accuracy is +0.8 pp over HABLS, +1.6 pp over GraphSAINT. Energy per processed edge falls by 35 \% versus GraphSAINT and 18 \% versus HABLS.  
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               ^
+Warning 24 in paper.tex line 197: Delete this space to maintain correct pagereferences.
+\label{sec:conclusion}  
+^
+Warning 13 in paper.tex line 198: Intersentence spacing (`\@') should perhaps be used.
+TADP-HABLS is the first sampler that simultaneously optimises statistical variance, temporal diversity and full-system energy for graph attention training. Sliding-window DPPs enforce exploration with provable guarantees; a GRU predictor removes stale importance; CountSketch compression unlocks hundred-thousand-node kernels on a single GPU; and a dual-ascent tuner automatically balances accuracy, redundancy and Joule cost. Across six benchmarks and multiple hardware regimes the method shifts the accuracy-energy Pareto front, often halving energy and memory at equal or better accuracy. Future work will extend the unified objective to communication cost in distributed settings and will adapt the window size online to concept drift, paving the way for resource-aware GNNs on trillion-edge dynamic graphs.  
+                                                                                                                                                                                                                                                                                                                                                     ^
+Warning 17 in paper.tex line 205: Number of `(' doesn't match the number of `)'!
+
+
+Warning 17 in paper.tex line 205: Number of `{' doesn't match the number of `}'!
+
+
