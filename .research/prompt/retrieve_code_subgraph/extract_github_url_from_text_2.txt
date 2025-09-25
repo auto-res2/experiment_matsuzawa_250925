@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The methodology is grounded in a formal definition of the ATTA problem, aiming to optimize model parameters by minimizing a weighted empirical error over actively selected and labeled test instances and an unsupervised loss for unlabeled data, within a set budget. The core techniques include: 1. Learning Theory Analysis: Establishes generalization bounds to demonstrate how limited labeled test instances (active learning) mitigate distribution shifts and proves that selective entropy minimization, when balanced with sample selection, prevents catastrophic forgetting. 2. Sample Entropy Balancing: Uses the pre-trained model's prediction entropy to partition streaming test data into high-entropy (informative, for active labeling) and low-entropy (source-like, for pseudo-labeling) sets to balance adaptation and CF mitigation. 3. Incremental Clustering (IC): A novel continual clustering technique applied to high-entropy samples to select informative and diverse 'anchors' from small buffers, ensuring distribution coverage and reducing redundancy in real-time. These anchors, along with pseudo-labeled low-entropy samples, are used for model fine-tuning.
+
+# GitHub URLs List
+['https://github.com/divelab/ATTA', 'https://github.com/DequanWang/tent', 'https://github.com/mr-eggplant/EATA', 'https://github.com/qinenergy/cotta', 'https://github.com/mr-eggplant/SAR', 'https://github.com/virajprabhu/CLUE']
+Output:
+{
+    "index": 2
+}
