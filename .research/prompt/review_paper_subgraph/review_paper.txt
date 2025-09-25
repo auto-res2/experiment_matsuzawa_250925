@@ -1,0 +1,172 @@
+
+Input:
+You are an expert reviewer for a top-tier international conference.
+Please conduct a comprehensive review of the research paper provided, evaluating it according to the standards of venues like NeurIPS, ICML, ICLR, or AAAI.
+
+Your task is to evaluate the paper on four key dimensions and provide scores from 1-10 for each:
+
+## Evaluation Dimensions:
+
+### 1. Novelty (1-10)
+- How original and innovative is the proposed approach?
+- Does it introduce new concepts, methods, or insights?
+- Is there sufficient differentiation from existing work?
+
+### 2. Significance (1-10)
+- What is the potential impact of this work on the field?
+- Does it address an important problem?
+- Are the contributions meaningful and substantial?
+
+### 3. Reproducibility (1-10)
+- Are the experimental details sufficient for reproduction?
+- Is the methodology clearly described?
+- Are datasets, hyperparameters, and implementation details provided?
+
+### 4. Experimental Quality (1-10)
+- Are the experiments well-designed and comprehensive?
+- Are appropriate baselines and evaluation metrics used?
+- Is statistical significance properly assessed?
+- Are the results convincing and well-analyzed?
+
+## Section-by-Section Analysis:
+
+For each section of the paper, provide:
+- Key strengths
+- Areas for improvement
+- Specific comments on quality and completeness
+
+## Overall Assessment:
+
+Provide your scores for each dimension, followed by an overall recommendation.
+
+## Paper Content:
+
+
+**Title:** HAQ-GAT: Hierarchical Adaptive Quantised Graph Attention with Error and Fairness Guarantees
+
+
+**Abstract:** Graph Attention Networks (GATs) deliver state-of-the-art performance on node-classification benchmarks but their quadratic edge cost, reliance on floating-point arithmetic and fixed sparsification heuristics impede deployment on billion-edge graphs or energy-constrained devices. Prior efficient variants mitigate cost yet (i) hand-pick a constant number of exact edges, (ii) sample independent random-feature maps per layer, (iii) retain FP32 kernels and (iv) provide neither approximation guarantees nor bias control. We introduce HAQ-GAT. The model (a) keeps only O(K0 log deg) exact edges per node via two-level streaming k-means whose K0 is adapted online, (b) re-uses a global orthogonal low-rank kernel bank across heads and layers, (c) enforces a user-specified ∞-norm error budget through a jackknife controller that dynamically adjusts K0 and the feature width m, (d) supports integer-only inference through quantisation-aware training and (e) equalises edge-discard rates across degree buckets to curb fairness gaps. Across six OGB and social graphs HAQ-GAT matches dense GAT accuracy within 0.2 %, trains 4–6× faster, consumes 5× less memory and cuts Jetson energy by 65 %. The controller limits error-budget violations to <3 % under distribution drift, while the guard reduces the degree-bias gap from 8 % to 1.3 %. Comprehensive ablations confirm the necessity of every component, positioning HAQ-GAT on the accuracy–efficiency Pareto frontier for responsible, scalable graph attention.
+
+
+**Introduction:** Attention has redrawn the frontier of representation learning on graphs by allowing each node to weigh its neighbours instead of averaging them. Graph Attention Networks (GATs) therefore dominate leader-boards that span citation, e-commerce and molecular graphs. Unfortunately, the softmax over all incident edges requires O(|E|H) multiply-adds (edges × heads) and a fully materialised attention matrix, inflating memory footprint, latency and carbon emissions on web-scale graphs and edge accelerators.
+
+Recent proposals alleviate this burden through either static top-k sparsification or low-rank kernel surrogates; nonetheless four open problems remain. First, all choose k a-priori although salient edges evolve during training. Second, random-feature matrices are sampled independently per layer, squandering memory and inflating variance. Third, most efficient variants still rely on FP32 arithmetic, precluding deployment on INT8 hardware embedded in phones, vehicles and IoT devices. Fourth, none guarantees that the combined sparse-plus-low-rank approximation respects a user-defined error budget, nor do they consider the social impact of preferentially dropping edges from low-degree nodes.
+
+Research question. Can we design a graph-attention operator whose computation, memory and energy scale sub-linearly with node degree while simultaneously (i) preserving accuracy, (ii) guaranteeing bounded approximation error, (iii) enabling integer-only inference and (iv) controlling fairness? Our affirmative answer is HAQ-GAT – Hierarchical Adaptive Quantised Graph Attention.
+
+Core idea. We recast attention as a resource-budget allocation problem: each node is allotted an error budget ε and decides on-the-fly how many neighbours to attend exactly versus approximately. A two-level streaming k-means clusters query–key directions, retaining only the highest-score edge per micro-cluster, which yields O(K0 log deg) exact edges with K0 usually below eight on power-law graphs. The residual soft attention is approximated using a shared orthogonal random-feature matrix whose width m is grown or shrunk by a jackknife controller that monitors the current ∞-norm error.
+
+Quantisation. We derive integer-only code paths for both the low-rank projection and the sparse accumulation. Activations and weights reside in unsigned INT8 with per-channel scale factors, while the softmax normaliser is held in FP16; gradients flow through a straight-through estimator equipped with degree-aware clipping.
+
+Fairness guard. Edge dropping can disproportionately harm low-degree nodes. We monitor discard rates across degree quintiles and locally increase K0 for disadvantaged buckets until parity is restored within δ.
+
+Verification. HAQ-GAT is evaluated on MAG240M-S, OGB-Products, Reddit, OGB-Arxiv, Pokec-Zak, Texas, Wisconsin and a synthetic power-law graph. Baselines include dense GAT, SLiKC-GAT, KS-GAT, fixed Top-K GAT and Degree-Quant INT8. Metrics cover accuracy, energy, memory, ε-violations and degree bias. On an NVIDIA A100 training throughput improves 4–6× over SLiKC-GAT; on a Jetson Orin NX integer inference is 3× faster and 65 % more energy-efficient. Accuracy remains indistinguishable from dense GAT. Violation rates stay below 3 % for all ε values, and the fairness guard cuts the accuracy gap between low- and high-degree nodes five-fold.
+
+Contributions
+• A hierarchical adaptive sparsity mechanism that selects O(K0 log deg) exact edges per node and tunes K0 online.
+• A shared low-rank kernel bank reused across heads and layers, halving memory and reducing variance.
+• A provably bounded error-budget controller based on jackknife confidence intervals.
+• Integer-only operators for mixed sparse-plus-low-rank attention enabling INT8 inference.
+• A fairness guard that equalises discard rates across degree buckets.
+• An extensive empirical study demonstrating that HAQ-GAT lies on the accuracy–efficiency Pareto frontier, respects user-specified error bounds under drift and reduces degree bias.
+
+We conclude with directions for extending the controller to positional graph transformers and heterogeneous bit-width training.
+
+
+**Related Work:** Sparsifying attention. Static top-k pruning powers GraphSAINT sampling [zeng-2019-graphsaint] and SLiKC-GAT, yet a frozen k neglects temporal variation and offers no approximation guarantee. Scatterbrain unifies sparse and low-rank decompositions for transformers [chen-2021-scatterbrain]; HAQ-GAT adopts a similar decomposition but adds on-line control of k together with formal error bounds. SAC learns sparse adaptive connections in sequence attention [li-2020-sac]; in contrast, our focus is on per-node fairness and quantised deployment.
+
+Low-rank kernels. Random-feature attention linearises the softmax kernel and enables linear-time transformers [jaszczur-2021-sparse]. KS-GAT samples independent projections for every head, inflating memory. We instead share a single orthogonal bank, cutting memory roughly in half and lowering variance, echoing theoretical insights on kernel variance reduction [chen-2020-convolutional].
+
+Quantisation. Degree-Quant introduces INT8 training for GNNs via degree-aware scaling [tailor-2020-degree], while A2Q allocates mixed precisions per node [zhu-2023-aggregation]. HAQ-GAT differs by quantising the combined sparse-plus-low-rank operator and by retaining formal error control.
+
+Fairness. GATE analyses over-aggregation and proposes attention gating [mustafa-2024-gate] but does not address structural bias. We propose an explicit discard-rate monitor with mitigation.
+
+Error guarantees. Scatterbrain bounds L2 attention error [chen-2021-scatterbrain] and low-rank optimal transport supplies rank-dependent guarantees [scetbon-2022-low]. To our knowledge, HAQ-GAT is the first graph-attention model that enforces a user-specified ∞-norm bound during training and adapts when the bound is threatened.
+
+Thus, while prior work improves either efficiency, precision or fairness in isolation, HAQ-GAT unifies all three under one adaptive framework with formal guarantees.
+
+
+**Background:** Problem setting. Consider a directed graph G = (V,E) with up to N ≈ 2.4 × 10^8 nodes and |E| ≈ 1.9 × 10^9 edges. Each node i owns a d-dimensional feature vector x_i. A standard H-head GAT layer outputs
+   z_i = concat_h Σ_{j∈N(i)} α_{ij}^h W_h x_j,
+where α_{ij}^h = softmax_j(e_{ij}^h) and e_{ij}^h = (Q_h x_i·K_h x_j)/√d. Dense evaluation scales with |E|H and stores the entire attention matrix A.
+
+Approximation objective. We approximate A with Â such that max_{i,j}|A_{ij}−Â_{ij}| ≤ ε with high probability while reducing FLOPs and memory. The approximation blends (i) a sparse subset of exact edges and (ii) a low-rank kernel expansion produced by random features.
+
+Random-feature kernels. The exponential kernel exp(q·k) is approximated by φ(q)^Tφ(k) where φ:ℝ^d→ℝ^m. Standard practice samples φ independently per layer; we instead draw a single orthogonal matrix Φ_s of width m_s and slice contiguous blocks for each head, ensuring reuse and variance reduction.
+
+Streaming k-means sparsity. During a streaming pass over neighbours we maintain K0 centroids μ_c per node. When edge (i,j) is seen, its cluster c is found, μ_c updated and the running maximum score ê_c = max(ê_c,e_{ij}) refreshed. After processing all neighbours only edges realising ê_c survive, giving at most K0 exact edges. Power-law degrees render the expected number of exact edges K0 log deg(i).
+
+Quantisation preliminaries. Values v are stored as int8 = round(v/s) with per-channel scale s; gradients are passed through a straight-through estimator and clipped according to node degree to preserve dynamic range.
+
+Fairness metric. Following [tailor-2020-degree] we measure ΔAcc = |Acc_low − Acc_high| between the bottom and top degree quintiles. The guard seeks ΔAcc ≤ 2 pp.
+
+
+**Method:** HAQ-GAT comprises four interacting modules.
+
+Hierarchical adaptive sparsity. For each node i, streaming k-means with K0 centroids clusters neighbour queries. Only the edge with the highest score per cluster is kept, yielding O(K0 log deg) exact edges. After each epoch we compute the marginal validation-loss gain ΔL from halving K0; if ΔL < γ we adopt the smaller K0. This annealing prevents wasted compute once additional exact edges cease to improve generalisation.
+
+Shared low-rank kernel bank. A single orthogonal matrix Φ_s ∈ ℝ^{d×m_s} is drawn at initialisation. Head h with offset p_h uses Φ_h = Φ_s[:, p_h:p_h+m]. Every 30 epochs we apply Oja updates using current activations to maintain orthogonality. Compared with per-head sampling, this halves memory and cuts kernel variance by √H.
+
+Error-budget controller. Mini-batches deliver unbiased estimates of ∥A − Â∥_∞. We collect them in a sliding window and compute a jackknife 95 % confidence interval. If the upper bound exceeds ε we either double m or revert to the previous larger K0. If the upper bound falls below ε/4 and m > 4 we halve m. Thus the controller guarantees—with high probability—that ∥A − Â∥_∞ ≤ ε in almost all epochs while avoiding over-provisioning.
+
+Quantisation-aware operators. The low-rank projection Φx is executed as an int8 GEMM with per-row scales for Φ and per-column scales for x; sparse exact contributions are accumulated with block-INT8 instructions and cast to FP16 only for normalisation. Gradients are clipped at degree-dependent thresholds to avert overflow. The fairness guard records discard rates per degree quintile; if the gap exceeds δ it raises K0 locally until rates align.
+
+Complexity. Expected exact-edge count per node: O(K0 log deg). Projection cost: O(m d N). With m ≪ d and K0 ≪ deg(i), HAQ-GAT reduces training FLOPs and memory by 4–6× relative to SLiKC-GAT.
+
+Pseudocode (PyTorch):
+```
+for epoch in range(E):
+    for batch in loader:
+        out = model(batch.x, batch.edge_index)
+        loss = criterion(out[train_idx], y[train_idx])
+        loss.backward(); optimiser.step(); optimiser.zero_grad()
+    adaptive_step(state, val_loss)  # updates K0 and m
+```
+
+
+**Experimental Setup:** Research questions. RQ1 – Does HAQ-GAT improve the accuracy–efficiency Pareto front? RQ2 – Does the controller uphold the error budget under drift? RQ3 – Does the fairness guard reduce degree bias while preserving INT8 robustness?
+
+Datasets. Large-scale: MAG240M-S (1.9 B edges, 244 M nodes), OGB-Products (61 M edges), Reddit (11 M). Medium: OGB-Arxiv with timestamps. Fairness: Pokec-Zak, Texas, Wisconsin and a synthetic power-law graph (α = 2.5).
+
+Baselines. Dense GAT, SLiKC-GAT, KS-GAT, fixed Top-K GAT (K = 20) and Degree-Quant INT8 GAT. All use identical PyTorch 2.1 + PyG 2.5 kernels; hyper-parameters are re-tuned via the same Optuna search space.
+
+Hardware. Training: NVIDIA A100 80 GB, CUDA 12.2; inference: Jetson Orin NX with TensorRT 8.6 (INT8).
+
+Optimisation. AdamW [kingma-2014-adam] with learning-rate ∈ {1e-3, 2e-3, 5e-4}, weight-decay ∈ {0, 1e-4, 5e-4}, cosine schedule, five-epoch warm-up, 200 epochs (40 for MAG240M). Early-stop patience = 30.
+
+Metrics. Primary: micro-accuracy and macro-F1. Secondary: peak GPU memory, wall-clock time/epoch, energy (nvidia-smi), inference latency and throughput, CO₂ (CodeCarbon), theoretical FLOPs. Robustness: accuracy under Gaussian noise (σ = 0.05) and 5 % high-degree edge deletions; adversarial FGSM (ε = 0.05). Error: rate at which ∥A − Â∥_∞ exceeds ε. Fairness: ΔAcc.
+
+Seeds. Three for large graphs, five for small graphs; we report mean ± SD.
+
+Sensitivity study. On OGB-Products we sweep γ ∈ [10⁻⁴,10⁻²], ε ∈ {1e-2, 5e-3, 1e-3}, K0_init ∈ {4, 8, 16}; a quadratic response surface yields Sobol indices.
+
+Profiling. PyTorch-profiler captures CUDA/CPU events; ptflops measures theoretical FLOPs; traces are released for reproducibility.
+
+
+**Results:** Large-scale benchmark (RQ1). On MAG240M-S, HAQ-GAT reaches 70.4 ± 0.1 % accuracy versus 70.6 ± 0.1 % for dense GAT while processing 3.9 M edges/s—4.3× faster than SLiKC-GAT. Peak GPU memory falls from 86 GB to 17.8 GB and energy/epoch from 5.9 kWh to 2.1 kWh (-64 %). On Reddit, HAQ-GAT achieves 96.9 ± 0.05 % accuracy with a 4.6× training speed-up; on OGB-Products 79.1 ± 0.2 % with a 3.8× speed-up. Jetson Orin INT8 inference handles 1 000 nodes in 2.4 ms at 74 mJ, 65 % less energy than SLiKC-GAT FP32, with ≤0.25 % accuracy drop.
+
+Online error budget (RQ2). On OGB-Arxiv with synthetic drift, HAQ-GAT violates the ε bound in only 1.1 %, 2.6 % and 2.9 % of epochs for ε = 1e-2, 5e-3 and 1e-3 respectively, versus 37–46 % for SLiKC-GAT. K0 and m react within two epochs of drift, adding just 7.4 ± 1.3 % extra FLOPs before decaying.
+
+Fairness & quantisation robustness (RQ3). On Pokec-Zak the degree gap shrinks from 8.2 % (SLiKC) to 1.3 % with our guard; disabling the guard raises the gap to 4.9 %. The synthetic power-law graph shows similar trends (1.1 % vs 7.9 %). HAQ-GAT INT8 loses only 0.3 % accuracy relative to FP32 and maintains κ-condition numbers below 6.4.
+
+Ablations. Removing hierarchical sparsity halves speed gains and doubles ε violations. Dropping the shared kernel bank raises GPU memory by 96 % with no accuracy benefit. Disabling quantisation-aware training quadruples Jetson RAM and raises energy by 62 %.
+
+Robustness. Deleting 5 % of high-degree edges lowers HAQ-GAT accuracy by 0.7 % versus 2.4 % for SLiKC. FGSM reduces HAQ-GAT accuracy by 1.8 % compared with 3.6 % for dense GAT, suggesting the controller acts as an implicit regulariser.
+
+Sensitivity. Sobol analysis attributes 42 % of variance to ε, 29 % to γ and 16 % to K0_init. The sweet spot is ε = 5e-3, γ = 5e-4.
+
+Collectively, these experiments demonstrate that no baseline dominates HAQ-GAT on any combination of accuracy, speed, memory or energy.
+
+
+**Conclusion:** We presented HAQ-GAT, an adaptive graph-attention architecture that unifies hierarchical sparsity, shared low-rank kernels and INT8 quantisation under a closed-loop error-budget controller. The model preserves dense-level accuracy while delivering 4–6× gains in speed, memory and energy, respecting user-specified ∞-norm error constraints and lowering degree bias below two percentage points. Empirical evidence across eight graphs and two hardware tiers establishes a new Pareto frontier for scalable and responsible graph attention.
+
+Future work will extend the controller to positional graph transformers, integrate heterogeneous bit-width training such as trainable noise injection [author-year-not], and analyse convergence under non-stationary graphs. We also plan to couple HAQ-GAT with privacy-preserving aggregation for federated scenarios in health care and social networks. All code, checkpoints and profiler traces are publicly released to foster transparent research.
+
+
+Output:
+{
+    "novelty_score": 8,
+    "significance_score": 8,
+    "reproducibility_score": 7,
+    "experimental_quality_score": 8
+}
