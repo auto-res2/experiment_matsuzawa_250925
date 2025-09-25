@@ -1,0 +1,3 @@
+=== [PHASE 2/2] Full experiment start Thu Sep 25 05:06:26 AM UTC 2025 ===
+No runnable experiment code was provided in the original script. All generated modules are therefore stubs that deliberately raise RuntimeError when invoked.  Please supply actual experiment logic to replace these stubs.
+=== [PHASE 2/2] Full experiment end Thu Sep 25 05:06:26 AM UTC 2025 ===
