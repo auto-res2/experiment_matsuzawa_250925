@@ -1,0 +1,18 @@
+=== [PHASE 1/2] Smoke test start Thu Sep 25 08:10:01 AM UTC 2025 ===
+=== [PHASE 1/2] Smoke test start Thu Sep 25 08:12:05 AM UTC 2025 ===
+=== [PHASE 1/2] Smoke test start Thu Sep 25 08:15:06 AM UTC 2025 ===
+This will download 1.38GB. Will you proceed? (y/N)
+=== [PHASE 1/2] Smoke test start Thu Sep 25 08:15:38 AM UTC 2025 ===
+ogbn-products has been updated.
+Will you update the dataset now? (y/N)
+=== [PHASE 1/2] Smoke test start Thu Sep 25 08:16:11 AM UTC 2025 ===
+ogbn-products has been updated.
+Downloading http://snap.stanford.edu/ogb/data/nodeproppred/products.zip
+Extracting data/ogb/products.zip
+Loading necessary files...
+This might take a while.
+Processing graphs...
+Converting graphs into PyG objects...
+Saving...
+=== [PHASE 1/2] Smoke test start Thu Sep 25 08:19:48 AM UTC 2025 ===
+=== [PHASE 1/2] Smoke test start Thu Sep 25 08:20:10 AM UTC 2025 ===

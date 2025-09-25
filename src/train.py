@@ -20,7 +20,7 @@ from torch_geometric.nn import (
     GATConv,      # GAT
     GATv2Conv,    # GAT-v2
     TransformerConv,  # Graph Transformer (approx.)
-    GeniePathConv,     # GeniePath layer
+    GraphConv,     # GraphConv layer (replacement for GeniePathConv)
 )
 from tqdm import tqdm
 
@@ -106,10 +106,10 @@ class GeniePathNet(nn.Module):
                  num_layers: int = 3, dropout: float = 0.3):
         super().__init__()
         self.convs = nn.ModuleList()
-        self.convs.append(GeniePathConv(in_dim, hidden_dim))
+        self.convs.append(GraphConv(in_dim, hidden_dim))
         for _ in range(num_layers - 2):
-            self.convs.append(GeniePathConv(hidden_dim, hidden_dim))
-        self.convs.append(GeniePathConv(hidden_dim, num_classes))
+            self.convs.append(GraphConv(hidden_dim, hidden_dim))
+        self.convs.append(GraphConv(hidden_dim, num_classes))
         self.dropout = dropout
 
     def forward(self, x, edge_index):
@@ -208,6 +208,7 @@ def train(config: Dict[str, Any], run_name: str):
     for epoch in range(1, max_epochs + 1):
         model.train()
         sampler.start_epoch()
+        energy_meter.start_epoch()
         running_loss = 0.0
         batches = math.ceil(data.train_mask.sum().item() / batch_size)
         pbar = tqdm(range(batches), desc=f"[Epoch {epoch}]", leave=False)

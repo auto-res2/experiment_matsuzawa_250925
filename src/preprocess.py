@@ -11,7 +11,30 @@ from ogb.nodeproppred import PygNodePropPredDataset
 
 
 def _ogb_loader(name: str, root: str) -> Data:
-    dset = PygNodePropPredDataset(name=name, root=root)
+    # Monkey patch to avoid interactive prompts
+    import ogb.utils.url
+    original_decide_download = ogb.utils.url.decide_download
+    ogb.utils.url.decide_download = lambda url: True
+
+    # Monkey patch input to always return 'y'
+    import builtins
+    original_input = builtins.input
+    builtins.input = lambda _: 'y'
+
+    try:
+        # Monkey patch torch.load to use weights_only=False for OGB compatibility
+        import torch
+        original_torch_load = torch.load
+        torch.load = lambda *args, **kwargs: original_torch_load(*args, **kwargs, weights_only=False) if 'weights_only' not in kwargs else original_torch_load(*args, **kwargs)
+
+        dset = PygNodePropPredDataset(name=name, root=root)
+
+        # Restore torch.load
+        torch.load = original_torch_load
+    finally:
+        # Restore original functions
+        ogb.utils.url.decide_download = original_decide_download
+        builtins.input = original_input
     split = dset.get_idx_split()
     data = dset[0]
     data.y = data.y.squeeze().to(torch.long)
@@ -20,9 +43,14 @@ def _ogb_loader(name: str, root: str) -> Data:
     data.train_mask = torch.zeros(num_nodes, dtype=torch.bool)
     data.val_mask   = torch.zeros(num_nodes, dtype=torch.bool)
     data.test_mask  = torch.zeros(num_nodes, dtype=torch.bool)
-    data.train_mask[torch.from_numpy(split['train'])] = True
-    data.val_mask  [torch.from_numpy(split['valid'])] = True
-    data.test_mask [torch.from_numpy(split['test'])]  = True
+    # Handle both numpy arrays and tensors
+    train_idx = split['train'] if isinstance(split['train'], torch.Tensor) else torch.from_numpy(split['train'])
+    val_idx = split['valid'] if isinstance(split['valid'], torch.Tensor) else torch.from_numpy(split['valid'])
+    test_idx = split['test'] if isinstance(split['test'], torch.Tensor) else torch.from_numpy(split['test'])
+
+    data.train_mask[train_idx] = True
+    data.val_mask[val_idx] = True
+    data.test_mask[test_idx] = True
     return data
 
 
