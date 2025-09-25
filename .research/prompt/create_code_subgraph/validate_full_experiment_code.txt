@@ -1,0 +1,290 @@
+
+Input:
+You are an AI code reviewer specializing in machine learning experiment validation.
+
+Analyze the provided experiment code and determine if it implements a production-ready experiment for the Current Research Method using relevant External Resources (not synthetic/placeholder data).
+
+# Instructions
+
+## Validation Criteria
+Check if the generated code meets ALL of the following requirements:
+
+1. Real Data Usage: Uses actual datasets (from External Resources when relevant), not synthetic/dummy/placeholder data
+2. Dual Configuration System:
+   - `smoke_test_yaml`: Quick validation configuration with reduced resources (minimal epochs, smaller datasets)
+   - `full_experiment_yaml`: Complete production configuration matching ALL experimental design specifications
+3. Production-Ready Full Experiment: The `--full-experiment` mode must implement the complete experimental design with:
+   - All specified datasets from External Resources
+   - Correct parameter ranges and layer counts as described in experimental details
+   - Full training epochs and comprehensive evaluation metrics
+4. Complete Implementation: Contains full training loops, evaluation metrics, and result saving with no omitted components
+5. Command Line Interface: Properly supports both `--smoke-test` and `--full-experiment` flags with appropriate configuration loading
+6. No Placeholders: Contains no placeholder comments, TODO items, approximations, or incomplete implementations
+
+## Output Format
+Respond with a JSON object containing:
+- `is_full_experiment_ready`: boolean - true if ALL criteria are met, false otherwise
+- `full_experiment_issue`: string - specific issues found if any criteria are not met, focusing on production-readiness of the `--full-experiment` mode
+
+# Current Research Method
+{
+    "Open Problems": "• Current samplers optimise variance inside one mini-batch but give no guarantee that different workers (or successive steps) explore complementary areas of the receptive field.  \n• Importance scores (attn/grad) are still obtained from the *preceding* forward pass, so they arrive one iteration late; this hurts highly dynamic graphs.  \n• Similarity kernels for k-DPP become the new bottleneck on billion-node graphs.  \n• Existing energy accounting ignores *CPU* and *PCIe* traffic and cannot be compared across multi-GPU jobs.  \n• Variance, diversity and energy are optimised by separate heuristics; there is no single objective balancing them.",
+    "Methods": "We propose TADP-HABLS (Temporal-Adaptive, Diversity-and-Power-aware Hierarchical ABLS), a drop-in sampler that unifies variance, temporal diversity and energy into one online objective.\n\nM1 – Sliding-window DPP (SW-DPP).  A size-K reservoir stores the last W batches’ neighbours.  When sampling the next batch we draw S_ℓ ~ DPP( Σ_{t∈window} Φ_t  ⊕  Φ_curr ) where Φ are low-rank Nyström sketches of node embeddings.  This maximises novelty across time with O(Kd^2) cost and yields a provable 1-1/e coverage ratio of unseen high-attention vertices over W steps.\n\nM2 – One-step look-ahead attention predictor.  A 2-layer GRU takes previous α_{ij}, |g_j| and degree features and outputs \\hat α^{t+1}_{ij}.  The bandit reward becomes r_j = −|g_j|²· ( β·\\hat α^{t+1} +(1−β)·α^t ).  This removes the one-iteration lag and reduces cache bias to O(β^{2t}).\n\nM3 – Kernel on compressed embeddings.  Node embeddings are projected through fixed 256-dim CountSketch + random sine/cosine features; cosine similarities are approximated with <2 % error, cutting DPP kernel build time 8× and RAM 16×.\n\nM4 – Unified objective via constrained Lagrangian.  We maximise E[accuracy proxy] −λ₁·Var −λ₂·Redundancy −λ₃·Energy under a global GPU‐mem cap.  λ’s are updated by dual ascent every epoch, giving automatically tuned fan-outs *and* target diversity level.\n\nM5 – Full-system energy meter.  We sample GPU, CPU and DRAM power via NVML & RAPL, add PCIe throughput, and report JEPE (Joule-per-Epoch) plus JEPTA (Joule·Area under Train-Acc).",
+    "Experimental Setup": "Datasets: ogbn-products, ogbn-papers100M, Friendster, heterophilic MolPCBA; dynamic setting: Reddit-Temporal, Yelp-Timeline.  \nModels: 2-layer GAT, 4-layer GATv2, 8-layer GraphTransformer, 3-layer GeniePath.  \nHardware: single A100, 4×A100, and CPU-only (Xeon-IceLake) to show portability.  \nBaselines: NS(25), LABOR-*, HABLS, DPA-HABLS, GraphSAINT-rw, RSC-only.  \nMetrics: Test accuracy/AUROC, wall-clock, #vertices/edges, variance, JEP(E), JEPTA, inter-batch Jaccard of sampled sets.  \nProtocol: 5 seeds, Adam 0.005, early-stop 50.  Budget levels: 6 GB, 10 GB, 14 GB, plus energy budget 0.3 kWh.",
+    "Experimental Code": "# SW-DPP reservoir (PyTorch)\nclass SWDPP:\n    def __init__(self,K,W,d):\n        self.K,K0=K,K*3; self.W=W; self.d=d; self.res=[]\n    def _sketch(self,emb):\n        # CountSketch+RFF to 256 dims\n        return torch.randn(self.d,256,device=emb.device)@emb.T\n    def update(self,emb):\n        self.res.append(self._sketch(emb))\n        if len(self.res)>self.W: self.res.pop(0)\n    def sample(self,cand_emb):\n        R=torch.cat(self.res+[self._sketch(cand_emb)],1)\n        K=(R.T@R)/(self.d)\n        idx=fast_k_dpp(K,self.K)\n        return idx\n\n# Look-ahead GRU\nclass AttnPredictor(nn.Module):\n    def __init__(self,feat_dim):\n        super().__init__(); self.gru=nn.GRU(feat_dim,32,2)\n    def forward(self,feat,h=None):\n        out,_=self.gru(feat.unsqueeze(0),h)\n        return torch.sigmoid(out[-1])\n",
+    "Expected Result": "• 12-epoch moving window reduces neighbour overlap between workers from 0.42→0.18 (ogbn-products).  \n• Var lowered 15 % vs HABLS while sampling 1.4× fewer vertices; accuracy +0.9 %.  \n• JEPE drops 38 % vs DPA-HABLS, 55 % vs NS.  \n• Predictor cuts additional forward-pass latency by 22 %.  \n• Dual-objective tuner matches best manual (grid) fan-outs within 0.5 % accuracy under all memory/energy budgets.",
+    "Expected Conclusion": "Temporal diversity across mini-batches, predictive importance and a global Lagrangian tuner together unlock a new Pareto front for attention-based GNN training: similar or better accuracy with half the energy and memory.  SW-DPP shows that coverage-style objectives can be enforced online at scale, and the full-system JEPE metric enables fair sustainability comparisons.  These ideas generalise to any sparse-attention architecture and pave the way for budget-aware, diversity-controlled training on trillion-edge dynamic graphs."
+}
+
+# Experimental Design
+
+## Experiment Strategy
+--------------------------------------------------
+Experiment 1.  Budget–Pareto Evaluation on Static Benchmarks
+--------------------------------------------------
+Goal
+    Quantify the joint improvement in accuracy, variance and energy that TADP-HABLS delivers, and verify that the unified Lagrangian really finds the best trade-off under tight GPU-mem / energy caps.
+
+Protocol
+1. Datasets & models
+      ogbn-products (2-layer GAT)         – medium, homophilic
+      ogbn-papers100M (4-layer GATv2)     – very large, homophilic
+      Friendster (8-layer Graph-Transformer) – billion-edge social graph
+   All runs on a single A100 (80 GB).
+2. Budgets
+      a) Memory caps: 6 GB, 10 GB, 14 GB
+      b) Energy caps: 0.3 kWh, 0.6 kWh
+3. Methods
+      • TADP-HABLS (full)
+      • –M1 (no SW-DPP)  –M2 (no look-ahead)  –M4 (no dual tuner)  –M5 (no full-system meter)
+      • HABLS, DPA-HABLS, LABOR-*, NS(25)
+4. Metrics (per Table 1 in the paper)
+      Test Acc / AUROC, neighbour-variance, inter-batch Jaccard, JEPE, JEPTA, wall-clock.
+5. 5 random seeds, Adam 0.005, early-stop=50.
+
+What Positive Results Would Show
+• TADP-HABLS dominates the Pareto frontier: for every baseline point at (accuracy, JEPE) there exists a setting of λ₁-λ₃ that is ≥ 0.5 % more accurate while consuming ≥ 30 % less energy.
+• Removing SW-DPP increases inter-batch Jaccard from ≈0.18→0.40 and drops accuracy by ≈1 %; removing the dual tuner forces manual fan-outs to recover similar accuracy but at 15–25 % higher JEPE — proving each component’s contribution.
+• Under the 6 GB cap the method still holds 95 % of its large-memory accuracy, validating the adaptive fan-out.
+
+Ultimate Demonstration
+Shows that the unified objective and temporal diversity give simultaneous gains in all three target dimensions (variance, redundancy, energy) without manual tuning.
+
+--------------------------------------------------
+Experiment 2.  Streaming Graph Setting – Adaptivity Over Time
+--------------------------------------------------
+Goal
+    Verify that (i) the sliding-window DPP keeps exploration high over long horizons and (ii) the GRU look-ahead removes the one-iteration attention lag on rapidly evolving graphs.
+
+Protocol
+1. Dynamic datasets
+      Reddit-Temporal   (minute-level post graph, 50 M edges/month)
+      Yelp-Timeline     (business review graph, 8 M edges/month)
+   3-layer GeniePath encoder.
+2. 4×A100 DGX box: one worker/GPU sampling its own mini-batches; gradients aggregated with DDP.
+3. Compare three samplers
+      a) TADP-HABLS (W = 12 epochs, GRU-look-ahead)
+      b) HABLS + time-agnostic DPP (per-batch only)
+      c) GraphSAINT-rw (standard random-walk)
+4. Run 100 k chronological micro-batches (≈48 h wall-clock).
+5. Record every 250 batches
+      • Inter-GPU overlap (Jaccard)
+      • Coverage ratio of new high-attention vertices
+      • Streaming test accuracy vs wall-clock
+      • Extra forward-pass latency (ms) per batch
+      • JEPE.
+
+What Positive Results Would Show
+• TADP-HABLS maintains neighbour overlap <0.2 across the whole 48 h while HABLS drifts to >0.45 after 12 h, confirming sustained temporal diversity.
+• Coverage of unseen high-attention nodes stays within the 1–1/e theoretical bound (>63 %) for W = 12, matching the paper claim.
+• GRU predictor removes ≈22 % of the added forward-pass latency relative to a naive “use last α”, keeping throughput within 2 % of GraphSAINT.
+• Streaming accuracy curve for TADP-HABLS rises 1.3 % faster within the first 15 k batches and ends 0.8 % higher, proving that faster attention feedback matters in non-stationary graphs.
+• Energy per processed edge is 35 % lower than GraphSAINT, 18 % lower than HABLS, showing benefit of the energy term even in distributed training.
+
+Ultimate Demonstration
+Confirms that the method’s temporal modules (SW-DPP, GRU predictor) solve the exploration-exploitation problem in dynamic settings without sacrificing speed or energy.
+
+--------------------------------------------------
+Experiment 3.  Scalability & Kernel-Compression Micro-benchmarks
+--------------------------------------------------
+Goal
+    Stress-test the compressed-embedding kernel (M3) at billion-node scale and verify that sampler cost remains sub-linear in graph size.
+
+Protocol
+1. Synthetic power-law graph generator: 1 B nodes, 100 B edges, stored on local NVMe RAID; embeddings pre-initialised (randn, 768-d).
+2. Sampler micro-loop executed on single A100, varying reservoir size K ∈ {10 k, 50 k, 100 k} and sketch dimension d′ ∈ {128,256,512}.
+3. Compare
+      a) Full cosine kernel DPP (reference, fits only up to 50 k nodes)
+      b) Nyström + exact cosine (HABLS)
+      c) Our CountSketch + RFF compressed kernel (TADP-HABLS)
+4. Measurements
+      • Kernel construction time / batch
+      • Peak GPU memory
+      • Frobenius error ||K̂ − K||_F / ||K||_F
+      • Downstream acceptance rate of DPP sampler (proxy for quality).
+
+What Positive Results Would Show
+• At K = 100 k, compressed kernel builds in <40 ms (8 × faster than HABLS) and fits in 1.1 GB GPU RAM (16 × smaller than reference) while keeping relative error <2 %.
+• Acceptance rate of the k-DPP within 0.5 % of the exact kernel, indicating negligible impact on diversity quality.
+• Empirically, kernel build time grows roughly O(K·log d′) instead of O(K²), confirming the claimed O(K d²) complexity.
+
+Ultimate Demonstration
+Proves that the kernel-compression trick is the key enabler for bringing DPP-style diversity into the billion-node regime on a single 80 GB GPU.
+
+--------------------------------------------------
+Combined Take-away
+The three experiments jointly validate that TADP-HABLS (1) yields a strictly better accuracy–variance–energy Pareto curve on standard benchmarks, (2) sustains high exploration and low latency in truly dynamic, multi-GPU scenarios, and (3) scales its diversity objective to graphs two orders of magnitude larger than what prior DPP-based samplers can handle.
+
+## Experiment Details
+================================================
+EXPERIMENT 1 – Budget–Pareto Evaluation on Static Benchmarks
+================================================
+A. Models
+  1. 2-layer GAT (hidden = 256, 4 heads, ELU, dropout 0.4)
+  2. 4-layer GAT-v2 (hidden = 384, 8 heads, ELU, dropout 0.3)
+  3. 8-layer Graph Transformer (GT) [Dwivedi & Bresson, 2021]
+     • dim = 512, 4 attention heads, global token, GRL positional enc.
+     • Rotary position embedding added to attention.
+  4. Baselines reproduced under identical PyTorch-Geometric (v2.4) / DGL (v1.1) code-path
+     • Node-wise Sampling (NS-25)
+     • LABOR, HABLS, DPA-HABLS, GraphSAINT-rw
+     • Ablations: –M1, –M2, –M4, –M5 (disable one module at a time)
+B. Datasets
+  • ogbn-products  (2.4 M nodes, 61 M edges)
+  • ogbn-papers100M (111 M nodes, 1.6 B edges)
+  • Friendster (65 M nodes, 1.8 B edges, SNAP)
+C. Pre-processing
+  1. Features: row-normalised log1p(deg) concatenated with raw feats.
+  2. Stochastic feature quantisation to BF16 during sampling to halve GPU memory traffic; training stays in FP32/BF16 mixed precision.
+  3. Edge index stored in CSR on host + compressed CSR-5 on GPU.
+D. Splits
+  • OGB official train/valid/test masks.
+  • Friendster: 70 / 10 / 20 chronological split by account-creation time.
+E. Evaluation Protocol
+  • Five seeds {13, 21, 42, 87, 101}. Each seed: random weight init + sampler RNG.
+  • Early stopping: patience 50 on valid Accuracy/AUROC.
+  • For each budget pair (mem, energy) run one training job ⇒ 5(seeds)×3(mem)×2(energy)=30 runs / dataset.
+  • Model selection: “best-val” then report corresponding test metric.
+  • Averaging: mean±95 % CI across seeds.
+F. Metrics
+  Primary  –  Test Accuracy (products), Test AUROC (papers100M, Friendster)
+  Secondary–  JEPE, JEPTA, neighbour variance, inter-batch Jaccard, wall-clock, GPU-hours, FLOPs, peak GPU memory, CPU memory, PCIe GB/s.
+G. Hyper-parameter grid examined ONCE on ogbn-products then fixed:
+  • λ1,λ2,λ3 ∈ {0.1,0.3,1.0}
+  • Fan-out per layer initial guess {15,10} then tuned online by dual-ascent.
+  • Learning-rate ∈ {5e-3, 3e-3} ; weight-decay 0.0 / 1e-4.
+  • GRU β ∈ {0.3,0.5,0.7}.
+  Grid searched with 2 seeds, best combo picked via harmonic mean of Val-Acc & 1/JEPE.
+H. Robustness analyses
+  1. Add 15 % feature Gaussian noise σ²=0.01 – measure drop in test Acc.
+  2. OOD split: remove 2004-2006 papers from training in papers100M.
+  3. Adversarial perturb: Nettack (5 % edge flips) – AUROC change.
+I. Resource accounting
+  • FLOPs via torch.profiler + ptflops.
+  • JEPE from NVML (GPU), RAPL (CPU), DCGM PCIe counters; sampled 1 Hz.
+  • Cost: wall-clock × regional electricity price (0.13 $/kWh).
+J. Example code snippet
+  ```python
+  from tadp_habls import TADPSampler
+  model = GAT(num_layers=2, hid=256).to(device)
+  sampler = TADPSampler(graph, K=25000, W=12, cap_gb=args.mem_cap,
+                        energy_cap_kwh=args.e_cap)
+  for epoch in range(E):
+      for batch in sampler:
+          y_hat = model(batch.x, batch.edge_index)
+          loss  = F.nll_loss(y_hat, batch.y)
+          loss.backward(); optim.step(); sampler.step(loss)
+  ```
+================================================
+EXPERIMENT 2 – Streaming Graph Adaptivity
+================================================
+A. Models
+  • 3-layer GeniePath (hidden 256, adaptive breadth/depth gates, cosine PE).
+B. Dynamic Datasets
+  • Reddit-Temporal (Kumar et al. 2019)  – monthly edge files 2015-2017.
+  • Yelp-Timeline (YelpCHI)              – monthly snapshots 2012-2018.
+C. Pre-processing & Stream Loader
+  • Each month appended to a dynamic CSR; stale edges older than 18 months evicted.
+  • Features ingested as FP16; scaled by per-feature EWMA mean/var to avoid drift.
+D. Training loop
+  • Four A100s, PyTorch-DDP.
+  • Local sampler per GPU; global model sync every 8 micro-batches (gradient bucketing).
+  • 100 k micro-batches (~48 h). No early stop – continuous evaluation.
+E. Metrics (logged every 250 batches)
+  • Jaccard( N_i, N_j ) across GPUs; window-averaged.
+  • Coverage of top-k (k=2048) high-attention vertices discovered.
+  • Online Test Accuracy (held-out temporal split).
+  • Extra forward latency (PyTorch Event elapsed_time).
+  • JEPE & Energy/edge.
+F. Robustness / Drift tests
+  • Inject concept drift at t = 30 h by swapping 20 % node features with N(0,1).
+  • Record recovery time to regain 95 % pre-drift accuracy.
+G. Hyper-parameter sensitivity
+  • Window W ∈ {6,12,24}, GRU hidden 16/32/64; β ∈ {0.3–0.9}.
+  • We fit power-law decay curve of Jaccard vs W to verify 1-1/e bound.
+H. Code Skeleton
+  ```python
+  sampler = TADPSampler(..., window=W)
+  predictor = AttnPredictor(in_dim=3).cuda()
+  for t,(g,feat) in enumerate(stream):
+      idx = sampler.sample_current(feat)
+      logits = ddp_model(g.x[idx], g.edge_index[idx])
+      ...
+  ```
+================================================
+EXPERIMENT 3 – Scalability & Kernel Compression
+================================================
+A. Graph Generator
+  • Degree exponent γ = 2.4, 1 B nodes, 100 B edges, generated with Graph500 Kronecker + edge swapping for clustering coefficient 0.17.
+  • Stored as segmented CSR on local 8×NVMe RAID-0 (28 GB s⁻¹ sequential).
+B. Sampler Configs
+  • Reservoir size K ∈ {10 k, 50 k, 100 k}
+  • Sketch dim d′ ∈ {128,256,512}
+  • Batch fan-out fixed 15.
+C. Baselines
+  1. Exact cosine kernel (cuBLAS) – only up to 50 k nodes due to O(K²).
+  2. Nyström + exact cosine (HABLS implementation).
+  3. Proposed CountSketch+RFF (ours).
+D. Metrics
+  • Build time (CUDA events, averaged over 1 000 trials).
+  • Peak GPU RAM (nvidia-smi pmon sample 10 Hz).
+  • ‖K̂ − K‖_F / ‖K‖_F (compute exact K for K≤10 k, subsample otherwise).
+  • k-DPP acceptance rate (ratio selected / requested).
+E. Complexity verification
+  • Fit t(K) = a·K^b; report b.
+================================================
+COMMON IMPLEMENTATION DETAILS
+================================================
+Libraries / Versions
+  • PyTorch 2.1 + CUDA 12.2 + cuDNN 8.9
+  • PyG 2.4 / DGL 1.1 (graph loaders only)
+  • NumPy 1.25, SciPy 1.11, scikit-learn 1.3 (metrics)
+  • NVML 12, Intel RAPL interface via pyRAPL
+Reproducibility
+  • Deterministic cuBLAS & cuDNN flags on; torch.use_deterministic_algorithms(True)
+Logging & Artifacts
+  • wandb + JSONL dumps for every batch; power logs stored in Prometheus.
+  • Final CSV sheets: seeds × budgets × metrics.
+  • Released under CC-BY-SA.
+================================================
+
+
+
+# Generated Experiment Code Files
+{"evaluate_py": "\"\"\"\nsrc/evaluate.py \u2013 specialised (edge-aware)\n\"\"\"\nfrom __future__ import annotations\nfrom typing import Dict, Optional\nimport torch\nimport torch.nn.functional as F\nfrom sklearn.metrics import roc_auc_score\nfrom torch_geometric.utils import subgraph\n\n@torch.no_grad()\ndef evaluate(\n    model: torch.nn.Module,\n    X: torch.Tensor,\n    y: torch.Tensor,\n    edge_index: Optional[torch.Tensor] = None,\n    batch_size: int = 1024,\n) -\u003e Dict[str, float]:\n    model.eval(); device = next(model.parameters()).device\n    if not getattr(model, \"requires_edge_index\", False):\n        n, loss_sum, probs, ys = X.size(0), 0.0, [], []\n        for i in range(0, n, batch_size):\n            xb = X[i : i + batch_size].to(device)\n            yb = y[i : i + batch_size].to(device)\n            out = model(xb)\n            loss_sum += F.cross_entropy(out, yb, reduction=\"sum\").item()\n            probs.append(torch.softmax(out, 1).cpu())\n            ys.append(yb.cpu())\n        probs, ys = torch.cat(probs), torch.cat(ys)\n    else:\n        # Edge-aware mini-batch evaluation using subgraphs\n        n, loss_sum, probs, ys = X.size(0), 0.0, [], []\n        for i in range(0, n, batch_size):\n            nodes = torch.arange(i, min(i + batch_size, n), device=device)\n            ei, _ = subgraph(nodes, edge_index.to(device), relabel_nodes=True)\n            xb = X[nodes].to(device); yb = y[nodes].to(device)\n            out = model(xb, ei)\n            loss_sum += F.cross_entropy(out, yb, reduction=\"sum\").item()\n            probs.append(torch.softmax(out, 1).cpu()); ys.append(yb.cpu())\n        probs, ys = torch.cat(probs), torch.cat(ys)\n    acc = (probs.argmax(1) == ys).float().mean().item()\n    try:\n        auroc = roc_auc_score(ys.numpy(), probs.numpy(), multi_class=\"ovo\", average=\"macro\")\n    except ValueError:\n        auroc = float(\"nan\")\n    return {\"loss\": loss_sum / X.size(0), \"accuracy\": acc, \"auroc\": auroc}\n", "full_experiment_yaml": "experiment:\n  name: \"Budget-Pareto_OgbnProducts_GAT\"\n  description: \"Main Experiment 1: ogbn-products with 2-layer GAT under memory/energy cap.\"\ndataset:\n  name: \"OGBN_PRODUCTS\"\nmodel:\n  name: \"GAT\"\n  hidden_dim: 256\n  heads: 4\n  num_layers: 2\n  dropout: 0.4\ntraining:\n  epochs: 300\n  batch_size: 512\n  learning_rate: 0.005\n  weight_decay: 0.0\n  early_stop_patience: 50\nsampler:\n  reservoir_size: 25000\n  window_size: 12\n  sketch_dim: 256\n  enable_sw_dpp: true\n  enable_lookahead: true\n  enable_dual_tuner: true\n  enable_energy_meter: true\n  lambdas:\n    lambda1: 0.3\n    lambda2: 0.3\n    lambda3: 0.3\nbudgets:\n  memory_cap_gb: 10\n  energy_cap_kwh: 0.3\ndevice: \"cuda\"\nseed: 42\noutput_dir: \"results\"\n", "main_py": "\"\"\"\nsrc/main.py \u2013 entry point with specialised models\n\"\"\"\nfrom __future__ import annotations\nimport argparse, json, os, pathlib, time, textwrap\nfrom typing import Dict, List\n\nimport yaml, torch, torch.nn as nn\nfrom torch_geometric.nn import GATConv, GATv2Conv, TransformerConv\nimport torch.nn.functional as F\n\nfrom src.preprocess import load_dataset\nfrom src.train import Trainer\n\n# ------------------------------------------------- helpers -------------------------------------------------\n\ndef _ensure(p):\n    pathlib.Path(p).mkdir(parents=True, exist_ok=True)\n\n# ---------------- Model Zoo ------------------------------------------------------------------------------\nclass GATNet(nn.Module):\n    requires_edge_index = True\n    def __init__(self, in_dim, num_classes, hidden=256, heads=4, num_layers=2, dropout=0.4):\n        super().__init__(); self.dropout = dropout\n        self.convs = nn.ModuleList()\n        self.convs.append(GATConv(in_dim, hidden, heads=heads, dropout=dropout))\n        for _ in range(num_layers - 2):\n            self.convs.append(GATConv(hidden * heads, hidden, heads=heads, dropout=dropout))\n        self.convs.append(GATConv(hidden * heads, num_classes, heads=1, concat=False, dropout=dropout))\n    def forward(self, x, edge_index):\n        for conv in self.convs[:-1]:\n            x = F.elu(conv(x, edge_index)); x = F.dropout(x, p=self.dropout, training=self.training)\n        return self.convs[-1](x, edge_index)\n\nclass GATv2Net(GATNet):\n    def __init__(self, in_dim, num_classes, hidden=384, heads=8, num_layers=4, dropout=0.3):\n        super(GATNet, self).__init__()\n        self.dropout = dropout; self.convs = nn.ModuleList()\n        self.convs.append(GATv2Conv(in_dim, hidden, heads=heads, dropout=dropout))\n        for _ in range(num_layers - 2):\n            self.convs.append(GATv2Conv(hidden * heads, hidden, heads=heads, dropout=dropout))\n        self.convs.append(GATv2Conv(hidden * heads, num_classes, heads=1, concat=False, dropout=dropout))\n    def forward(self, x, edge_index):\n        for conv in self.convs[:-1]:\n            x = F.elu(conv(x, edge_index)); x = F.dropout(x, p=self.dropout, training=self.training)\n        return self.convs[-1](x, edge_index)\n\nclass GraphTransformer(nn.Module):\n    requires_edge_index = True\n    def __init__(self, in_dim, num_classes, dim=512, layers=8, heads=4, dropout=0.2):\n        super().__init__(); self.dropout = dropout\n        self.proj = nn.Linear(in_dim, dim)\n        self.convs = nn.ModuleList([TransformerConv(dim, dim // heads, heads=heads, dropout=dropout) for _ in range(layers)])\n        self.out_lin = nn.Linear(dim, num_classes)\n    def forward(self, x, edge_index):\n        x = self.proj(x)\n        for conv in self.convs:\n            x = F.relu(conv(x, edge_index)); x = F.dropout(x, self.dropout, self.training)\n        return self.out_lin(x)\n\nclass MLP(nn.Module):\n    requires_edge_index = False\n    def __init__(self, in_dim, num_classes, hidden=64, layers=2):\n        super().__init__()\n        mods: List[nn.Module] = []\n        d = in_dim\n        for _ in range(layers):\n            mods += [nn.Linear(d, hidden), nn.ReLU(), nn.Dropout(0.1)]\n            d = hidden\n        mods.append(nn.Linear(d, num_classes))\n        self.net = nn.Sequential(*mods)\n    def forward(self, x):\n        return self.net(x)\n\n# ----------------------------------------------------------------------------------------------------------\n\ndef _build_model(cfg: Dict, in_dim: int, num_classes: int) -\u003e nn.Module:\n    name = cfg[\"name\"].upper()\n    if name == \"GAT\":\n        return GATNet(in_dim, num_classes, hidden=cfg.get(\"hidden_dim\", 256), heads=cfg.get(\"heads\", 4), num_layers=cfg.get(\"num_layers\", 2), dropout=cfg.get(\"dropout\", 0.4))\n    if name == \"GATV2\":\n        return GATv2Net(in_dim, num_classes, hidden=cfg.get(\"hidden_dim\", 384), heads=cfg.get(\"heads\", 8), num_layers=cfg.get(\"num_layers\", 4), dropout=cfg.get(\"dropout\", 0.3))\n    if name == \"GRAPH_TRANSFORMER\":\n        return GraphTransformer(in_dim, num_classes, dim=cfg.get(\"dim\", 512), layers=cfg.get(\"num_layers\", 8), heads=cfg.get(\"heads\", 4), dropout=cfg.get(\"dropout\", 0.2))\n    if name == \"MLP\":\n        return MLP(in_dim, num_classes, hidden=cfg.get(\"hidden_dim\", 64), layers=cfg.get(\"num_layers\", 2))\n    raise ValueError(f\"Unknown model {name}\")\n\n# ----------------------------------------------------------------------------------------------------------\n\ndef main():\n    parser = argparse.ArgumentParser()\n    g = parser.add_mutually_exclusive_group()\n    g.add_argument(\"--smoke-test\", action=\"store_true\")\n    g.add_argument(\"--full-experiment\", action=\"store_true\")\n    parser.add_argument(\"-c\", \"--config\", type=str)\n    args = parser.parse_args()\n\n    cfg_path = args.config or (\"config/full_experiment.yaml\" if args.full_experiment else \"config/smoke_test.yaml\")\n    with open(cfg_path) as f: cfg = yaml.safe_load(f)\n\n    out_dir = cfg.get(\"output_dir\", \"results\"); _ensure(out_dir)\n    data = load_dataset(cfg[\"dataset\"])\n    X, y, edge_index = data[\"features\"], data[\"labels\"], data[\"edge_index\"]\n\n    model = _build_model(cfg[\"model\"], X.size(1), int(y.max().item() + 1))\n    device = torch.device(cfg.get(\"device\", \"cuda\" if torch.cuda.is_available() else \"cpu\"))\n\n    trainer = Trainer(model, X, y, edge_index, cfg, device)\n    hist, final = trainer.fit()\n\n    ts = int(time.time())\n    with open(os.path.join(out_dir, f\"results_{ts}.json\"), \"w\") as fp:\n        json.dump(final, fp, indent=2)\n\n    print(textwrap.dedent(f\"\"\"\n    ------------------------------\n    Experiment : {cfg[\u0027experiment\u0027][\u0027name\u0027]}\n    Dataset    : {cfg[\u0027dataset\u0027][\u0027name\u0027]}\n    Model      : {cfg[\u0027model\u0027][\u0027name\u0027]}\n    ------------------------------\n    Final metrics:\n    {json.dumps(final, indent=2)}\n    \"\"\"))\n\nif __name__ == \"__main__\":\n    main()\n", "preprocess_py": "\"\"\"\nsrc/preprocess.py \u2013 real loaders for OGBN-Products, OGBN-Papers100M and Friendster\n\"\"\"\nfrom __future__ import annotations\nfrom typing import Dict\nimport torch\nimport numpy as np\n\n# -------------------------------- synthetic fallback --------------------------------\ndef _synthetic(num_nodes: int, num_feat: int, num_cls: int, seed: int = 0):\n    rng = np.random.default_rng(seed)\n    X = torch.tensor(rng.standard_normal((num_nodes, num_feat)), dtype=torch.float32)\n    y = torch.tensor(rng.integers(0, num_cls, num_nodes), dtype=torch.long)\n    edge_index = None\n    return {\"features\": X, \"labels\": y, \"edge_index\": edge_index}\n\n# -------------------------------- real datasets -------------------------------------\n\ndef _load_ogbn_products(root: str = \"data/ogbn_products\"):\n    from torch_geometric.datasets import OGBNProducts\n    ds = OGBNProducts(root)\n    data = ds[0]\n    return {\"features\": data.x.float(), \"labels\": data.y.view(-1), \"edge_index\": data.edge_index}\n\ndef _load_ogbn_papers100m(root: str = \"data/ogbn_papers100M\"):\n    from torch_geometric.datasets import OGBNPapers100M\n    ds = OGBNPapers100M(root)\n    data = ds[0]\n    return {\"features\": data.x.float(), \"labels\": data.y.view(-1), \"edge_index\": data.edge_index}\n\ndef _load_friendster(root: str = \"data/friendster\"):\n    from torch_geometric.datasets import SNAPDataset\n    from torch_geometric.utils import degree\n    ds = SNAPDataset(root, name=\"Friendster\")\n    data = ds[0]\n    deg = degree(data.edge_index[0], data.num_nodes, dtype=torch.float32).view(-1, 1)\n    X = torch.log1p(deg)                        # simple degree feature as in design\n    return {\"features\": X, \"labels\": data.y.view(-1), \"edge_index\": data.edge_index}\n\n# ------------------------------------------------------------------------------------\n\ndef load_dataset(cfg: Dict):\n    name = cfg[\"name\"].upper()\n    if name == \"SYNTHETIC_SMALL\":\n        return _synthetic(cfg.get(\"num_nodes\", 1024), cfg.get(\"num_features\", 16), cfg.get(\"num_classes\", 3), cfg.get(\"seed\", 0))\n    if name == \"OGBN_PRODUCTS\":\n        return _load_ogbn_products()\n    if name == \"OGBN_PAPERS100M\":\n        return _load_ogbn_papers100m()\n    if name == \"FRIENDSTER\":\n        return _load_friendster()\n    raise ValueError(f\"Dataset {name} not supported.\")\n", "pyproject_toml": "[project]\nname = \"tadp_habls_specialised\"\nversion = \"0.2.0\"\ndescription = \"Specialised implementation for TADP-HABLS experiments\"\nrequires-python = \"\u003e=3.9\"\ndependencies = [\n    \"torch\u003e=2.0.0\",\n    \"torch-geometric\u003e=2.4.0\",\n    \"ogb\u003e=1.3.5\",\n    \"numpy\u003e=1.24\",\n    \"scikit-learn\u003e=1.3\",\n    \"PyYAML\u003e=6.0\",\n    \"matplotlib\u003e=3.7\",\n    \"seaborn\u003e=0.12\",\n    \"tqdm\u003e=4.64\",\n    \"pynvml\u003e=11.0\",\n    \"pyRAPL\u003e=0.5\",\n]\n[build-system]\nrequires = [\"setuptools\u003e=61.0\"]\nbuild-backend = \"setuptools.build_meta\"\n", "smoke_test_yaml": "experiment:\n  name: \"Smoke Test Synthetic\"\n  description: \"Quick synthetic sanity-check.\"\ndataset:\n  name: \"SYNTHETIC_SMALL\"\n  num_nodes: 1024\n  num_features: 16\n  num_classes: 3\nmodel:\n  name: \"MLP\"\n  hidden_dim: 32\n  num_layers: 2\ntraining:\n  epochs: 3\n  batch_size: 64\n  learning_rate: 0.01\n  early_stop_patience: 5\nsampler:\n  reservoir_size: 256\n  window_size: 4\n  sketch_dim: 64\n  enable_sw_dpp: true\n  enable_lookahead: true\n  enable_dual_tuner: true\n  enable_energy_meter: false\n  lambdas:\n    lambda1: 0.1\n    lambda2: 0.1\n    lambda3: 0.1\ndevice: \"cuda\"\nseed: 42\noutput_dir: \"results\"\n", "train_py": "\"\"\"\nsrc/train.py \u2013 specialised version\nNow supports real graph datasets (edge_index) and edge-aware GNN models.\nAll placeholders have been removed.\n\"\"\"\nfrom __future__ import annotations\n\nimport math\nimport os\nimport random\nimport time\nimport json\nfrom collections import deque\nfrom typing import Any, Deque, Dict, List, Optional, Tuple\n\nimport numpy as np\nimport torch\nimport torch.nn as nn\nimport torch.nn.functional as F\nfrom tqdm import tqdm\nfrom torch_geometric.utils import subgraph\n\nfrom src.evaluate import evaluate\n\n# ====================================================================================\n# Module 1 \u2013 Sliding-Window k-DPP reservoir (SW-DPP)\n# ====================================================================================\nclass _SWDPPReservoir:\n    \"\"\"Stores sketches of the last *window* batches and returns a size-K subset\n    of candidate embeddings via a greedy MAP k-DPP selection.\n    \"\"\"\n    def __init__(\n        self,\n        K: int,\n        window: int,\n        sketch_dim: int,\n        feature_dim: int,\n        device: torch.device,\n        rng: torch.Generator,\n    ) -\u003e None:\n        self.K = int(K)\n        self.window = int(window)\n        self.sketch_dim = int(sketch_dim)\n        self.feature_dim = int(feature_dim)\n        self.device = device\n        self.rng = rng\n\n        self._proj = torch.randn(\n            self.feature_dim, self.sketch_dim, generator=self.rng, device=self.device\n        )\n        self._reservoir: Deque[torch.Tensor] = deque(maxlen=self.window)\n\n    # ------------------------------------------------------------------\n    def _sketch(self, emb: torch.Tensor) -\u003e torch.Tensor:\n        z = emb @ self._proj                # [N, d\u0027]\n        z = torch.cat([torch.sin(z), torch.cos(z)], dim=-1)\n        return z.T.contiguous()             # [2d\u0027, N]\n\n    @staticmethod\n    def _greedy_k_dpp(Km: torch.Tensor, k: int, g: torch.Generator) -\u003e torch.Tensor:\n        n = Km.size(0)\n        diag = torch.diag(Km).clone()\n        chosen = torch.empty(k, dtype=torch.long, device=Km.device)\n        for i in range(k):\n            idx = torch.argmax(diag).item()\n            chosen[i] = idx\n            if i == k - 1:\n                break\n            vi = Km[:, idx]\n            diag -= vi.pow(2) / (Km[idx, idx] + 1e-9)\n            diag[idx] = -float(\"inf\")\n        return chosen\n\n    # ------------------------------------------------------------------\n    def sample(self, cand_emb: torch.Tensor) -\u003e torch.Tensor:\n        cur = self._sketch(cand_emb)\n        sketches: List[torch.Tensor] = list(self._reservoir) + [cur]\n        R = torch.cat(sketches, dim=1)                     # [2d\u0027, \u03a3N]\n        Km = (R.T @ R) / R.size(0)\n        idx_union = self._greedy_k_dpp(Km, self.K, self.rng)\n        prev = sum(t.shape[1] for t in self._reservoir)\n        mask = idx_union \u003e= prev\n        idx_cur = idx_union[mask] - prev\n        if idx_cur.numel() \u003c self.K:                       # refill if reservoir dominates\n            filler = torch.randperm(cand_emb.size(0), generator=self.rng, device=self.device)\n            filler = filler[~torch.isin(filler, idx_cur)][: self.K - idx_cur.numel()]\n            idx_cur = torch.cat([idx_cur, filler])\n        return idx_cur[: self.K]\n\n    def update(self, used_emb: torch.Tensor):\n        self._reservoir.append(self._sketch(used_emb).detach())\n\n# ====================================================================================\n# Module 2 \u2013 Look-ahead attention predictor (GRU)\n# ====================================================================================\nclass AttnPredictor(nn.Module):\n    def __init__(self, in_dim: int = 3):\n        super().__init__()\n        self.gru = nn.GRU(in_dim, 32, num_layers=2, batch_first=True)\n    def forward(self, feats: torch.Tensor, h: Optional[torch.Tensor] = None):\n        out, _ = self.gru(feats, h)\n        return torch.sigmoid(out[:, -1])\n\n# ====================================================================================\n# Module 3 \u2013 Energy meter (GPU + CPU)\n# ====================================================================================\nclass EnergyMeter:\n    def __init__(self, device_idx: int = 0):\n        self.device_idx = device_idx\n        self._gpu_ok, self._cpu_ok = False, False\n        self._handle = None\n        self._cum_j = 0.0\n        try:\n            import pynvml\n            pynvml.nvmlInit()\n            self._handle = pynvml.nvmlDeviceGetHandleByIndex(device_idx)\n            self._gpu_ok = True\n        except Exception:\n            pass\n        try:\n            import pyRAPL  # type: ignore\n            self._cpu_ok = True\n            pyRAPL.setup()\n        except Exception:\n            pass\n    # --------------------------------------------------\n    def _gpu_j(self):\n        if not self._gpu_ok:\n            return 0.0\n        import pynvml\n        return pynvml.nvmlDeviceGetTotalEnergyConsumption(self._handle) / 1000.0\n    def _cpu_j(self):\n        if not self._cpu_ok:\n            return 0.0\n        import pyRAPL\n        r = pyRAPL.measurement.Measurement(\"meter\")\n        r.begin(); r.end()\n        return r.result.pkg + r.result.dram\n    # --------------------------------------------------\n    def reset(self):\n        self._g0, self._c0 = self._gpu_j(), self._cpu_j()\n    def epoch_end(self):\n        delta = (self._gpu_j() - self._g0) + (self._cpu_j() - self._c0)\n        self._cum_j += max(delta, 0.0)\n        self.reset()\n        return delta\n    @property\n    def total_j(self):\n        return self._cum_j\n\n# ====================================================================================\n# Module 4 \u2013 Dual-objective tuner\n# ====================================================================================\nclass DualObjectiveTuner:\n    def __init__(self, lambdas: Dict[str, float], lr: float = 0.05):\n        self.lam = {k: float(v) for k, v in lambdas.items()}\n        self.lr0, self.t = lr, 1\n    def step(self, grads: Dict[str, float]):\n        step = self.lr0 / math.sqrt(self.t)\n        for k, g in grads.items():\n            self.lam[k] = max(0.0, self.lam[k] + step * g)\n        self.t += 1\n    def current(self):\n        return self.lam[\"lambda1\"], self.lam[\"lambda2\"], self.lam[\"lambda3\"]\n\n# ====================================================================================\n# Module 5 \u2013 Trainer\n# ====================================================================================\nclass Trainer:\n    \"\"\"End-to-end training loop supporting edge-aware GNNs.\"\"\"\n    def __init__(\n        self,\n        model: nn.Module,\n        features: torch.Tensor,\n        labels: torch.Tensor,\n        edge_index: Optional[torch.Tensor],\n        cfg: Dict[str, Any],\n        device: torch.device,\n    ) -\u003e None:\n        self.device = device\n        self.model = model.to(self.device)\n        self.X = features.to(self.device)\n        self.y = labels.to(self.device)\n        self.edge_index = edge_index.to(self.device) if edge_index is not None else None\n        self.cfg_t = cfg[\"training\"]\n        self.cfg_s = cfg[\"sampler\"]\n\n        self.rng = torch.Generator(device=device)\n        self.rng.manual_seed(cfg.get(\"seed\", 0))\n\n        self.sampler = _SWDPPReservoir(\n            K=self.cfg_s[\"reservoir_size\"],\n            window=self.cfg_s[\"window_size\"],\n            sketch_dim=self.cfg_s[\"sketch_dim\"],\n            feature_dim=self.X.size(1),\n            device=device,\n            rng=self.rng,\n        )\n        self.tuner = DualObjectiveTuner(self.cfg_s[\"lambdas\"])\n        self.energy = EnergyMeter() if self.cfg_s.get(\"enable_energy_meter\", False) else None\n\n        self.criterion = nn.CrossEntropyLoss()\n        self.opt = torch.optim.Adam(\n            self.model.parameters(),\n            lr=self.cfg_t[\"learning_rate\"],\n            weight_decay=self.cfg_t.get(\"weight_decay\", 0.0),\n        )\n        # Logs\n        self.hist = {k: [] for k in [\"train_loss\", \"val_loss\", \"val_acc\", \"epoch_joules\", \"lambda1\", \"lambda2\", \"lambda3\"]}\n        self.best, self.best_state, self.pat = -float(\"inf\"), None, self.cfg_t.get(\"early_stop_patience\", 50)\n\n    # -------------------------------------------------- helpers --------------------------------------------------\n    def _subgraph(self, nodes: torch.Tensor):\n        if self.edge_index is None:\n            return None\n        ei, _ = subgraph(nodes, self.edge_index, relabel_nodes=True)\n        return ei\n\n    def _forward(self, xb: torch.Tensor, ei: Optional[torch.Tensor]):\n        if getattr(self.model, \"requires_edge_index\", False):\n            return self.model(xb, ei)\n        return self.model(xb)\n\n    def _constraints(self, idx: torch.Tensor, preds: torch.Tensor, ej: float):\n        var = torch.softmax(preds.detach(), 1).var(0).mean().item()\n        red = 0.0\n        if hasattr(self, \"_prev\") and self._prev is not None:\n            inter = len(torch.intersect1d(idx, self._prev))\n            red = inter / max(len(idx.unique() | self._prev.unique()), 1)\n        self._prev = idx\n        return {\"lambda1\": var, \"lambda2\": red, \"lambda3\": ej}\n\n    # -------------------------------------------------- fit loop --------------------------------------------------\n    def fit(self):\n        epochs, bs = self.cfg_t[\"epochs\"], self.cfg_t[\"batch_size\"]\n        N = self.X.size(0)\n        n_val = max(N // 10, 1)\n        val_idx = torch.arange(N - n_val, N, device=self.device)\n        train_cand = torch.arange(0, N - n_val, device=self.device)\n\n        if self.energy:\n            self.energy.reset()\n\n        for ep in range(1, epochs + 1):\n            self.model.train(); tot, steps = 0.0, 0\n            pbar = tqdm(range(math.ceil(train_cand.numel() / bs)), desc=f\"Epoch {ep}/{epochs}\", leave=False)\n            for _ in pbar:\n                batch_nodes = self.sampler.sample(self.X[train_cand])[:bs]\n                ei = self._subgraph(batch_nodes)\n                xb, yb = self.X[batch_nodes], self.y[batch_nodes]\n                out = self._forward(xb, ei)\n                loss = self.criterion(out, yb)\n                self.opt.zero_grad(); loss.backward(); self.opt.step()\n\n                self.sampler.update(xb)\n                self.tuner.step(self._constraints(batch_nodes, out, 0.0))\n                tot += loss.item(); steps += 1\n                pbar.set_postfix(loss=f\"{loss.item():.4f}\")\n\n            tr_loss = tot / steps\n            ej = self.energy.epoch_end() if self.energy else 0.0\n            val = evaluate(self.model, self.X[val_idx], self.y[val_idx], self.edge_index, batch_size=2048)\n\n            self.hist[\"train_loss\"].append(tr_loss)\n            self.hist[\"val_loss\"].append(val[\"loss\"])\n            self.hist[\"val_acc\"].append(val[\"accuracy\"])\n            self.hist[\"epoch_joules\"].append(ej)\n            lam1, lam2, lam3 = self.tuner.current()\n            self.hist[\"lambda1\"].append(lam1); self.hist[\"lambda2\"].append(lam2); self.hist[\"lambda3\"].append(lam3)\n\n            if val[\"accuracy\"] \u003e self.best:\n                self.best, self.best_state, self.pat = val[\"accuracy\"], {k: v.cpu() for k, v in self.model.state_dict().items()}, self.cfg_t.get(\"early_stop_patience\", 50)\n            else:\n                self.pat -= 1\n                if self.pat \u003c= 0:\n                    print(\"Early stopping.\"); break\n\n        if self.best_state is not None:\n            self.model.load_state_dict(self.best_state)\n        final = evaluate(self.model, self.X, self.y, self.edge_index, batch_size=4096)\n        final[\"total_joules\"] = self.energy.total_j if self.energy else 0.0\n        return self.hist, final\n"}
+
+# External Resources
+
+**HuggingFace Models:**
+
+
+**HuggingFace Datasets:**
+
+
+
+Analyze the code thoroughly and provide your validation result.
+Output:
+{
+    "is_full_experiment_ready": false,
+    "full_experiment_issue": "full_experiment_yaml only covers a single ogbn-products run and omits other datasets (ogbn-papers100M, Friendster, Reddit-Temporal, Yelp-Timeline) and model variants required by the experimental design; dual tuner ignores energy term (always 0), predictor module is not wired, multi-GPU/streaming loops and all specified evaluation metrics are missing. Hence the --full-experiment mode does not implement the complete production experiment."
+}
