@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The methodology involves a detailed analysis of outlier generation in BERT and ViT, attributing them to attention heads trying to perform 'no-op' updates. Based on this, two attention mechanism modifications are introduced: 1. Clipped Softmax: Replaces the standard softmax with `clipped_softmax(x; ζ, γ) = clip ((ζ − γ) · softmax(x) + γ, 0, 1)`, allowing exact zeros/ones with finite input range and preventing gradient flow for clipped values. 2. Gated Attention: Introduces an explicit conditional gating mechanism `sigmoid (G(x)) ⊙ softmax (...) V(x)`, where `G(x)` is a lightweight neural network (typically a linear layer per head) that modulates attention output. Post-training quantization (PTQ) with uniform affine quantization (symmetric weights, asymmetric INT8 activations) is applied, using static range estimation via running min-max (with 99.999% percentiles for OPT) and MSE for lower bitwidths.
+
+# GitHub URLs List
+['https://github.com/rwightman/pytorch-image-models']
+Output:
+{
+    "index": 0
+}
