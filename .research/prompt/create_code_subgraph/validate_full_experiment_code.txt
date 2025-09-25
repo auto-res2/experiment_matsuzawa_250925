@@ -1,0 +1,318 @@
+
+Input:
+You are an AI code reviewer specializing in machine learning experiment validation.
+
+Analyze the provided experiment code and determine if it implements a production-ready experiment for the Current Research Method using relevant External Resources (not synthetic/placeholder data).
+
+# Instructions
+
+## Validation Criteria
+Check if the generated code meets ALL of the following requirements:
+
+1. Real Data Usage: Uses actual datasets (from External Resources when relevant), not synthetic/dummy/placeholder data
+2. Dual Configuration System:
+   - `smoke_test_yaml`: Quick validation configuration with reduced resources (minimal epochs, smaller datasets)
+   - `full_experiment_yaml`: Complete production configuration matching ALL experimental design specifications
+3. Production-Ready Full Experiment: The `--full-experiment` mode must implement the complete experimental design with:
+   - All specified datasets from External Resources
+   - Correct parameter ranges and layer counts as described in experimental details
+   - Full training epochs and comprehensive evaluation metrics
+4. Complete Implementation: Contains full training loops, evaluation metrics, and result saving with no omitted components
+5. Command Line Interface: Properly supports both `--smoke-test` and `--full-experiment` flags with appropriate configuration loading
+6. No Placeholders: Contains no placeholder comments, TODO items, approximations, or incomplete implementations
+
+## Output Format
+Respond with a JSON object containing:
+- `is_full_experiment_ready`: boolean - true if ALL criteria are met, false otherwise
+- `full_experiment_issue`: string - specific issues found if any criteria are not met, focusing on production-readiness of the `--full-experiment` mode
+
+# Current Research Method
+{
+    "Open Problems": "1. Existing sparsity–quantisation methods optimise for algorithmic variance or memory but ignore the *actual energy* that GPUs draw and the carbon footprint produced during training.  \n2. There is no mechanism that trades off accuracy against *measured* joule consumption online, nor any principled way to decide when extra bits save energy (by converging faster) versus when they waste it.  \n3. Current co-optimisers assume a single device; once the graph no longer fits, users must fall back to memory-hungry, cluster-level data-parallel training.  \n4. None of the surveyed works provide a guarantee that the chosen sparsity/precision schedule will remain stable when the graph structure changes (e.g. during dynamic recommendation workloads).",
+    "Methods": "We propose ECO-LASQ-GAT – an *energy-constrained*, **locally-adaptive sparse & quantised** GAT layer that extends LASQ with two new ideas.  \n\nA. Joule-aware tri-objective knapsack  \n   • At every step t we minimise  J_t = V_t(k,b)+λ_M·M_t(k,b)+λ_E·Ē_t(k,b)  where V_t is the variance bound from LASQ, M_t is the memory footprint and Ē_t is a *measured* energy surrogate (milli-J per edge) obtained from nvml power readings averaged over the previous N micro-batches.  \n   • The closed-form update becomes a weighted water-filling in 𝒪(L) and reduces to LASQ when λ_E=0.  λ_E is annealed from 0→λ_max so early exploration is accuracy-driven, later steps become energy-driven.  \n\nB. Micro-partition off-loading  \n   • If ∑_l k_l·h_l·d_l·b_l > GPU_bits, we slice the input graph into micro-partitions that respect NVIDIA’s 2:4 sparsity so that *each* slice fits the knapsack.  \n   • An overlap-aware re‐indexer guarantees E[ĝ]=g across partitions; proofs follow control-variate arguments.  \n\nC. Stability gate  \n   • A low-rank SVD monitor of the attention matrix detects distribution shift; when ||A_t−Ā||_F > τ we warm-restart λ_E and re-balance bits to avoid catastrophic drift on dynamic graphs.  \n\nD. Plug-and-play API  \n   • Only 60 extra LOC on top of LASQ; exposed as  “ECO_LASQ_GATConv(..., carbon_budget=kjoule)”. If the user sets a per-epoch carbon_budget, λ_E is internally chosen by bisection so expected energy ≤ budget.",
+    "Experimental Setup": "Datasets: Reddit, OGBN-products, OGBN-papers100M slice, and a live 1-hour KDD-Cup2021 streaming recommendation dump (edges added over time).  \nModels: same 6-layer & 12-layer GATs.  \nBaselines: FP32, GACT-8b, AISQ-GAT, LASQ-GAT (ours w/o energy), Degree-Quant INT4.  \nMetrics: test accuracy, peak memory, wall-clock, *measured energy/epoch* (nvml), carbon estimate (CO₂eq using regional grid factor), time-to-88% accuracy per kWh, stability score (std. of bits after shift).  \nAblations: λ_E=0 (LASQ), λ_M=0, no stability gate, micro-partition off, streaming graph.  \nHardware: single A100-40 GB for static graphs, 2×A100 for streaming (shows partition benefit).  3 seeds.",
+    "Experimental Code": "# eco_lasq.py (excerpt)\nimport pynvml, torch, math\npynvml.nvmlInit(); h=pynvml.nvmlDeviceGetHandleByIndex(0)\n\nclass ECO_LASQ_GATConv(LASQ_GATConv):\n    def __init__(self,*a,carbon_budget=None,lam_M=1e-4,lam_E_start=0.):\n        super().__init__(*a); self.lam_M=lam_M; self.lam_E=lam_E_start\n        self.carbon_budget=carbon_budget; self.E_hist=[]\n    @torch.no_grad()\n    def _energy_now(self):\n        return pynvml.nvmlDeviceGetPowerUsage(h)/1e3 # watt->J/ms approx.\n    def _update_budget(self):\n        super()._update_budget()  # sets self.k,self.bits via V+M term\n        # add energy term\n        e_avg=sum(self.E_hist[-20:])/max(1,len(self.E_hist[-20:]))\n        v_s,v_q=self.Cs,self.Cq; k=self.k; b=self.bits\n        lamE=self.lam_E; lamM=self.lam_M\n        opt_bits=max(2,min(8,int(0.5*math.log2(v_q/(v_s)+lamE*e_avg))))\n        self.bits=opt_bits; self.k=max(2,min(self.k_max,int((v_q/(v_s))*2**(2*(opt_bits-1)))))\n    def forward(self,x,edge_index):\n        self.E_hist.append(self._energy_now())\n        if self.carbon_budget and sum(self.E_hist)*1e-3>self.carbon_budget:\n            self.lam_E*=1.1  # tighten energy penalty\n        return super().forward(x,edge_index)",
+    "Expected Result": "• ECO-LASQ matches LASQ accuracy within 0.3 % but *cuts joule cost per epoch by 35 %* and total CO₂ by 40 %.  \n• Under a 65 kJ/epoch carbon budget it converges in 1.12× the epochs of LASQ yet still stays within the budget.  \n• Micro-partitioning lets the streaming graph (110 M edges peak) train on 1 GPU with only 1.25× LASQ time.  \n• Stability gate keeps bit-allocation variance <3 % when edge distribution shifts, while vanilla LASQ drifts 18 %.",
+    "Expected Conclusion": "Incorporating *real-time power feedback* into sparsity–precision co-optimisation unlocks large energy and carbon savings without new hardware. ECO-LASQ-GAT demonstrates the first provably unbiased, energy-constrained training of web-scale GATs on a single GPU, and provides a practical API for practitioners to set carbon budgets directly. This bridges green-AI objectives with graph-learning research and opens avenues for energy-adaptive graph Transformers and data-centre schedulers."
+}
+
+# Experimental Design
+
+## Experiment Strategy
+Experiment 1 – Energy/Accuracy Pareto on Static Graphs
+• Goal: Quantitatively prove that ECO-LASQ-GAT reaches the same accuracy as the best non-energy-aware optimiser while drawing fewer joules.
+• Setup
+  – Datasets: Reddit (medium) and OGBN-products (large, still fits 40 GB).
+  – Hardware: 1 × A100-80 GB for all runs; 3 seeds.
+  – Models: 6-layer and 12-layer GAT.
+  – Methods: ECO-LASQ-GAT with λ_E∈{0,1e-4,5e-4,1e-3} and optional carbon_budget=65 kJ/epoch; baselines FP32, GACT-8b, AISQ-GAT, LASQ-GAT.
+  – Measurements per epoch: test accuracy, wall-clock, nvml-reported joule, peak VRAM.
+• Evaluation
+  1. Plot Accuracy vs. Cumulative Joule; draw the Pareto frontier.
+  2. Report “time-to-88 % accuracy per kWh”.
+  3. Verify the 65 kJ budget: budgeted ECO-LASQ must stay < 65 kJ every epoch.
+• Expected Outcome
+  – Curves show ECO-LASQ dominating LASQ and all baselines: ≥ 99.7 % of LASQ accuracy at ≈ 65 % of the energy, confirming tri-objective knapsack effectiveness.
+  – Budgeted run finishes in 1.1–1.2 × epochs yet never breaches the per-epoch cap, demonstrating on-line λ_E adaptation.
+  – Memory footprint identical to LASQ (< 32 GB).
+  – Proves that real-time power feedback yields a strictly better energy/accuracy trade-off.
+
+Experiment 2 – Single-GPU Micro-Partitioning vs. Multi-GPU Data Parallelism
+• Goal: Show that micro-partition off-loading lets a graph that normally overflows one GPU train efficiently on a single device, saving cluster energy.
+• Setup
+  – Dataset: OGBN-papers100M slice enlarged to 110 M edges so it no longer fits 40 GB.
+  – Hardware:
+     • ECO-LASQ: 1 × A100-80 GB with micro-partitioning.
+     • Baseline: LASQ-GAT with PyTorch DDP on 4 × A100-80 GB (common fallback).
+  – Equal global batch size; 3 seeds.
+  – Metrics: accuracy, wall-clock, total joule across all GPUs, VRAM per GPU, inter-GPU traffic.
+• Evaluation
+  – Compare energy/epoch and time/epoch.
+  – Compute “joule-per-correct-prediction” to factor accuracy.
+• Expected Outcome
+  – ECO-LASQ fits into 1 GPU (< 80 GB) while baseline needs 4 GPUs (≈ 60 GB each).
+  – ECO-LASQ uses ≈ 35 % of the total energy and 40 % of the wall-clock of the 4-GPU run (because no NCCL overhead) at < 0.5 % accuracy loss.
+  – Demonstrates that micro-partitioning is a viable alternative to costly data-parallel scaling, directly addressing Open Problem 3.
+
+Experiment 3 – Dynamic Streaming Graph & Stability Gate Ablation
+• Goal: Validate that the low-rank stability gate prevents catastrophic bit-allocation drift and maintains energy savings under distribution shift.
+• Setup
+  – Data: 1-hour KDD-Cup2021 streaming recommendations (edges appended every minute); replayed 10 × speed → 6-minute experiment.
+  – Hardware: 2 × A100-80 GB (one processes current slice, one pre-fetches next) to isolate compute from I/O.
+  – Methods: (a) ECO-LASQ (full), (b) ECO-LASQ without stability gate, (c) LASQ-GAT.
+  – Metrics per time-window: accuracy@20, joule, λ_E value, Frobenius norm shift, bit-allocation variance σ_bits.
+• Evaluation
+  – Track σ_bits and accuracy over time; mark moments when ||A_t−Ā||_F>τ.
+  – Compute energy saved vs. LASQ after shift events.
+• Expected Outcome
+  – With stability gate: σ_bits < 3 %, accuracy dip < 0.6 % and energy saving maintained at ≈ 34 %.
+  – Without gate: σ_bits spikes to 18 %, accuracy drops > 4 % and λ_E oscillates, showing extra joule wastage.
+  – Confirms that the gate delivers robustness promised in Open Problem 4 while preserving green benefits.
+
+Collectively these three experiments cover: (1) the core energy/accuracy advantage, (2) memory-to-energy gains from micro-partitioning, and (3) stability under non-stationary workloads—demonstrating the full effectiveness of ECO-LASQ-GAT from multiple angles.
+
+## Experiment Details
+=================================================================
+EXPERIMENT 1  –  ENERGY / ACCURACY PARETO ON STATIC GRAPHS
+=================================================================
+Goal
+• Verify that ECO-LASQ-GAT attains (≈) the accuracy of the best non–energy-aware optimiser while drawing fewer joules and respecting an explicit 65 kJ · epoch⁻¹ carbon budget.
+
+1. Models
+   – Target: ECO-LASQ-GAT (6-layer, 12-layer)
+   – Baselines (identical layer widths & heads)
+     • Plain GAT FP-32 (DGL implementation)
+     • GACT-8b (Chen et al., 2022)
+     • AISQ-GAT (Yuan et al., 2023)
+     • LASQ-GAT (our ablation λ_E = 0)
+     • Degree-Quant INT-4 (Hu et al., 2021)
+
+2. Datasets
+   – Reddit (230 K nodes / 11 M edges)
+   – OGBN-products (2.4 M nodes / 123 M edges)
+
+3. Dataset preprocessing
+   • Standardise node features to μ = 0, σ = 1 (fit on training nodes only).
+   • Drop isolated nodes.  (< 0.04 %)
+   • Cast features → FP16 for all low-precision methods to avoid mixed-type copies.
+
+4. Data split
+   • Predefined OGB splits: train / valid / test (cf. OGB leader-board).
+   • Reddit: 70 / 15 / 15 random split stratified by label; same three seeds (13, 17, 23).
+
+5. Training protocol
+   • Optimiser: AdamW, lr = 2.5 × 10⁻³, β = (0.9, 0.999), weight-decay = 5 × 10⁻⁴.
+   • Scheduler: cosine decay w/ linear warm-up 5 epochs.
+   • Batch size: full-graph, mini-batch neighbour-sampling disabled ⇒ deterministic FLOPs between methods.
+   • Epochs: 300 (Reddit) / 200 (Products) or early-stop (patience = 40 on valid accuracy).
+
+6. Hyper-parameters studied
+   • λ_E ∈ {0, 1e-4, 5e-4, 1e-3}
+   • carbon_budget ∈ {None, 65 kJ}
+   • λ_M fixed to 1 × 10⁻⁴ (best from LASQ paper).
+   • k_l (target sparsity) initialised to 0.5·d_out, bits ∈ {2,4,6,8} – updated by tri-objective rule.
+
+7. Repetitions & selection criteria
+   • 3 seeds.  Report mean ± s.d.
+   • Best-val checkpoint exported (max validation accuracy); “last” and “early-stop” logged for reproducibility.
+   • Primary reporting = best-val → test.
+
+8. Evaluation metrics
+   Primary
+   • Test accuracy [%]
+   • Cumulative joules [J] (NVML-integrated ∑ power·Δt)
+   Secondary
+   • Wall-clock per epoch [s]
+   • Peak VRAM [GB] (torch.cuda.max_memory_allocated)
+   • “time-to-88 % accuracy per kWh” [min / kWh]
+   • CO₂eq [g] (joule × regional factor = 475 g · kWh⁻¹)
+   • FLOPs / epoch (ptflops, on forward pass only†)
+
+9. Robustness checks
+   • Add 5 % Gaussian noise to node features; report Δ test-acc.
+   • OOD split: hold out electronics category in OGBN-products; evaluate when unseen at train time.
+
+10. Hyper-parameter importance diagnostics
+   • 5-point logarithmic sweep of λ_E with fixed others; fit quadratic surrogate ⇒ ANOVA F-score.
+   • Bits vs. accuracy heat-map aggregated over layers.
+
+11. Resource accounting
+   • Automatic torch-profiler hooks collect CUDA time, CPU time, peak host-RAM.
+   • Cost ≈ AWS p4d.24xlarge spot (8×A100) ⇒ 11.57 USD · h⁻¹; cost/experiment computed.
+
+12. Example code (excerpt)
+   ```python
+   import ogb.nodeproppred as ogb, torch, time, pynvml
+   from eco_lasq import ECO_LASQ_GATConv
+
+   def nvml_joules(handle, start):
+       return (pynvml.nvmlDeviceGetTotalEnergyConsumption(handle)-start)*1e3
+
+   dataset = ogb.NodePropPredDataset("ogbn-products", root="./data")
+   split_idx = dataset.get_idx_split()
+   model = GAT(num_layers=6, conv=ECO_LASQ_GATConv, lam_E=5e-4).cuda()
+   opt = torch.optim.AdamW(model.parameters(), lr=2.5e-3)
+   h = pynvml.nvmlDeviceGetHandleByIndex(0)
+   start_E = pynvml.nvmlDeviceGetTotalEnergyConsumption(h)
+   for epoch in range(200):
+       t0 = time.time(); loss = train_epoch(model, data)
+       joule_epoch = nvml_joules(h, start_E)
+       print(epoch, loss, joule_epoch, time.time()-t0)
+   ```
+† ptflops undercounts backward pass; we multiply by 3 × forward FLOPs (empirically validated on GAT).
+
+-----------------------------------------------------------------
+EXPERIMENT 2  – MICRO-PARTITION VS. 4-GPU DATA PARALLELISM
+-----------------------------------------------------------------
+Goal
+Demonstrate that micro-partitioning lets a 110 M-edge graph train on one A100, outperforming 4-GPU DDP in energy and wall-clock.
+
+1. Dataset
+   • OGBN-papers100M enlarged: we append 12 % synthetic citation edges using real node IDs (out-of-memory on 40 GB).
+   • Pre-processing identical to official pipeline (papers100M → PyG).  No synthetic features created‡.
+
+2. Models
+   • ECO-LASQ-GAT (12-layer, micro-partition-on)
+   • LASQ-GAT (12-layer) + PyTorch DDP (4 × A100-80 GB) using graph-level data-parallelism.
+
+3. Micro-partition details
+   • Partition size chosen via bisection on 2:4 sparsity constraint so that each slice occupies ≤ 68 GB VRAM (12 GB headroom).
+   • Overlap re-indexer amortised O(|E|) once per epoch.
+
+4. Training protocol
+   • Same optimiser & scheduler as Exp 1.
+   • Global batch = 1 M nodes ⇒ local batch = 250 k nodes per GPU for DDP.
+
+5. Metrics
+   Primary: test accuracy, total joule across all GPUs; Secondary: epoch wall-clock, inter-GPU traffic per epoch (NCCL bytes), peak VRAM per GPU.
+
+6. Repeats / seeds / selection identical to Exp 1.
+
+7. Robustness
+   • Ablation: micro-partition OFF on single GPU ⇒ OOM (expected) ⇒ experiment terminates with error message (captured to log).
+
+8. FLOPs & cost
+   • Forward FLOPs identical; communication FLOPs counted separately for DDP.
+   • Energy cost includes idle GPUs (power state P3, 58 W).
+
+9. Code snippet: launch script
+   ```bash
+   # single-GPU
+   python train.py --model eco_lasq --partitions auto --dataset papers100M_enlarged \
+          --lam_E 5e-4 --device 0 2>&1 | tee eco_single.log
+   # four-GPU DDP
+   torchrun --nnodes 1 --nproc_per_node 4 train.py --model lasq --ddp \
+          --dataset papers100M_enlarged 2>&1 | tee lasq_ddp.log
+   ```
+‡ Edge augmentation uses existing paper IDs only, complying with the NO-FALLBACK constraint.
+
+-----------------------------------------------------------------
+EXPERIMENT 3  – DYNAMIC STREAMING GRAPH & STABILITY ABLATION
+-----------------------------------------------------------------
+Goal
+Validate robustness of the low-rank stability gate under distribution shift using the KDD-Cup-2021 streaming recommendation dump.
+
+1. Dataset
+   • We replay the 1-h stream at 10× speed (≈ 360 batches, 12 s each).
+   • The dump contains user, item, category, timestamp ⇒ converted to bipartite graph every minute via sliding-window (30 min history).
+   • Node features: TF-IDF on textual meta-data + one-hot day-of-week.
+
+2. Models / Variants
+   a) ECO-LASQ-GAT (full) – stability_gate ON
+   b) ECO-LASQ-GAT – stability_gate OFF
+   c) LASQ-GAT (λ_E = 0)
+   All 6-layer, hidden = 256.
+
+3. Hardware
+   • GPU-0: training; GPU-1: asynchronous data pre-processing (CUDA IPC pipe).
+
+4. Training procedure
+   • Online mini-batch (128 k interactions / step);
+   • Learning-rate η_t ∝ 1 / √t to ensure stability.
+   • λ_E starts at 0, warm-up to 5 e-4 by step 100.
+
+5. Metrics gathered every slice (12 s real-time)
+   – accuracy@20 (hit ratio) on last 2 k interactions
+   – joule / slice (sum both GPUs)
+   – λ_E value, σ_bits (std across 6 layers), ‖A_t – Ā‖_F
+
+6. Robustness & drift events
+   • Shift flagged when ‖A_t – Ā‖_F > τ = 0.15·‖Ā‖_F.
+   • We inject label noise on 3 random minutes by permuting 20 % targets; analyse recovery time.
+
+7. Termination
+   • 360 steps; early stop disabled.
+
+8. Resource & cost logging identical to Exp 1; communication between GPUs measured via NVLink counters.
+
+9. Code
+   ```python
+   gate = LowRankMonitor(rank=20, tau=0.15)
+   if gate.shift_detected(A_t):
+       model.warm_restart()  # resets λ_E schedule
+   ```
+
+=================================================================
+SHARED IMPLEMENTATION & REPRO NOTES
+=================================================================
+• All experiments executed inside the same Singularity image (CUDA 12.2, PyTorch 2.1, DGL 1.1).
+• Randomness: torch.manual_seed, torch.backends.cudnn.deterministic = True, numpy & Python seeded.
+• Energy sampling resolution: 1 Hz (NVML maximum); we integrate via trapezoidal rule.
+• FLOPs: ptflops + custom kernels for sparse mat-mul (converted to dense equivalent FLOPs by 1 / sparsity).
+• Carbon factor: regional average for US-East = 0.475 kg·kWh⁻¹.
+• Footnote 1: GACT-8b originally published on GTX 1080; we ported to A100 and enabled TensorCore INT8 paths to avoid unfair slow-down.
+• Footnote 2: Degree-Quant requires offline degree histogram; we recomputed it on each dataset for parity.
+
+Expected contributions proven by the three experiments: (1) energy–accuracy Pareto dominance, (2) single-GPU viability through micro-partitioning, (3) robustness to distribution shift via stability gate, directly addressing Open Problems 1-4.
+
+
+# Generated Experiment Code Files
+{"evaluate_py": "\"\"\"src/evaluate.py\nEvaluation \u0026 visualisation \u2013 now aware of Reddit / OGBN label sets.\n\"\"\"\nfrom __future__ import annotations\nimport time\nfrom pathlib import Path\nfrom typing import Dict, List, Any\n\nimport numpy as np\nimport torch\nimport torch.nn.functional as F\nimport matplotlib\nmatplotlib.use(\u0027Agg\u0027)\nimport matplotlib.pyplot as plt\nimport seaborn as sns\nfrom sklearn.metrics import confusion_matrix\n\nsns.set(style=\u0027ticks\u0027, font_scale=1.1)\n\n\nclass Evaluator:\n    def __init__(self, cfg: Dict[str, Any]):\n        self.cfg = cfg\n        self.out_dir = Path(cfg[\u0027output\u0027][\u0027dir\u0027]); self.out_dir.mkdir(parents=True, exist_ok=True)\n\n    # -----------------------------------------------------------\n    def evaluate(self, model: torch.nn.Module, data, history: Dict[str, List[float]]):\n        model.eval()\n        with torch.no_grad():\n            logits = model(data.x, data.edge_index)\n            mask = data.test_mask\n            loss = F.cross_entropy(logits[mask], data.y[mask].squeeze()).item()\n            pred = logits.argmax(1)\n            acc = (pred[mask] == data.y[mask].squeeze()).float().mean().item()\n        figs = []\n        figs += self._plot_curve(history[\u0027train_loss\u0027], history[\u0027val_loss\u0027], \u0027Loss\u0027, \u0027loss\u0027)\n        figs += self._plot_curve(history[\u0027train_acc\u0027], history[\u0027val_acc\u0027], \u0027Accuracy\u0027, \u0027acc\u0027)\n        figs += self._confusion(pred[mask].cpu(), data.y[mask].cpu().squeeze())\n        return {\u0027test_loss\u0027: loss, \u0027test_accuracy\u0027: acc, \u0027figures\u0027: figs,\n                \u0027timestamp\u0027: time.strftime(\u0027%Y-%m-%d %H:%M:%S\u0027)}\n\n    # ---------------- plotting helpers -------------------------\n    def _plot_curve(self, tr: List[float], val: List[float], ylab: str, tag: str):\n        xs = np.arange(1, len(tr) + 1)\n        plt.figure(figsize=(6, 4))\n        plt.plot(xs, tr, label=\u0027train\u0027); plt.plot(xs, val, label=\u0027val\u0027)\n        plt.xlabel(\u0027Epoch\u0027); plt.ylabel(ylab); plt.legend(); plt.tight_layout()\n        fname = f\u0027{tag}.pdf\u0027; plt.savefig(self.out_dir / fname); plt.close()\n        return [fname]\n\n    def _confusion(self, preds: torch.Tensor, targets: torch.Tensor):\n        cm = confusion_matrix(targets.numpy(), preds.numpy())\n        plt.figure(figsize=(5, 4))\n        sns.heatmap(cm, cmap=\u0027Blues\u0027, annot=False, cbar=False)\n        plt.xlabel(\u0027Pred\u0027); plt.ylabel(\u0027True\u0027); plt.tight_layout()\n        fname = \u0027confusion.pdf\u0027; plt.savefig(self.out_dir / fname); plt.close()\n        return [fname]\n", "full_experiment_yaml": "# config/full_experiment.yaml\nexperiment_description: |\n  Experiment-1: Reddit (full-graph) \u2013 ECO-LASQ-GAT 6-layer vs. baselines.\n  Objective: Energy/accuracy Pareto with carbon_budget = 65 kJ per epoch.\n\ndataset:\n  name: reddit          # \u2190 replaced DATASET_PLACEHOLDER\n  root: ./data/reddit\n\nmodel:\n  hidden_dim: 256\n  num_layers: 6\n  heads: 4\n  lam_M: 1e-4\n  lam_E_start: 5e-4     # \u03bb_E start value\n  carbon_budget: 65000  # J / epoch (65 kJ)\n\ntraining:\n  lr: 0.0025\n  weight_decay: 5e-4\n  epochs: 300\n\nlogging:\n  print_every: 10\n\noutput:\n  dir: outputs/reddit_exp1\n\n# You can switch to OGBN-products by overriding:\n#   dataset.name: ogbn-products\n#   training.epochs: 200\n", "main_py": "\"\"\"src/main.py\nEntry point \u2013 unchanged except that full_experiment.yaml now contains concrete\nReddit configuration.\n\"\"\"\nimport argparse\nimport sys\nfrom pathlib import Path\nimport yaml\n\nfrom .train import run_experiment\n\nCONFIG_DIR = Path(__file__).resolve().parent.parent / \u0027config\u0027\n\n\ndef _parse():\n    p = argparse.ArgumentParser()\n    g = p.add_mutually_exclusive_group(required=True)\n    g.add_argument(\u0027--smoke-test\u0027, action=\u0027store_true\u0027)\n    g.add_argument(\u0027--full-experiment\u0027, action=\u0027store_true\u0027)\n    p.add_argument(\u0027--config\u0027, type=str, default=None)\n    return p.parse_args()\n\n\ndef _load(path: Path):\n    with open(path) as f:\n        return yaml.safe_load(f)\n\n\ndef main():\n    args = _parse()\n    cfg_path = Path(args.config) if args.config else CONFIG_DIR / (\u0027smoke_test.yaml\u0027 if args.smoke_test else \u0027full_experiment.yaml\u0027)\n    if not cfg_path.exists():\n        sys.exit(f\u0027Config {cfg_path} not found\u0027)\n    cfg = _load(cfg_path)\n    run_experiment(cfg)\n\n\nif __name__ == \u0027__main__\u0027:\n    main()\n", "preprocess_py": "\"\"\"src/preprocess.py\nDataset loading \u0026 preprocessing for Reddit and OGBN-products.\n\"\"\"\nfrom __future__ import annotations\nfrom dataclasses import dataclass\nfrom typing import Dict, Any\n\nimport torch\n\n\n@dataclass\nclass GraphData:\n    x: torch.Tensor\n    y: torch.Tensor\n    edge_index: torch.Tensor\n    train_mask: torch.Tensor\n    val_mask: torch.Tensor\n    test_mask: torch.Tensor\n\n    def to(self, device):\n        self.x = self.x.to(device)\n        self.y = self.y.to(device)\n        self.edge_index = self.edge_index.to(device)\n        self.train_mask = self.train_mask.to(device)\n        self.val_mask = self.val_mask.to(device)\n        self.test_mask = self.test_mask.to(device)\n        return self\n\n\n# ===============================================================\n#                  DATASET-SPECIFIC LOADERS\n# ===============================================================\n\ndef _load_reddit(root: str) -\u003e GraphData:\n    from torch_geometric.datasets import Reddit\n    data_obj = Reddit(root=root)[0]\n    return GraphData(x=data_obj.x, y=data_obj.y, edge_index=data_obj.edge_index,\n                     train_mask=data_obj.train_mask, val_mask=data_obj.val_mask,\n                     test_mask=data_obj.test_mask)\n\n\ndef _load_ogbn_products(root: str) -\u003e GraphData:\n    from ogb.nodeproppred import NodePropPredDataset\n    import numpy as np\n    ds = NodePropPredDataset(name=\u0027ogbn-products\u0027, root=root)\n    split_idx = ds.get_idx_split()\n    graph, labels = ds[0]\n    x = torch.from_numpy(graph[\u0027node_feat\u0027]).float()\n    edge_index = torch.from_numpy(graph[\u0027edge_index\u0027]).long()\n    y = torch.from_numpy(labels).long().squeeze()\n    N = y.size(0)\n    train_mask = torch.zeros(N, dtype=torch.bool); train_mask[split_idx[\u0027train\u0027]] = True\n    val_mask = torch.zeros(N, dtype=torch.bool); val_mask[split_idx[\u0027valid\u0027]] = True\n    test_mask = torch.zeros(N, dtype=torch.bool); test_mask[split_idx[\u0027test\u0027]] = True\n    return GraphData(x=x, y=y, edge_index=edge_index,\n                     train_mask=train_mask, val_mask=val_mask, test_mask=test_mask)\n\n\n# ===============================================================\n#                          PRE-PROCESSOR\n# ===============================================================\nclass Preprocessor:\n    def __init__(self, cfg: Dict[str, Any]):\n        self.cfg = cfg\n\n    def process(self, data: GraphData):\n        # Standardise features using training nodes only (\u03bc=0, \u03c3=1)\n        mu = data.x[data.train_mask].mean(0, keepdim=True)\n        sigma = data.x[data.train_mask].std(0, keepdim=True).clamp(min=1e-5)\n        data.x = (data.x - mu) / sigma\n        return data\n\n\n# ===============================================================\n#                             API\n# ===============================================================\n\ndef load_dataset(cfg: Dict[str, Any]) -\u003e GraphData:\n    name = cfg[\u0027dataset\u0027][\u0027name\u0027].lower()\n    root = cfg[\u0027dataset\u0027].get(\u0027root\u0027, \u0027./data\u0027)\n    if name in {\u0027reddit\u0027, \u0027pyg-reddit\u0027}:\n        return _load_reddit(root)\n    if name in {\u0027ogbn-products\u0027, \u0027ogbn_products\u0027, \u0027products\u0027}:\n        return _load_ogbn_products(root)\n    raise ValueError(f\u0027Dataset {name} not supported.\u0027)\n", "pyproject_toml": "[project]\nname = \"eco_lasq_exp\"\nversion = \"0.2.0\"\nrequires-python = \"\u003e=3.10\"\n\n[project.dependencies]\ntorch = \"*\"\ntorch_geometric = \"*\"\nogb = \"*\"\nmatplotlib = \"*\"\nseaborn = \"*\"\npyyaml = \"*\"\nnumpy = \"*\"\ntqdm = \"*\"\npynvml = \"*\"\nscikit-learn = \"*\"\n", "smoke_test_yaml": "# config/smoke_test.yaml\nexperiment_description: |\n  Quick end-to-end validation on a tiny synthetic graph.\n\n# dataset \u0027synthetic\u0027 is internally generated \u2192 no download required\ndataset:\n  name: synthetic\n\nmodel:\n  hidden_dim: 32\n  num_layers: 2\n  heads: 2\n  lam_M: 1e-4\n  lam_E_start: 0.0\n\ntraining:\n  lr: 2.5e-3\n  weight_decay: 5e-4\n  epochs: 5\n\nlogging:\n  print_every: 1\n\noutput:\n  dir: outputs/smoke_test\n", "train_py": "\"\"\"src/train.py\nSpecialised training logic for ECO-LASQ experiments on Reddit / OGBN-products.\nAll PLACEHOLDERs from the common core have been replaced with *real* dataset\nsupport and concrete hyper-parameters.\n\"\"\"\nfrom __future__ import annotations\nimport json\nimport time\nimport uuid\nfrom pathlib import Path\nfrom typing import Dict, Tuple, Any, Optional, List\n\nimport numpy as np\nimport torch\nimport torch.nn.functional as F\nfrom torch import nn, Tensor\nfrom tqdm import tqdm\n\nfrom .evaluate import Evaluator\nfrom .preprocess import load_dataset, Preprocessor\n\n# ===============================================================\n#                      QUANTISATION UTILS\n# ===============================================================\n\ndef uniform_quantise(x: Tensor, bits: int) -\u003e Tensor:        # noqa: D401\n    \"\"\"Symmetric uniform quantisation followed by de-quantisation.\"\"\"\n    if bits \u003e= 16:\n        return x\n    qmax = 2 ** (bits - 1) - 1\n    qmin = -qmax - 1\n    scale = x.abs().max().clamp(min=1e-8) / qmax\n    x_int = torch.clamp((x / scale).round(), qmin, qmax)\n    return x_int * scale\n\n# ===============================================================\n#                      LASQ-GAT LAYER (BASE)\n# ===============================================================\nclass LASQ_GATConv(nn.Module):\n    \"\"\"Locally-Adaptive Sparse \u0026 Quantised GAT convolution (baseline LASQ).\"\"\"\n\n    def __init__(self, in_dim: int, out_dim: int, heads: int = 4,\n                 lam_M: float = 1e-4, k_init: int | None = None,\n                 bits_init: int = 8):\n        super().__init__()\n        self.in_dim, self.out_dim, self.heads = in_dim, out_dim, heads\n        self.weight = nn.Parameter(torch.empty(in_dim, out_dim * heads))\n        nn.init.xavier_uniform_(self.weight)\n        self.att_left = nn.Parameter(torch.empty(1, heads, out_dim))\n        self.att_right = nn.Parameter(torch.empty(1, heads, out_dim))\n        nn.init.xavier_uniform_(self.att_left)\n        nn.init.xavier_uniform_(self.att_right)\n        self.leaky_relu = nn.LeakyReLU(0.2)\n        # ---- sparsity / quantisation knobs ----\n        self.k_max = out_dim\n        self.k = k_init or max(2, out_dim // 2)\n        self.bits = bits_init\n        self.lam_M = lam_M\n        self.Cs = 1.0  # variance surrogate (sparsity)\n        self.Cq = 1.0  # variance surrogate (quantisation)\n\n    # -----------------------------------------------------------\n    def _update_budget(self):\n        \"\"\"Closed-form LASQ update: minimise V + \u03bb_M\u00b7M.\"\"\"\n        v_s, v_q = self.Cs, self.Cq\n        lamM = self.lam_M\n        candidate_bits = torch.tensor([2, 4, 6, 8])\n        obj_bits = v_q / (2.0 ** (2 * candidate_bits)) + lamM * candidate_bits\n        self.bits = int(candidate_bits[obj_bits.argmin()])\n        denom = (v_s * (2 ** (2 * self.bits)) * lamM)\n        self.k = int(min(self.k_max, max(2, np.sqrt(denom))))\n\n    # -----------------------------------------------------------\n    def forward(self, x: Tensor, edge_index: Tensor) -\u003e Tensor:  # noqa: N802\n        self._update_budget()\n        x_q = uniform_quantise(x, self.bits)\n        h = x_q @ self.weight\n        N = h.size(0)\n        h = h.view(N, self.heads, self.out_dim)\n        alpha_l = (h * self.att_left).sum(dim=-1)\n        alpha_r = (h * self.att_right).sum(dim=-1)\n        alpha = self.leaky_relu(alpha_l[edge_index[0]] + alpha_r[edge_index[1]])\n        k = min(self.k, alpha.size(0))\n        topk_val, topk_idx = torch.topk(alpha, k=k, dim=0)\n        mask = torch.zeros_like(alpha, dtype=torch.bool)\n        mask[topk_idx, torch.arange(alpha.size(1))] = True\n        alpha = torch.where(mask, alpha, torch.full_like(alpha, float(\u0027-inf\u0027)))\n        alpha = torch.softmax(alpha, dim=0)\n        out = torch.zeros_like(h)\n        src, dst = edge_index\n        msg = h[src] * alpha.unsqueeze(-1)\n        out.index_add_(0, dst, msg)\n        return out.view(N, self.heads * self.out_dim)\n\n# ===============================================================\n#                       ECO-LASQ \u2011 GAT LAYER\n# ===============================================================\ntry:\n    import pynvml\n    pynvml.nvmlInit()\n    _NVML_H = pynvml.nvmlDeviceGetHandleByIndex(0)\n    _NVML_ENABLED = True\nexcept (ModuleNotFoundError, pynvml.NVMLError):\n    _NVML_ENABLED = False\n\n\ndef _read_power_mw() -\u003e float:\n    if not _NVML_ENABLED:\n        return 0.0\n    return float(pynvml.nvmlDeviceGetPowerUsage(_NVML_H))\n\n\nclass ECO_LASQ_GATConv(LASQ_GATConv):\n    \"\"\"Energy-aware extension of LASQ (adds \u03bb_E and carbon budget).\"\"\"\n\n    def __init__(self, *args, lam_E_start: float = 0.0,\n                 carbon_budget: Optional[float] = None, **kw):\n        super().__init__(*args, **kw)\n        self.lam_E = lam_E_start\n        self.E_hist: List[float] = []\n        self.carbon_budget = carbon_budget\n\n    def _energy_now(self) -\u003e float:\n        return _read_power_mw() * 1e-3  # mW \u2192 J/s \u2248 W\n\n    @torch.no_grad()\n    def _update_budget(self):\n        super()._update_budget()  # handles V + \u03bb_M\u00b7M\n        if not self.E_hist:\n            return\n        e_avg = sum(self.E_hist[-20:]) / len(self.E_hist[-20:])\n        v_s, v_q = self.Cs, self.Cq\n        lamE, lamM = self.lam_E, self.lam_M\n        candidate_bits = torch.tensor([2, 4, 6, 8])\n        obj_bits = v_q / (2.0 ** (2 * candidate_bits)) + lamM * candidate_bits + lamE * e_avg\n        self.bits = int(candidate_bits[obj_bits.argmin()])\n        denom = (v_s * (2 ** (2 * self.bits)) * (lamM + lamE * e_avg))\n        self.k = int(min(self.k_max, max(2, np.sqrt(denom))))\n\n    def forward(self, x: Tensor, edge_index: Tensor) -\u003e Tensor:  # noqa: N802\n        if self.training:\n            self.E_hist.append(self._energy_now())\n            if self.carbon_budget is not None and sum(self.E_hist) \u003e self.carbon_budget:\n                self.lam_E *= 1.1  # penalise energy term more\n        return super().forward(x, edge_index)\n\n# ===============================================================\n#                           GAT MODEL\n# ===============================================================\nclass GATModel(nn.Module):\n    \"\"\"Stack of ECO-LASQ-GATConv layers.\"\"\"\n\n    def __init__(self, in_dim: int, hidden_dim: int, out_dim: int,\n                 num_layers: int = 6, heads: int = 4,\n                 lam_M: float = 1e-4, lam_E_start: float = 5e-4,\n                 carbon_budget: float | None = None):\n        super().__init__()\n        dims = [in_dim] + [hidden_dim] * (num_layers - 1) + [out_dim]\n        mods: List[nn.Module] = []\n        for i in range(num_layers):\n            last = i == num_layers - 1\n            mods.append(ECO_LASQ_GATConv(dims[i], dims[i + 1], heads=heads,\n                                          lam_M=lam_M, lam_E_start=lam_E_start,\n                                          carbon_budget=carbon_budget))\n            if not last:\n                mods.append(nn.ELU())\n        self.net = nn.ModuleList(mods)\n\n    def forward(self, x: Tensor, edge_index: Tensor):  # noqa: N802\n        for layer in self.net:\n            if isinstance(layer, (ECO_LASQ_GATConv, LASQ_GATConv)):\n                x = layer(x, edge_index)\n            else:\n                x = layer(x)\n        return x\n\n# ===============================================================\n#                           TRAINER\n# ===============================================================\nclass Trainer:\n    \"\"\"Handles one experimental run (dataset, model, optimiser, logging).\"\"\"\n\n    def __init__(self, config: Dict[str, Any]):\n        self.cfg = config\n        self.device = torch.device(\u0027cuda\u0027 if torch.cuda.is_available() else \u0027cpu\u0027)\n        # ---------- data ----------\n        raw = load_dataset(config)\n        self.data = Preprocessor(config).process(raw).to(self.device)\n        in_dim = self.data.x.size(1)\n        num_classes = int(self.data.y.max().item()) + 1\n        # ---------- model ----------\n        mcfg = config[\u0027model\u0027]\n        self.model = GATModel(in_dim, mcfg[\u0027hidden_dim\u0027], num_classes,\n                              num_layers=mcfg[\u0027num_layers\u0027], heads=mcfg[\u0027heads\u0027],\n                              lam_M=mcfg[\u0027lam_M\u0027], lam_E_start=mcfg[\u0027lam_E_start\u0027],\n                              carbon_budget=mcfg.get(\u0027carbon_budget\u0027)).to(self.device)\n        # ---------- optimisation ----------\n        tcfg = config[\u0027training\u0027]\n        self.opt = torch.optim.AdamW(self.model.parameters(), lr=tcfg[\u0027lr\u0027], weight_decay=tcfg[\u0027weight_decay\u0027])\n        tot_epochs = tcfg[\u0027epochs\u0027]\n        warm = max(1, int(0.05 * tot_epochs))\n        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.opt, tot_epochs - warm)\n        self.warm_epochs = warm\n        self.loss_fn = nn.CrossEntropyLoss()\n        self.history: Dict[str, List[float]] = {\u0027train_loss\u0027: [], \u0027train_acc\u0027: [],\n                                               \u0027val_loss\u0027: [], \u0027val_acc\u0027: []}\n        self.best_val = -1.0\n        self.best_state: Optional[Dict[str, Any]] = None\n        self.evaluator = Evaluator(config)\n\n    # ------------------------------- helper ---------------------\n    def _run_step(self, train: bool) -\u003e Tuple[float, float]:\n        self.model.train(train)\n        mask = self.data.train_mask if train else self.data.val_mask\n        logits = self.model(self.data.x, self.data.edge_index)\n        loss = self.loss_fn(logits[mask], self.data.y[mask].squeeze())\n        if train:\n            self.opt.zero_grad(); loss.backward(); self.opt.step()\n        pred = logits.argmax(1)\n        acc = (pred[mask] == self.data.y[mask].squeeze()).float().mean().item()\n        return loss.item(), acc\n\n    # ------------------------------- main loop ------------------\n    def train(self):\n        epochs = self.cfg[\u0027training\u0027][\u0027epochs\u0027]\n        for epoch in tqdm(range(1, epochs + 1), desc=\u0027Epoch\u0027):\n            t0 = time.time()\n            tr_loss, tr_acc = self._run_step(True)\n            if epoch \u003e self.warm_epochs:\n                self.scheduler.step()\n            val_loss, val_acc = self._run_step(False)\n            self.history[\u0027train_loss\u0027].append(tr_loss)\n            self.history[\u0027train_acc\u0027].append(tr_acc)\n            self.history[\u0027val_loss\u0027].append(val_loss)\n            self.history[\u0027val_acc\u0027].append(val_acc)\n            if val_acc \u003e self.best_val:\n                self.best_val = val_acc\n                self.best_state = {\u0027model\u0027: self.model.state_dict(), \u0027epoch\u0027: epoch, \u0027val_acc\u0027: val_acc}\n            if epoch % self.cfg[\u0027logging\u0027][\u0027print_every\u0027] == 0 or epoch == 1:\n                elapsed = time.time() - t0\n                print(f\"Ep {epoch:03d}/{epochs} | tr {tr_acc*100:.2f}% / val {val_acc*100:.2f}% | {elapsed:.1f}s\")\n        # -------------- save \u0026 final evaluation -----------------\n        out_dir = Path(self.cfg[\u0027output\u0027][\u0027dir\u0027]); out_dir.mkdir(parents=True, exist_ok=True)\n        torch.save(self.best_state, out_dir / \u0027best_model.pt\u0027)\n        results = self.evaluator.evaluate(self.model, self.data, self.history)\n        self._dump_results(results)\n\n    # -----------------------------------------------------------\n    def _dump_results(self, res: Dict[str, Any]):\n        out_dir = Path(self.cfg[\u0027output\u0027][\u0027dir\u0027]); out_dir.mkdir(parents=True, exist_ok=True)\n        fn = out_dir / f\"results_{uuid.uuid4().hex[:8]}.json\"\n        with open(fn, \u0027w\u0027) as f:\n            json.dump(res, f, indent=2)\n        print(\u0027\\n=== EXPERIMENT SUMMARY ===\u0027)\n        print(self.cfg[\u0027experiment_description\u0027])\n        print(json.dumps(res, indent=2))\n\n# ===============================================================\n#                              API\n# ===============================================================\n\ndef run_experiment(cfg: Dict[str, Any]):\n    Trainer(cfg).train()\n"}
+
+# External Resources
+
+**HuggingFace Models:**
+
+
+**HuggingFace Datasets:**
+
+- ID: tensorshield/reddit_dataset_157
+
+
+- ID: zkpbeats/reddit_ds_479243
+
+
+- ID: HuggingFaceGECLM/REDDIT_comments
+
+
+- ID: fddemarco/pushshift-reddit-comments
+
+
+
+
+Analyze the code thoroughly and provide your validation result.
+Output:
+{
+    "is_full_experiment_ready": false,
+    "full_experiment_issue": "`--full-experiment` mode is not production-ready: (1) experiment supports only Reddit/OGBN-products, omitting OGBN-papers100M slice and streaming KDD-Cup2021 data required by design; (2) baselines (FP32, GACT-8b, AISQ-GAT, LASQ-GAT, Degree-Quant) are absent, as are ablations and multi-seed runs; (3) micro-partitioning, stability gate, and tri-objective knapsack with λ_E schedule are not implemented; (4) energy logging is limited to per-layer power samples, no epoch-level joule integration, CO₂ conversion or carbon-budget enforcement; (5) evaluation metrics are incomplete (no wall-clock, memory, energy, Pareto plots); therefore criteria 3 and 4 are unmet."
+}
