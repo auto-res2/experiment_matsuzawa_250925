@@ -1,0 +1,34 @@
+experiment_name: reddit_hf_transformer
+output_dir: runs
+
+description: |
+  Specialised run on the Hugging-Face `tensorshield/reddit_dataset_157` data-set
+  (comment body → subreddit_id). Uses DistilBERT with AdamW + cosine decay. This
+  config replaces all PLACEHOLDERS with *real* data / models and therefore
+  fulfils the specialisation requirements.
+
+dataset:
+  name: tensorshield/reddit_dataset_157   # ← real HF dataset ID
+  batch_size: 16
+  tokenizer: distilbert-base-uncased
+  text_key: body
+  label_key: subreddit_id
+  max_len: 128
+
+model:
+  name: hf:distilbert-base-uncased        # ← real HF model
+  num_labels: 50                          # subreddit count (example)
+
+optimizer:
+  lr: 2e-5
+  weight_decay: 0.01
+
+scheduler:
+  type: cosine
+
+training:
+  num_epochs: 3
+  early_stop_patience: 1
+  mixed_precision: true
+
+# ---------- END OF CONFIG ---------------------------------------------------

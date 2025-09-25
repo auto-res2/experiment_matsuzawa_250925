@@ -1,0 +1,28 @@
+experiment_name: smoke_test
+output_dir: runs
+
+description: |
+  Smoke-test – synthetic tensor data & small MLP just to ensure the whole stack
+  (preprocess→train→evaluate→plot) works. 5 epochs only.
+
+dataset:
+  name: DATASET_PLACEHOLDER
+  n_samples: 256
+  n_features: 32
+  n_classes: 3
+  batch_size: 32
+
+model:
+  name: MODEL_PLACEHOLDER
+  in_features: 32
+  n_classes: 3
+  hidden: 64
+
+optimizer:
+  lr: 1e-3
+  weight_decay: 0.0
+
+training:
+  num_epochs: 5
+  early_stop_patience: 3
+  mixed_precision: false
