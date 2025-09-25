@@ -504,7 +504,83 @@
         "OGB-Products",
         "Chameleon",
         "OGB-Arxiv (DGL)"
-      ]
+      ],
+      "external_resources": {
+        "hugging_face": {
+          "models": [],
+          "datasets": [
+            {
+              "id": "SauravMaheshkar/pareto-chameleon",
+              "author": "SauravMaheshkar",
+              "sha": "3a3cff4b525dd1a31fe917051f3bd029fe9ba63b",
+              "created_at": "2024-02-07T09:55:11+00:00",
+              "last_modified": "2024-02-12T21:39:03+00:00",
+              "private": false,
+              "gated": false,
+              "disabled": false,
+              "downloads": 52,
+              "likes": 0,
+              "siblings": [
+                {
+                  "rfilename": ".gitattributes"
+                },
+                {
+                  "rfilename": "README.md"
+                },
+                {
+                  "rfilename": "link_gen.py"
+                },
+                {
+                  "rfilename": "links/chameleon_tvtEdges.pkl"
+                },
+                {
+                  "rfilename": "pretrain_labels/metis_label_chameleon.pt"
+                },
+                {
+                  "rfilename": "processed/chameleon.bin"
+                },
+                {
+                  "rfilename": "raw/out1_graph_edges.txt"
+                },
+                {
+                  "rfilename": "raw/out1_node_feature_label.txt"
+                }
+              ],
+              "card_data": {
+                "license": "cc",
+                "language": [],
+                "tags": [
+                  "art"
+                ],
+                "datasets": [],
+                "task_categories": [
+                  "graph-ml"
+                ],
+                "size_categories": [
+                  "1K<n<10K"
+                ],
+                "metrics": [],
+                "widget": []
+              },
+              "tags": [
+                "task_categories:graph-ml",
+                "license:cc",
+                "size_categories:10K<n<100K",
+                "format:text",
+                "modality:text",
+                "library:datasets",
+                "library:mlcroissant",
+                "arxiv:2210.02016",
+                "arxiv:1909.13021",
+                "region:us",
+                "art"
+              ],
+              "readme": "---\nsize_categories:\n- 1K<n<10K\ntask_categories:\n- graph-ml\ntags:\n- art\nlicense: cc\n---\n\n## Dataset Information\n\n| # Nodes | # Edges | # Features |\n|:-------:|:-------:|:----------:|\n|  2,277  |  36,101 |      2,325    |\n\n## Usage\n\n```python\nfrom huggingface_hub import hf_hub_download\n\nhf_hub_download(repo_id=\"SauravMaheshkar/pareto-chameleon\", filename=\"processed/chameleon.bin\", local_dir=\"./data/\", repo_type=\"dataset\")\n\ndataset, _ = dgl.load_graphs(\"./data/processed/chameleon.bin\")\n```\n\nThank you [@severo](https://huggingface.co/severo) for helping me [figure out the usage](https://discuss.huggingface.co/t/can-i-use-a-pickle-file-with-the-data-files-argument-with-datasets/72189/2?u=sauravmaheshkar).\n\nPre-processed as per the official codebase of https://arxiv.org/abs/2210.02016\n\n## Citations\n\n```\n@article{ju2023multi,\n  title={Multi-task Self-supervised Graph Neural Networks Enable Stronger Task Generalization},\n  author={Ju, Mingxuan and Zhao, Tong and Wen, Qianlong and Yu, Wenhao and Shah, Neil and Ye, Yanfang and Zhang, Chuxu},\n  booktitle={International Conference on Learning Representations},\n  year={2023}\n}\n```\n\n```\n@article{DBLP:journals/corr/abs-1909-13021,\n  author       = {Benedek Rozemberczki and\n                  Carl Allen and\n                  Rik Sarkar},\n  title        = {Multi-scale Attributed Node Embedding},\n  journal      = {CoRR},\n  volume       = {abs/1909.13021},\n  year         = {2019},\n  url          = {http://arxiv.org/abs/1909.13021},\n  eprinttype    = {arXiv},\n  eprint       = {1909.13021},\n  timestamp    = {Wed, 02 Oct 2019 13:04:08 +0200},\n  biburl       = {https://dblp.org/rec/journals/corr/abs-1909-13021.bib},\n  bibsource    = {dblp computer science bibliography, https://dblp.org}\n}\n```",
+              "extracted_code": "from huggingface_hub import hf_hub_download\n\nhf_hub_download(repo_id=\"SauravMaheshkar/pareto-chameleon\", filename=\"processed/chameleon.bin\", local_dir=\"./data/\", repo_type=\"dataset\")\n\ndataset, _ = dgl.load_graphs(\"./data/processed/chameleon.bin\")"
+            }
+          ]
+        }
+      }
     }
   },
   "idea_info_history": [
