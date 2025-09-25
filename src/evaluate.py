@@ -70,10 +70,17 @@ class Evaluator:
         probs = logits.softmax(dim=1).numpy()
         preds = logits.argmax(dim=1)
 
+        # Fix brier score calculation for multiclass
+        def _multiclass_brier_score(y_true: np.ndarray, y_prob: np.ndarray) -> float:
+            """Calculate Brier score for multiclass classification."""
+            n_classes = y_prob.shape[1]
+            y_true_one_hot = np.eye(n_classes)[y_true]
+            return np.mean(np.sum((y_prob - y_true_one_hot) ** 2, axis=1))
+
         metrics = {
             "accuracy_top1": self._accuracy(preds, labels),
             "ece": self._ece(probs, labels.numpy()),
-            "brier": brier_score_loss(labels.numpy(), probs[np.arange(len(labels)), preds.numpy()]),
+            "brier": _multiclass_brier_score(labels.numpy(), probs),
             "latency_ms_mean": float(np.mean(latencies)) if latencies else float("nan"),
             "latency_ms_std": float(np.std(latencies)) if latencies else float("nan"),
         }

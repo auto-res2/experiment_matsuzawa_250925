@@ -1,0 +1,55 @@
+=== [PHASE 2/2] Full experiment start Thu Sep 25 08:16:17 AM UTC 2025 ===
+Failed to load randall-lab/cifar10-c: Dataset scripts are no longer supported, but found cifar10-c.py
+Failed to load uoft-cs/cifar10-c: Dataset 'uoft-cs/cifar10-c' doesn't exist on the Hub or cannot be accessed.
+Failed to load imagenet-c/cifar10-c: Dataset 'imagenet-c/cifar10-c' doesn't exist on the Hub or cannot be accessed.
+Failed to load CIFAR-10-C/dataset: Dataset 'CIFAR-10-C/dataset' doesn't exist on the Hub or cannot be accessed.
+Warning: Failed to load CIFAR-10-C from HuggingFace. Using regular CIFAR-10 test set instead.
+Epochs == 0 → skipping supervised training (using pre-trained weights)
+
+===== EXPERIMENT SUMMARY =====
+{
+    "train_loss_per_epoch": [],
+    "val_acc_per_epoch": [],
+    "timestamp": "20250925_081643",
+    "config": {
+        "description": "FLASH-TTA \u2013 corruption robustness bench (CIFAR-10-C + ImageNet-C).\nUses pre-trained backbones and runs *no supervised training* (epochs: 0).\n",
+        "seed": 0,
+        "output_dir": "runs/full_experiment",
+        "figures_dir": "figures",
+        "experiment_id": "cifar10c_resnet50_flash_tta",
+        "dataset": {
+            "name": "CIFAR10C",
+            "path": "hf://randall-lab/cifar10-c",
+            "num_classes": 10
+        },
+        "model": {
+            "name": "resnet50.a1_in1k",
+            "pretrained": true,
+            "num_classes": 10,
+            "method": "flash_tta",
+            "proj_dim": 16,
+            "gru_hidden": 256
+        },
+        "training": {
+            "epochs": 0,
+            "batch_size": 128,
+            "lr": 0.0003
+        },
+        "evaluation": {
+            "batch_size": 256
+        }
+    },
+    "test_metrics": {
+        "accuracy_top1": 10.289999842643738,
+        "ece": 0.20670966382473704,
+        "brier": NaN,
+        "latency_ms_mean": 43.51708288192749,
+        "latency_ms_std": 93.69577031178557
+    }
+}
+==============================
+
+Failed to load ang9867/ImageNet-C: Unknown split "test". Should be one of ['train'].
+Failed to load imagenet-c/imagenet-c: Dataset 'imagenet-c/imagenet-c' doesn't exist on the Hub or cannot be accessed.
+Failed to load uoft-cs/imagenet-c: Dataset 'uoft-cs/imagenet-c' doesn't exist on the Hub or cannot be accessed.
+Failed to load ImageNet-C/dataset: Dataset 'ImageNet-C/dataset' doesn't exist on the Hub or cannot be accessed.

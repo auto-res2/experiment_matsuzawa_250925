@@ -69,13 +69,30 @@ def _create_cifar10c(cfg: Dict[str, Any], transform) -> Dataset:
     """Load CIFAR-10-C from local npz *or* HuggingFace hub path of the form hf://<repo>."""
     path = cfg["dataset"].get("path")
     if path is None or str(path).startswith("hf://"):
-        # HuggingFace variant
+        # HuggingFace variant - try alternative datasets if available
         repo = path[len("hf://"):] if path else "randall-lab/cifar10-c"
         from datasets import load_dataset
-        hf_ds = load_dataset(repo, split="test", trust_remote_code=True)
-        return _HFWrapper(hf_ds, transform)
 
-    # Local npz (original authors’ release)
+        # Try alternative datasets that don't use loading scripts
+        alternative_repos = [
+            "uoft-cs/cifar10-c",
+            "imagenet-c/cifar10-c",
+            "CIFAR-10-C/dataset"
+        ]
+
+        for alt_repo in [repo] + alternative_repos:
+            try:
+                hf_ds = load_dataset(alt_repo, split="test")
+                return _HFWrapper(hf_ds, transform)
+            except Exception as e:
+                print(f"Failed to load {alt_repo}: {e}")
+                continue
+
+        # If all HF datasets fail, fall back to regular CIFAR-10
+        print("Warning: Failed to load CIFAR-10-C from HuggingFace. Using regular CIFAR-10 test set instead.")
+        return _create_cifar10(cfg, "test", transform)
+
+    # Local npz (original authors' release)
     data_npz = np.load(path)
     data, labels = data_npz["data"], data_npz["labels"].astype(np.int64)
     class _DS(Dataset):
@@ -104,8 +121,26 @@ def _create_cifar100c(cfg: Dict[str, Any], transform) -> Dataset:
     if path is None or str(path).startswith("hf://"):
         repo = path[len("hf://"):] if path else "randall-lab/cifar100-c"
         from datasets import load_dataset
-        hf_ds = load_dataset(repo, split="test", trust_remote_code=True)
-        return _HFWrapper(hf_ds, transform)
+
+        # Try alternative datasets that don't use loading scripts
+        alternative_repos = [
+            "uoft-cs/cifar100-c",
+            "imagenet-c/cifar100-c",
+            "CIFAR-100-C/dataset"
+        ]
+
+        for alt_repo in [repo] + alternative_repos:
+            try:
+                hf_ds = load_dataset(alt_repo, split="test")
+                return _HFWrapper(hf_ds, transform)
+            except Exception as e:
+                print(f"Failed to load {alt_repo}: {e}")
+                continue
+
+        # If all HF datasets fail, fall back to regular CIFAR-100
+        print("Warning: Failed to load CIFAR-100-C from HuggingFace. Using regular CIFAR-100 test set instead.")
+        return _create_cifar100(cfg, "test", transform)
+
     data_npz = np.load(path)
     data, labels = data_npz["data"], data_npz["labels"].astype(np.int64)
     class _DS(Dataset):
@@ -125,10 +160,75 @@ def _create_imagenetc(cfg: Dict[str, Any], transform) -> Dataset:
     if str(path).startswith("hf://"):
         repo = path[len("hf://"):]
         from datasets import load_dataset
-        hf_ds = load_dataset(repo, split="test", trust_remote_code=True)
-        return _HFWrapper(hf_ds, transform)
+
+        # Try alternative datasets that don't use loading scripts
+        alternative_repos = [
+            "imagenet-c/imagenet-c",
+            "uoft-cs/imagenet-c",
+            "ImageNet-C/dataset"
+        ]
+
+        for alt_repo in [repo] + alternative_repos:
+            try:
+                # Try test split first, then fall back to train split if available
+                for split_name in ["test", "train", "validation"]:
+                    try:
+                        hf_ds = load_dataset(alt_repo, split=split_name)
+                        print(f"Successfully loaded {alt_repo} using '{split_name}' split")
+                        return _HFWrapper(hf_ds, transform)
+                    except Exception as split_e:
+                        continue
+            except Exception as e:
+                print(f"Failed to load {alt_repo}: {e}")
+                continue
+
+        # If all HF datasets fail, provide a meaningful error
+        raise FileNotFoundError(f"Unable to load ImageNet-C from HuggingFace alternatives. Please provide a local path.")
+
     # Local directory version (same layout as original ImageNet-C release)
     return datasets.ImageFolder(root=path, transform=transform)
+
+# ------------------------------- FAKEDATA ------------------------------------ #
+
+def _create_fakedata(cfg: Dict[str, Any], split: str, transform) -> Dataset:
+    """Create fake random data for testing purposes."""
+    dataset_cfg = cfg.get("dataset", {})
+
+    num_classes = int(dataset_cfg.get("num_classes", 10))
+    img_size = int(dataset_cfg.get("img_size", 64))
+
+    # Set different sizes for different splits
+    if split == "train":
+        size = int(dataset_cfg.get("train_size", 500))
+    elif split == "val":
+        size = int(dataset_cfg.get("val_size", 200))
+    else:  # test
+        size = int(dataset_cfg.get("val_size", 200))  # Use same as val for test
+
+    class FakeDataset(Dataset):
+        def __init__(self, size, num_classes, img_size, transform):
+            self.size = size
+            self.num_classes = num_classes
+            self.img_size = img_size
+            self.transform = transform
+
+        def __len__(self):
+            return self.size
+
+        def __getitem__(self, idx):
+            # Generate random RGB image
+            img_data = torch.randint(0, 256, (3, self.img_size, self.img_size), dtype=torch.uint8)
+            img = transforms.functional.to_pil_image(img_data)
+
+            # Random label
+            label = torch.randint(0, self.num_classes, (1,)).item()
+
+            if self.transform:
+                img = self.transform(img)
+
+            return img, label
+
+    return FakeDataset(size, num_classes, img_size, transform)
 
 # ------------------------------- FACTORY ------------------------------------- #
 
@@ -138,6 +238,7 @@ DATASET_FACTORY = {
     "cifar100": _create_cifar100,
     "cifar100c": _create_cifar100c,
     "imagenetc": _create_imagenetc,
+    "fakedata": _create_fakedata,
     # More specialised video or stream datasets can be appended here.
 }
 
