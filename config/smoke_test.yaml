@@ -1,0 +1,8 @@
+# Smoke-test configuration stub – no real hyper-parameters because the
+# original Experiment Code had no content to extract.
+# The file is required only so that ``src.main`` can load *something* and
+# demonstrate the CLI plumbing.
+experiment: smoke-test
+warning: |
+  This configuration is a stub.  No experiment will run because the
+  original script did not contain runnable code.

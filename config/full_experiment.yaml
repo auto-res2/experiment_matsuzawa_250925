@@ -1,0 +1,5 @@
+# Full-scale configuration stub – mirrors comments from smoke_test.yaml
+experiment: full-experiment
+warning: |
+  This configuration is a stub.  No experiment will run because the
+  original script did not contain runnable code.

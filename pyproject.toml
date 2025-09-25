@@ -1,1 +1,18 @@
-# Please list the required python packages.
+[project]
+name = "hype-babs-stub"
+version = "0.0.0"
+description = "Auto-generated skeleton because the original Experiment Code contained no runnable implementation."
+authors = [
+  { name = "Auto-Generated", email = "noreply@example.com" }
+]
+readme = "README.md"
+requires-python = ">=3.9"
+
+# Minimal runtime dependencies – kept very small because nothing actually runs.
+# Using the *array* syntax as required by the task.
+dependencies = [
+  "pyyaml>=6.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
