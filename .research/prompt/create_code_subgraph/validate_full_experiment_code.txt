@@ -1,0 +1,1020 @@
+
+Input:
+You are an AI code reviewer specializing in machine learning experiment validation.
+
+Analyze the provided experiment code and determine if it implements a production-ready experiment for the Current Research Method using relevant External Resources (not synthetic/placeholder data).
+
+# Instructions
+
+## Validation Criteria
+Check if the generated code meets ALL of the following requirements:
+
+1. Real Data Usage: Uses actual datasets (from External Resources when relevant), not synthetic/dummy/placeholder data
+2. Dual Configuration System:
+   - `smoke_test_yaml`: Quick validation configuration with reduced resources (minimal epochs, smaller datasets)
+   - `full_experiment_yaml`: Complete production configuration matching ALL experimental design specifications
+3. Production-Ready Full Experiment: The `--full-experiment` mode must implement the complete experimental design with:
+   - All specified datasets from External Resources
+   - Correct parameter ranges and layer counts as described in experimental details
+   - Full training epochs and comprehensive evaluation metrics
+4. Complete Implementation: Contains full training loops, evaluation metrics, and result saving with no omitted components
+5. Command Line Interface: Properly supports both `--smoke-test` and `--full-experiment` flags with appropriate configuration loading
+6. No Placeholders: Contains no placeholder comments, TODO items, approximations, or incomplete implementations
+
+## Output Format
+Respond with a JSON object containing:
+- `is_full_experiment_ready`: boolean - true if ALL criteria are met, false otherwise
+- `full_experiment_issue`: string - specific issues found if any criteria are not met, focusing on production-readiness of the `--full-experiment` mode
+
+# Current Research Method
+{
+    "Open Problems": "1. Current gradient–free TTA methods still need two forward passes per image (collect statistics → predict); for video or high-FPS cameras even this 2× latency is too large.\n2. Purely channel-wise central moments ignore cross-channel / cross-token correlations that become important in modern multi-branch CNNs and ViTs.\n3. Hyper-networks trained only with synthetic perturbations may over-fit to frequency-domain noise and show limited benefit on truly out-of-distribution (OOD) conditions such as weather or lens ageing.\n4. A unified evaluation of energy, memory and calibration for INT8 deployment on real edge SoCs is still missing.",
+    "Methods": "FLASH-TTA (Fast, Latency-Aware, Streaming Hyper-network for Test-Time Adaptation)\nA. One-pass streaming encoder\n  • During the normal forward pass we tap K chosen layers and compute:   \n    – first two central moments μ,σ (C channels)  \n    – a 16-dim. random projection of the channel covariance Σ≈HΦHᵀ (H – Rademacher Hadamard).  \n    All ops are O(C log C) and fuse with existing ReLU kernels → zero extra latency.\n  • A causal 1-D GRU (256 hidden) ingests the per-layer stats frame-by-frame and outputs a running context hₜ.\nB. Zero-delay parameter modulation\n  • The same GRU hidden state instantly produces Δγ,Δβ via two small linear heads – no second forward needed; prediction is made with modulated weights in the *same* pass.\n  • For the very first frame we use Δ=0; afterwards adaptation is simultaneous with inference (steady-state overhead <5 %).\nC. Cross-layer consistency regulariser\n  • Add a tiny temperature head τ(hₜ) and minimise   KL( f_{θ₀+Δ}(x′)‖f_{θ₀}(x′) )  s.t. expected entropy drops, preventing over-confident collapse.\nD. Natural-shift self-supervision\n  • Meta-train only on the source set augmented with (i) camera ISP simulations (white-balance drift, rolling-shutter wobble), (ii) physically-based weather engine, (iii) JPEG/QP jitter.  All implemented on-the-fly in Kornia so no external datasets.\nE. Ultra-low-precision design\n  • Statistics in int8, GRU in int8, only the Δ heads in fp16; total additional memory ResNet-50: 220 kB.  \n  • Provide reference CUDA kernel that merges BN affine update with GEMM to avoid extra memory writes.\nF. Continual safeguard\n  • Lightweight Dirichlet density tracker on hₜ: if Mahalanobis(hₜ) > δ we freeze updates for 8 frames – shields against rare extremes.",
+    "Experimental Setup": "Datasets\n  • Synthetic: CIFAR-10-C/100-C, ImageNet-C, VisDA-C.\n  • Natural: ACDC driving (snow,rain,fog), ImageNet-V2, RealBlur-J/B.\n  • Video stream: BDD-100k dash-cam 180 k frames with day→night transition.\nBackbones: ResNet-26/50, MobileNet-V3-S, DeiT-Small (LayerNorm only).\nBaselines: Source, BN-adapt, Tent, EATA, CoTTA, STAMP (prev. idea).\nMetrics: top-1 error, ECE, Φ-calibration, wall-clock fps & joules on Jetson-Nano, ESP32-S3, Apple A15.\nProtocols: 1) single-image, 2) 256-fps video stream (Dirichlet(0.05) drifting corruption) for 200 k frames.\nAblations: (a) remove covariance proj, (b) GRU → EMA, (c) one-pass vs two-pass, (d) natural vs Fourier training.",
+    "Experimental Code": "# pseudo-snippet\ndef fused_stats(x):                      # x: B×C×H×W\n    mu  = x.mean((0,2,3));               # (C,)\n    var = (x-mu[None,:,None,None])**2\n    sig = var.mean((0,2,3)).sqrt()       # (C,)\n    # 16-dim Hadamard sketch of covariance\n    h   = torch.sign(torch.randn(C,16,device=x.device))\n    cov_sketch = ( (x-mu[None,:,None,None])      \n                   .flatten(2) @ h )             # B·HW ×16, accumulate mean\n    cov = cov_sketch.mean(0) / sig               # scale-free\n    return torch.cat([mu,sig,cov])               # (2C+16,)\n\nclass FlashTTA(nn.Module):\n    def __init__(self, backbone):\n        super().__init__()\n        self.backbone = backbone\n        feat_sz = sum(2*m.num_features+16 for m in self._tap_layers())\n        self.gru  = nn.GRUCell(feat_sz,256)\n        self.head = nn.Linear(256, self._param_count())\n    def _tap_layers(self):\n        return [m for m in self.backbone.modules() if isinstance(m,(nn.BatchNorm2d,nn.LayerNorm,nn.GroupNorm))]\n    def _param_count(self):\n        return sum(2*m.num_features for m in self._tap_layers())\n    def forward(self,x,h=None):\n        stats=[]\n        for m in self._tap_layers():\n            m.register_forward_pre_hook(lambda _,inp: stats.append(fused_stats(inp[0])))\n        y = self.backbone(x)\n        s = torch.cat(stats)\n        h = self.gru(s[None],h) if h is not None else self.gru(s[None])\n        delta = self.head(h).squeeze(0)\n        self._apply_delta(delta)          # in-place weight,bias update\n        return y, h.detach()\n",
+    "Expected Result": "• Same-pass adaptation: +0.5 % over STAMP on ImageNet-C while running at 165 FPS on Nano (×2 faster than STAMP, ×12 faster than Tent).\n• Video stream: error drift <0.3 % over 200 k frames; STAMP 0.7 %, Tent 6.1 %.\n• DeiT-Small gains 3.4 % over source and closes 85 % of Tent gap despite no BN.\n• Energy per image 0.34 J (-18 % vs STAMP, ‑85 % vs Tent).\n• INT8 quantisation increases error by <0.2 pp.",
+    "Expected Conclusion": "FLASH-TTA demonstrates that fully one-pass, statistics-driven hyper-networks can deliver state-of-the-art test-time robustness with negligible latency even on micro-controllers. Encoding low-rank cross-channel covariance and using a streaming GRU unlocks richer adaptation signals without back-prop, while the natural-shift self-supervision avoids reliance on curated corruption suites. The design forms a practical blueprint for real-world, always-on adaptive perception modules in autonomous systems and smartphones."
+}
+
+# Experimental Design
+
+## Experiment Strategy
+Experiment 1 – Single-frame Accuracy + Latency Benchmark
+-------------------------------------------------------
+Goal: Show that FLASH-TTA reaches or exceeds SOTA corruption robustness while keeping true single-pass latency.
+
+Setup
+1. Datasets: CIFAR-10-C/100-C, ImageNet-C (all severities).
+2. Models: ResNet-50, MobileNet-V3-S, DeiT-Small.
+3. Methods compared: Source, BN-adapt, Tent, EATA, CoTTA, STAMP, FLASH-TTA (+ four ablations: no-cov, EMA, two-pass, Fourier-only training).
+4. Hardware: single NVIDIA A100; measure latency with Nvidia Nsight-Systems (CUDA event timing, batch size = 1) and peak memory from nvidia-smi.
+
+Procedure
+• Evaluate each checkpoint once without adaptation (warm-up 50 images) to cache kernels.
+• For adaptive baselines run prescribed adaptation loop; for FLASH-TTA run standard forward only.
+• Record: top-1 error/Δpp from Source, Expected Calibration Error (ECE), wall-clock time per image, GPU memory.
+
+Expected Results
+• FLASH-TTA ≥ STAMP (≈ –0.5 pp top-1) and beats all others by 1-6 pp.
+• Latency: FLASH-TTA within +5 % of Source, ≈ ×2 faster than STAMP, ×10–12 faster than Tent/EATA.
+• Ablations: removing covariance or GRU each hurts 0.8–1.3 pp, proving their contribution; two-pass variant doubles latency with no accuracy gain.
+
+Demonstrates
+Accuracy/speed trade-off, proves “same-pass” adaptation works and that covariance+GRU are critical.
+
+
+Experiment 2 – High-FPS Streaming Shift Test
+-------------------------------------------
+Goal: Validate continual, latency-free adaptation and drift-prevention over very long video streams.
+
+Setup
+1. Stream: 180 k frames from BDD-100k ordered day→dusk→night; injected Dirichlet(0.05) corruption drift at 256 fps.
+2. Hardware: A100 for fair speed; synthetic 256 fps enqueue ensures compute-bound regime.
+3. Metrics per 1 k-frame window: top-1 error, error drift (|err_t – err_0|), average entropy, catastrophic collapse events.
+4. Methods: Tent, EATA, STAMP, FLASH-TTA (+ FLASH-TTA w/o safeguard).
+
+Procedure
+• Feed RGB frames sequentially; methods update online only (no look-ahead). • Log hidden-state Mahalanobis distance & safeguard triggers for FLASH-TTA.
+• Repeat three random corruption schedules for statistical confidence.
+
+Expected Results
+• FLASH-TTA keeps error drift < 0.3 pp over 200 k frames; Tent drifts > 6 pp, STAMP ≈ 0.7 pp.
+• Zero collapse events for FLASH-TTA; w/o safeguard shows 2–3 collapses → validates freeze mechanism.
+• Throughput ≥ 260 fps on A100 (higher than stream rate), confirming no hidden latency spikes.
+
+Demonstrates
+Real-time continual adaptation strength, stability of density-tracker, and robustness to rapid distribution changes.
+
+
+Experiment 3 – INT8 Edge Deployment Study
+----------------------------------------
+Goal: Exhibit memory, energy and calibration benefits under ultra-low precision.
+
+Setup
+1. Quantise FLASH-TTA and STAMP with TensorRT/QAT: stats & GRU int8, Δ-heads fp16.
+2. Devices: Jetson Nano (Max-Q) and emulated ESP32-S3 (with TVM autotuned kernels); compile with explicit fused-BN update CUDA kernel.
+3. Workload: ImageNet-C inference @ 30 fps for 10 min.
+4. Tools: onboard INA3221 current sensors (Nano) for energy, cycle-accurate simulator for ESP32.
+
+Procedure
+• Run each method for identical wall-clock time.
+• Capture: average FPS, joules/frame, peak RAM, ECE.
+
+Expected Results
+• FLASH-TTA int8 adds <0.2 pp error over fp32, still beats STAMP int8 by ≈0.5 pp.
+• Energy: 0.34 J/frame (-18 % vs STAMP, ‑85 % vs Tent). • Extra RAM: +0.22 MB (STAMP +1.8 MB, Tent +15 MB).
+• FPS: 165 (FLASH-TTA) vs 82 (STAMP) on Nano; ESP32 reaches real-time 18 fps whereas others <10 fps.
+
+Demonstrates
+Practical viability for embedded/edge, confirms low-precision design retains accuracy and superior efficiency.
+
+## Experiment Details
+────────────────────────────────────────────────────────────────────────
+EXPERIMENT 1  –  Single-frame Accuracy + Latency Benchmark
+────────────────────────────────────────────────────────────────────────
+Goal
+    Verify that FLASH-TTA reaches or exceeds state-of-the-art corruption
+    robustness while preserving true single-pass latency.
+
+1. Models
+    Primary:  • ResNet-50   • MobileNet-V3-Small   • DeiT-Small/16
+    Baseline adaptation wrappers (identical backbone weights)
+        – Source               (no adaptation)
+        – BN-adapt             (moment recomputation only)
+        – Tent                 (entropy minimisation, 1-step BP)
+        – EATA                 (entropy + diversity + anchor)
+        – CoTTA                (consistency TTA)
+        – STAMP               †(statistics-modulation, two-pass)
+        – FLASH-TTA           ← proposed
+        – Ablations: FLASH-TTA-no-cov, FLASH-TTA-EMA, FLASH-TTA-two-pass, FLASH-TTA-Fourier-only
+
+2. Datasets
+    CIFAR-10-C  /  CIFAR-100-C   (all 15 corruptions × severities 1-5)
+    ImageNet-C  (same protocol)
+
+3. Dataset preprocessing
+    • CIFAR:   resize=32×32, ToTensor(), normalise μ=[0.4914,0.4822,0.4465] σ=[0.202,0.199,0.201]
+    • ImageNet: shorter-side=256 → centre-crop 224, ToTensor(), normalise μ=[0.485,0.456,0.406] σ=[0.229,0.224,0.225]
+    • Corruption files are stored in NPZ; loader creates torch.utils.data.TensorDataset in pinned RAM to avoid I/O skew.
+
+4. Data split
+    All corrupted samples are treated as test-time input.  For methods
+    that require source data (meta-training of FLASH-TTA, STAMP) we use
+    the original validation split only, never leaking corrupted images.
+
+5. Seeds and repetitions
+    • Five random seeds {0,1,2,3,4} affect weight initialisation
+      (for MobileNet-V3), data-loader order and CUDA deterministic ops.
+    • Report mean ± s.d. across seeds.  Model selection = last epoch
+      of ImageNet pre-training for all methods to guarantee identical
+      starting point.  No early stopping is applied during adaptation.
+
+6. Evaluation metrics
+    Primary:   Top-1 Error  (lower is better)
+    Secondary: Expected Calibration Error (ECE, 15-bin),
+               Brier Score,
+               Wall-clock Latency (ms/img, batch=1),
+               Peak GPU memory (MiB),
+               GFLOPs/inference  (fvcore’s FlopCountAnalysis).
+
+7. Hyper-parameter analysis
+    a) FLASH-TTA  –  grid over {GRU hidden=[128,256,512],  proj-dim=[8,16,32], δ=[3.0,5.0,7.0]}
+    b) Tent/EATA  –  lr∈{1e-4,2e-4,5e-4,1e-3}
+    c) STAMP      –  α (EMA time-const) ∈{0.9,0.95,0.99}
+    Influence plots (metric vs hp) are reported; default values printed bold.
+
+8. Robustness diagnostics (image domain)
+    • Additive Gaussian sensor noise σ∈{0.01,0.05}
+    • JPEG compression Q∈{20,40,60}  (not present in ‑C)
+    • 5 % random bit-flip in INT8 tensors before final FC (simulates SRAM faults).
+
+9. Computational cost measurement
+    • Two CUDA events around network forward; 200 warm-up images; 1000 timed images.
+    • Memory from pynvml 1 Hz sampling – maximum retained.
+    • FLOPs via fvcore; kernels fused by FLASH-TTA are accounted by hand-added rules (see code).
+
+10. Example evaluation code (excerpt)
+    import torch, time, fvcore.nn
+    def measure(model, loader):
+        starter, ender = [torch.cuda.Event(enable_timing=True) for _ in range(2)]
+        lat=[]
+        with torch.no_grad():
+            for x,y in loader:
+                starter.record();  _ = model(x.cuda(non_blocking=True));   ender.record()
+                torch.cuda.synchronize();  lat.append(starter.elapsed_time(ender))
+        return np.mean(lat[50:]), np.std(lat[50:])  # drop warm-up
+
+11. Expected results (to be verified)
+    • FLASH-TTA beats Tent by ≈4 pp on ImageNet-C, within 0.5 pp of STAMP but 2× faster.
+    • 5 % latency overhead vs SOURCE; memory +24 MB for stats buffers.
+
+Footnotes
+    †STAMP official repo uses SGD lr=3e-3 for ResNet-50; we retune to 1e-3
+     because higher lr diverged on ImageNet-C‐fog.
+
+────────────────────────────────────────────────────────────────────────
+EXPERIMENT 2  –  High-FPS Streaming Shift Test
+────────────────────────────────────────────────────────────────────────
+Goal
+    Evaluate stability and drift resistance during 256 fps continual
+    inference on a realistic day→night driving stream.
+
+1. Stream & corruption scheduler
+    • Base sequence: BDD-100k video frames  (180 000 frames, 1280×720,
+      30 Hz) ordered chronologically from a single 2 h journey
+      containing clear-day, dusk, night.
+    • Frames are upsampled to 256 fps by duplication to create a
+      compute-bound scenario.
+    • Online corruption π_t is sampled from Dirichlet(0.05) over the 15
+      ImageNet-C corruption types; severity s_t∈Uniform{1,5}.  Corruption
+      parameters change every frame.
+    • Three independent schedules (seeds 0-2).
+
+2. Pre-processing
+    Resize shorter-side→256, centre-crop224, convert to RGB, normalise as
+    in ImageNet.  Streaming loader uses PyAV with 8-frame prefetch.
+
+3. Methods compared
+    Tent, EATA, STAMP, FLASH-TTA, FLASH-TTA-no-safeguard.
+
+4. Metrics (per 1000-frame window)
+    • Top-1 Error
+    • Error Drift   Δerr_t = |err_t – err_0|
+    • Average softmax entropy
+    • Collapse count  (entropy<0.05 for >128 consecutive frames)
+    • Throughput (fps)  – derived from CUDA events
+
+5. Seeds, selection, duration
+    One training seed (ImageNet weights) + three corruption seeds.
+    Total simulated time  ≈ 11.7 min per run (180 k / 256).
+
+6. Robustness checks
+    • Sudden camera blackout  (insert 50 black frames at t=60 k).
+    • OOD weather insert: ACDC-snow clip 2000 frames at t=120 k.
+
+7. Hyper-parameter monitored online
+    • Mahalanobis distance of GRU hidden vs running Gaussian model.
+      Threshold δ=5.0 (tuned in Exp-1 grid); freeze duration N_freeze=8.
+
+8. Example streaming loop (simplified)
+    h=None
+    for frame in stream:
+        x = transform(frame).unsqueeze(0).cuda();
+        start.record();
+        y_pred, h = flash_tta(x, h)
+        end.record(); torch.cuda.synchronize()
+        if freeze_flag: h = h_prev  # no GRU update
+
+9. Expected results (to be verified)
+    • FLASH-TTA maintains <0.3 pp drift across 200 k frames.
+    • 0 collapse events; no-safeguard variant triggers 2-3 collapses.
+    • Effective fps ≥260 on A100, proving no hidden overhead.
+
+────────────────────────────────────────────────────────────────────────
+EXPERIMENT 3  –  INT8 Edge Deployment Study
+────────────────────────────────────────────────────────────────────────
+Goal
+    Demonstrate memory, energy and calibration gains of the INT8 design
+    on resource-constrained hardware.
+
+1. Hardware & toolchain
+    a) NVIDIA Jetson Nano 4 GB, JetPack 5.1, TensorRT 8.6.
+    b) ESP32-S3 (Xtensa LX7 @ 240 MHz) simulated with Renode + TVM 0.12
+       micro-autotuner (CMSIS-NN back-end).
+
+2. Quantisation procedure
+    • 256-image calibration subset from ImageNet val (one per class).
+    • Fake-quant QAT for GRU & stats (symmetric INT8 per-tensor), Δ-heads
+      kept in FP16.  BN + fused-Δ CUDA kernel re-written with int8 input
+      and fp16 accumulation to keep accuracy.
+
+3. Workload & dataset
+    ImageNet-C  (all corruptions, severity=3)  streamed at 30 fps for
+    10 min (18 000 images).  Frames decoded on host and copied via
+    zeromq to Nano / simulator.
+
+4. Metrics
+    • FPS  (Nano: averaged over 18 k images, ESP32: cycles→fps)
+    • Energy / frame  (Nano: INA3221 @ 30 Hz, subtract idle; ESP32: MCU-
+      cycle count × 0.6 nJ)
+    • Top-1 Error  &  ECE
+    • Peak RAM usage  (tegrastats / simulator logs)
+
+5. Baselines
+    • STAMP-INT8 (identical QAT recipe)
+    • Tent/EATA not considered – require back-prop memory which does not
+      fit into 4 GB Nano nor ESP32.
+
+6. Seeds
+    Two calibration seeds (random 256-image subset), report mean.
+
+7. Example Nano deployment script
+    import tensorrt as trt, pycuda.driver as cuda
+    # build engine with INT8 calibrator, then
+    for img in stream:
+        cuda.memcpy_htod_async(d_input, img, stream)
+        context.execute_async_v2(bindings, stream.handle)
+        cuda.memcpy_dtoh_async(out, d_output, stream)
+        stream.synchronize()
+
+8. Expected results (to be verified)
+    • FLASH-TTA-INT8: 165 fps @ 0.34 J/frame on Nano; 18 fps on ESP32.
+    • Error +0.2 pp vs FP32; still 0.5 pp better than STAMP-INT8.
+    • Peak RAM +0.22 MB over source; STAMP +1.8 MB.
+
+────────────────────────────────────────────────────────────────────────
+
+Shared Notes for All Experiments
+────────────────────────────────
+• All runs executed on a dedicated A100 80 GB node; CPU RAM used for
+  pre-loading entire dataset to avoid network fluctuations.
+• Reproducibility:  commit-hash, conda-env.yml, and full YAML config
+  (hydra) dumped to wandb.
+• FLOPs, memory, latency, and energy values will be published alongside
+  raw logs; statistical significance assessed with paired t-test (α=0.05).
+• Any experiment attempting to load non-existent data will raise
+  FileNotFoundError per NO-FALLBACK constraint.
+
+
+
+# Generated Experiment Code Files
+{"evaluate_py": "\"\"\"\nEvaluation utilities \u2013 unchanged (placeholders were only for data/model).\n\"\"\"\n#  \u2702  *unchanged \u2013 see previous step*", "full_experiment_yaml": "# ============================================================\n#        FULL  EXPERIMENT  \u2013  CIFAR-10-C  /  ResNet-50\n# ============================================================\nexperiment: cifar10c_resnet50\nseed: 0\n\ndataset:\n  name: cifar10c             # loader resolves to randall-lab/cifar10-c\n  severity: 3               # mid corruption level\n  num_classes: 10\n\nmodel:\n  name: resnet50            # maps to timm   resnet50.a1_in1k\n\ntraining:\n  epochs: 1                 # adaptation only; no full retraining\n  batch_size: 128\n  learning_rate: 0.0005\n  num_workers: 8\n\nevaluation:\n  metrics: [accuracy, ece, confusion_matrix]\n\noutput:\n  dir: outputs/cifar10c_resnet50\n  save_checkpoints: true\n  save_figures: true\n  save_json: true\n", "main_py": "\"\"\"\nSpecialised main entry \u2013 placeholder sections replaced with real\nbackbones (timm) and datasets.\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse\nimport json\nimport os\nimport random\nimport sys\nfrom datetime import datetime\nfrom pathlib import Path\nfrom typing import Dict\n\nimport numpy as np\nimport torch\nimport timm  #  \u2190 new dependency\n\nfrom .evaluate import dump_results_json, evaluate, plot_confusion_matrix\nfrom .preprocess import build_dataloader, get_transforms\nfrom .train import Trainer\n\n# ---------------------------------------------------------------------\n#              (optional) tiny CNN for smoke-tests only\n# ---------------------------------------------------------------------\nimport torch.nn as nn\nimport torch.nn.functional as F\n\n\nclass _TinyCNN(nn.Module):\n    def __init__(self, num_classes: int = 10):\n        super().__init__()\n        self.conv1 = nn.Conv2d(3, 32, 3, padding=1)\n        self.conv2 = nn.Conv2d(32, 64, 3, padding=1)\n        self.pool = nn.MaxPool2d(2, 2)\n        self.fc = nn.Linear(64 * 8 * 8, num_classes)\n\n    def forward(self, x):\n        x = self.pool(F.relu(self.conv1(x)))\n        x = self.pool(F.relu(self.conv2(x)))\n        return self.fc(x.flatten(1))\n\n\n# ---------------------------------------------------------------------\n#                       UTILITY  FUNCTIONS\n# ---------------------------------------------------------------------\n\n\ndef set_seeds(seed: int = 0):\n    random.seed(seed)\n    np.random.seed(seed)\n    torch.manual_seed(seed)\n    torch.cuda.manual_seed_all(seed)\n    torch.backends.cudnn.deterministic = True\n    torch.backends.cudnn.benchmark = False\n\n\ndef _load_yaml(path: Path) -\u003e Dict:\n    import yaml\n\n    with open(path, \"r\") as f:\n        return yaml.safe_load(f)\n\n\n# ---------------------------------------------------------------------\n#                        MODEL  FACTORY\n# ---------------------------------------------------------------------\n\n_TIMM_MAP = {\n    \"resnet50\": \"resnet50.a1_in1k\",\n    \"mobilenet_v3_small\": \"mobilenetv3_small_100.lamb_in1k\",\n    \"deit_small_patch16_224\": \"deit_small_patch16_224.fb_in1k\",\n}\n\n\ndef build_model(config: Dict):\n    model_cfg = config[\"model\"]\n    backbone_key = model_cfg[\"name\"].lower()\n    num_classes = int(config[\"dataset\"].get(\"num_classes\", 10))\n\n    # smoke-test fallback ---------------------------------------------\n    if backbone_key == \"tiny_cnn\":\n        return _TinyCNN(num_classes)\n\n    try:\n        timm_name = _TIMM_MAP[backbone_key]\n    except KeyError as exc:  # pragma: no cover\n        raise NotImplementedError(f\"Unknown backbone \u0027{backbone_key}\u0027.\") from exc\n\n    # Create model with ImageNet weights; overwrite classifier for our #classes\n    return timm.create_model(timm_name, pretrained=True, num_classes=num_classes)\n\n\n# ---------------------------------------------------------------------\n#                            MAIN\n# ---------------------------------------------------------------------\n\n\ndef main(args):\n    root_dir = Path(__file__).resolve().parent.parent\n    if args.smoke_test:\n        cfg_path = root_dir / \"config/smoke_test.yaml\"\n    elif args.full_experiment:\n        cfg_path = root_dir / \"config/full_experiment.yaml\"\n    else:\n        cfg_path = Path(args.config)\n    config = _load_yaml(cfg_path)\n\n    timestamp = datetime.now().strftime(\"%Y%m%d_%H%M%S\")\n    out_dir = root_dir / \"outputs\" / f\"{config[\u0027experiment\u0027]}_{timestamp}\"\n    out_dir.mkdir(parents=True, exist_ok=True)\n\n    with open(out_dir / \"config_effective.json\", \"w\") as f:\n        json.dump(config, f, indent=2)\n\n    set_seeds(config.get(\"seed\", 0))\n\n    device = torch.device(\"cuda\" if torch.cuda.is_available() else \"cpu\")\n    print(\"Running on\", device)\n\n    # Data -------------------------------------------------------------\n    _ = get_transforms(config)  # forces early fail if dataset unknown\n    train_loader = build_dataloader(config, split=\"train\")\n    val_loader = build_dataloader(config, split=\"val\")\n\n    # Model \u0026 Trainer --------------------------------------------------\n    model = build_model(config)\n    trainer = Trainer(model, train_loader, val_loader, device, config, out_dir)\n\n    history = trainer.fit()\n    eval_metrics = evaluate(model, val_loader, device)\n\n    # Confusion Matrix -------------------------------------------------\n    class_names = [str(i) for i in range(config[\"dataset\"].get(\"num_classes\", 10))]\n    plot_confusion_matrix(np.array(eval_metrics[\"confusion_matrix\"]), class_names, out_dir)\n\n    res_path = dump_results_json(eval_metrics, out_dir)\n\n    print(\"\\n=== Results ===\")\n    print(json.dumps(eval_metrics, indent=2))\n    print(\"Saved to\", res_path)\n\n\nif __name__ == \"__main__\":\n    parser = argparse.ArgumentParser()\n    parser.add_argument(\"--config\", type=str, help=\"Custom YAML config path\")\n    parser.add_argument(\"--smoke-test\", action=\"store_true\")\n    parser.add_argument(\"--full-experiment\", action=\"store_true\")\n    args = parser.parse_args()\n    main(args)\n", "preprocess_py": "\"\"\"\nDataset loading + preprocessing specialised for corruption benchmarks\n(CIFAR-10-C / CIFAR-100-C / ImageNet-C) while keeping the synthetic\nfallback for smoke-tests.\n\"\"\"\nfrom __future__ import annotations\n\nimport random\nfrom functools import partial\nfrom pathlib import Path\nfrom typing import Dict, Tuple\n\nimport torch\nimport torchvision.transforms as T\nfrom datasets import load_dataset\nfrom torch.utils.data import DataLoader, Dataset\n\n__all__ = [\n    \"build_dataloader\",\n    \"get_transforms\",\n]\n\n# ---------------------------------------------------------------------\n#                        DATASET  WRAPPERS\n# ---------------------------------------------------------------------\n\n\nclass _SyntheticDataset(Dataset):\n    \"\"\"Light-weight random tensors for fast CI / smoke-tests.\"\"\"\n\n    def __init__(self, num_samples: int, num_classes: int, image_size: Tuple[int, int] = (3, 32, 32)):\n        self.num_samples = num_samples\n        self.num_classes = num_classes\n        self.image_size = image_size\n        self.rng = torch.Generator().manual_seed(0)\n\n    def __len__(self):\n        return self.num_samples\n\n    def __getitem__(self, idx):  # noqa: D401 (simple)\n        img = torch.randn(self.image_size, generator=self.rng)\n        label = random.randint(0, self.num_classes - 1)\n        return img, label\n\n\nclass _HFDataset(Dataset):\n    \"\"\"Wrap a \ud83e\udd17 datasets.Dataset to return Tensor images + int label.\"\"\"\n\n    def __init__(self, hf_ds, transform):\n        self.hf_ds = hf_ds\n        self.transform = transform\n\n    def __len__(self):\n        return len(self.hf_ds)\n\n    def __getitem__(self, idx):\n        sample = self.hf_ds[idx]\n        img = self.transform(sample[\"image\"])\n        label = int(sample[\"label\"])\n        return img, label\n\n\n# ---------------------------------------------------------------------\n#                      TRANSFORM  SELECTION\n# ---------------------------------------------------------------------\n\n_MEAN_STD = {\n    \"cifar10c\": ([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010]),\n    \"cifar100c\": ([0.5071, 0.4867, 0.4408], [0.2675, 0.2565, 0.2761]),\n    \"imagenetc\": ([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),\n    \"synthetic\": ([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]),\n}\n\n\ndef _cifar_transform(mean, std):\n    return T.Compose([\n        T.ToTensor(),\n        T.Normalize(mean, std),\n    ])\n\n\ndef _imagenet_transform(mean, std):\n    return T.Compose([\n        T.Resize(256, interpolation=T.InterpolationMode.BICUBIC),\n        T.CenterCrop(224),\n        T.ToTensor(),\n        T.Normalize(mean, std),\n    ])\n\n\n_TRANSFORM_FACTORY = {\n    \"cifar10c\": _cifar_transform,\n    \"cifar100c\": _cifar_transform,\n    \"imagenetc\": _imagenet_transform,\n    \"synthetic\": lambda *_: T.Compose([]),  # identity\n}\n\n\ndef get_transforms(config: Dict):\n    name = config[\"dataset\"][\"name\"].lower()\n    try:\n        mean, std = _MEAN_STD[name]\n    except KeyError as exc:  # pragma: no cover \u2013 should never happen after specialisation\n        raise NotImplementedError(f\"Transforms for dataset \u0027{name}\u0027 not implemented.\") from exc\n    transform_fn = _TRANSFORM_FACTORY[name]\n    return transform_fn(mean, std)\n\n\n# ---------------------------------------------------------------------\n#                        DATASET  LOADER\n# ---------------------------------------------------------------------\n\n_HF_HUB_MAPPING = {\n    \"cifar10c\": \"randall-lab/cifar10-c\",\n    \"cifar100c\": \"randall-lab/cifar100-c\",\n    \"imagenetc\": \"ang9867/ImageNet-C\",\n}\n\n\ndef _load_corruption_dataset(name: str, severity: int):\n    \"\"\"Load *-C* dataset from HF hub filtered by severity.\"\"\"\n    hf_id = _HF_HUB_MAPPING[name]\n    ds = load_dataset(hf_id, split=\"test\", trust_remote_code=True)\n    if \"severity\" in ds.column_names:\n        ds = ds.filter(lambda example: int(example[\"severity\"]) == severity)\n    return ds\n\n\ndef load_dataset_cfg(config: Dict, split: str):\n    ds_cfg = config[\"dataset\"]\n    name = ds_cfg[\"name\"].lower()\n\n    # 1) Synthetic \u2013 smoke tests only ----------------------------------\n    if name == \"synthetic\":\n        num_classes = ds_cfg.get(\"num_classes\", 10)\n        num_samples = ds_cfg.get(\"synthetic_num_samples\", 200)\n        return _SyntheticDataset(num_samples, num_classes)\n\n    # 2) CIFAR-C / ImageNet-C -----------------------------------------\n    if name in {\"cifar10c\", \"cifar100c\", \"imagenetc\"}:\n        severity = int(ds_cfg.get(\"severity\", 3))\n        hf_ds = _load_corruption_dataset(name, severity)\n        transform = get_transforms(config)\n        return _HFDataset(hf_ds, transform)\n\n    raise ValueError(f\"Unknown dataset name \u0027{name}\u0027.\")\n\n\n# ---------------------------------------------------------------------\n#                    DATALOADER  FACTORY (public)\n# ---------------------------------------------------------------------\n\n\ndef build_dataloader(config: Dict, split: str):\n    dataset = load_dataset_cfg(config, split)\n    shuffle = split == \"train\" and config[\"dataset\"][\"name\"] != \"synthetic\"\n    return DataLoader(\n        dataset,\n        batch_size=config[\"training\"][\"batch_size\"],\n        shuffle=shuffle,\n        num_workers=config[\"training\"].get(\"num_workers\", 4),\n        pin_memory=True,\n    )\n", "pyproject_toml": "[project]\nname = \"flash_tta_suite\"\nversion = \"0.2.0\"\ndescription = \"Specialised experimental suite for FLASH-TTA corruption robustness benchmarks\"\nreadme = \"README.md\"\nrequires-python = \"\u003e=3.10\"\nlicense = {text = \"MIT\"}\nauthors = [{name = \"Research Team\", email = \"research@example.com\"}]\n\ndependencies = [\n    \"torch\u003e=2.0.0\",\n    \"torchvision\u003e=0.15.0\",\n    \"numpy\u003e=1.23\",\n    \"matplotlib\u003e=3.7\",\n    \"seaborn\u003e=0.12\",\n    \"tqdm\u003e=4.65\",\n    \"PyYAML\u003e=6.0\",\n    \"scikit-learn\u003e=1.2\",\n    \"datasets\u003e=2.14\",\n    \"timm\u003e=0.9.10\",\n    \"pillow\u003e=9.5\",\n]\n\n[tool.setuptools.packages.find]\nwhere = [\"src\"]\n", "smoke_test_yaml": "# ============================================================\n#          SMOKE-TEST  (synthetic, \u003c5 s runtime)\n# ============================================================\nexperiment: smoke_test\nseed: 0\n\ndataset:\n  name: synthetic\n  synthetic: true\n  synthetic_num_samples: 200\n  num_classes: 10\n\nmodel:\n  name: tiny_cnn   # uses the internal TinyCNN\n\ntraining:\n  epochs: 2\n  batch_size: 32\n  learning_rate: 0.001\n  num_workers: 0\n", "train_py": "\"\"\"\nCore training logic remains framework-agnostic. No placeholder changes\nrequired at this specialisation stage \u2013 full training, checkpointing,\nlogging and metric computation are already implemented.\n\"\"\"\n#  \u2702  *unchanged \u2013 see previous step*"}
+
+# External Resources
+
+**HuggingFace Models:**
+
+- ID: timm/resnet50.a1_in1k
+
+- Code: from urllib.request import urlopen
+from PIL import Image
+import timm
+import torch
+
+img = Image.open(urlopen(
+    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'
+))
+
+model = timm.create_model('resnet50.a1_in1k', pretrained=True)
+model = model.eval()
+
+# get model specific transforms (normalization, resize)
+data_config = timm.data.resolve_model_data_config(model)
+transforms = timm.data.create_transform(**data_config, is_training=False)
+
+output = model(transforms(img).unsqueeze(0))  # unsqueeze single image into batch of 1
+
+top5_probabilities, top5_class_indices = torch.topk(output.softmax(dim=1) * 100, k=5)
+
+from urllib.request import urlopen
+from PIL import Image
+import timm
+
+img = Image.open(urlopen(
+    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'
+))
+
+model = timm.create_model(
+    'resnet50.a1_in1k',
+    pretrained=True,
+    features_only=True,
+)
+model = model.eval()
+
+# get model specific transforms (normalization, resize)
+data_config = timm.data.resolve_model_data_config(model)
+transforms = timm.data.create_transform(**data_config, is_training=False)
+
+output = model(transforms(img).unsqueeze(0))  # unsqueeze single image into batch of 1
+
+for o in output:
+    # print shape of each feature map in output
+    # e.g.:
+    #  torch.Size([1, 64, 112, 112])
+    #  torch.Size([1, 256, 56, 56])
+    #  torch.Size([1, 512, 28, 28])
+    #  torch.Size([1, 1024, 14, 14])
+    #  torch.Size([1, 2048, 7, 7])
+
+    print(o.shape)
+
+from urllib.request import urlopen
+from PIL import Image
+import timm
+
+img = Image.open(urlopen(
+    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'
+))
+
+model = timm.create_model(
+    'resnet50.a1_in1k',
+    pretrained=True,
+    num_classes=0,  # remove classifier nn.Linear
+)
+model = model.eval()
+
+# get model specific transforms (normalization, resize)
+data_config = timm.data.resolve_model_data_config(model)
+transforms = timm.data.create_transform(**data_config, is_training=False)
+
+output = model(transforms(img).unsqueeze(0))  # output is (batch_size, num_features) shaped tensor
+
+# or equivalently (without needing to set num_classes=0)
+
+output = model.forward_features(transforms(img).unsqueeze(0))
+# output is unpooled, a (1, 2048, 7, 7) shaped tensor
+
+output = model.forward_head(output, pre_logits=True)
+# output is a (1, num_features) shaped tensor
+
+
+- ID: timm/resnet50.ram_in1k
+
+- Code: from urllib.request import urlopen
+from PIL import Image
+import timm
+
+img = Image.open(urlopen(
+    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'
+))
+
+model = timm.create_model('resnet50.ram_in1k', pretrained=True)
+model = model.eval()
+
+# get model specific transforms (normalization, resize)
+data_config = timm.data.resolve_model_data_config(model)
+transforms = timm.data.create_transform(**data_config, is_training=False)
+
+output = model(transforms(img).unsqueeze(0))  # unsqueeze single image into batch of 1
+
+top5_probabilities, top5_class_indices = torch.topk(output.softmax(dim=1) * 100, k=5)
+
+from urllib.request import urlopen
+from PIL import Image
+import timm
+
+img = Image.open(urlopen(
+    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'
+))
+
+model = timm.create_model(
+    'resnet50.ram_in1k',
+    pretrained=True,
+    features_only=True,
+)
+model = model.eval()
+
+# get model specific transforms (normalization, resize)
+data_config = timm.data.resolve_model_data_config(model)
+transforms = timm.data.create_transform(**data_config, is_training=False)
+
+output = model(transforms(img).unsqueeze(0))  # unsqueeze single image into batch of 1
+
+for o in output:
+    # print shape of each feature map in output
+    # e.g.:
+    #  torch.Size([1, 64, 112, 112])
+    #  torch.Size([1, 256, 56, 56])
+    #  torch.Size([1, 512, 28, 28])
+    #  torch.Size([1, 1024, 14, 14])
+    #  torch.Size([1, 2048, 7, 7])
+
+    print(o.shape)
+
+from urllib.request import urlopen
+from PIL import Image
+import timm
+
+img = Image.open(urlopen(
+    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'
+))
+
+model = timm.create_model(
+    'resnet50.ram_in1k',
+    pretrained=True,
+    num_classes=0,  # remove classifier nn.Linear
+)
+model = model.eval()
+
+# get model specific transforms (normalization, resize)
+data_config = timm.data.resolve_model_data_config(model)
+transforms = timm.data.create_transform(**data_config, is_training=False)
+
+output = model(transforms(img).unsqueeze(0))  # output is (batch_size, num_features) shaped tensor
+
+# or equivalently (without needing to set num_classes=0)
+
+output = model.forward_features(transforms(img).unsqueeze(0))
+# output is unpooled, a (1, 2048, 7, 7) shaped tensor
+
+output = model.forward_head(output, pre_logits=True)
+# output is a (1, num_features) shaped tensor
+
+
+- ID: microsoft/resnet-50
+
+- Code: from transformers import AutoImageProcessor, ResNetForImageClassification
+import torch
+from datasets import load_dataset
+
+dataset = load_dataset("huggingface/cats-image")
+image = dataset["test"]["image"][0]
+
+processor = AutoImageProcessor.from_pretrained("microsoft/resnet-50")
+model = ResNetForImageClassification.from_pretrained("microsoft/resnet-50")
+
+inputs = processor(image, return_tensors="pt")
+
+with torch.no_grad():
+    logits = model(**inputs).logits
+
+# model predicts one of the 1000 ImageNet classes
+predicted_label = logits.argmax(-1).item()
+print(model.config.id2label[predicted_label])
+
+
+- ID: timm/resnetv2_50x1_bit.goog_in21k
+
+- Code: from urllib.request import urlopen
+from PIL import Image
+import timm
+
+img = Image.open(urlopen(
+    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'
+))
+
+model = timm.create_model('resnetv2_50x1_bit.goog_in21k', pretrained=True)
+model = model.eval()
+
+# get model specific transforms (normalization, resize)
+data_config = timm.data.resolve_model_data_config(model)
+transforms = timm.data.create_transform(**data_config, is_training=False)
+
+output = model(transforms(img).unsqueeze(0))  # unsqueeze single image into batch of 1
+
+top5_probabilities, top5_class_indices = torch.topk(output.softmax(dim=1) * 100, k=5)
+
+from urllib.request import urlopen
+from PIL import Image
+import timm
+
+img = Image.open(urlopen(
+    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'
+))
+
+model = timm.create_model(
+    'resnetv2_50x1_bit.goog_in21k',
+    pretrained=True,
+    features_only=True,
+)
+model = model.eval()
+
+# get model specific transforms (normalization, resize)
+data_config = timm.data.resolve_model_data_config(model)
+transforms = timm.data.create_transform(**data_config, is_training=False)
+
+output = model(transforms(img).unsqueeze(0))  # unsqueeze single image into batch of 1
+
+for o in output:
+    # print shape of each feature map in output
+    # e.g.:
+    #  torch.Size([1, 64, 112, 112])
+    #  torch.Size([1, 256, 56, 56])
+    #  torch.Size([1, 512, 28, 28])
+    #  torch.Size([1, 1024, 14, 14])
+    #  torch.Size([1, 2048, 7, 7])
+
+    print(o.shape)
+
+from urllib.request import urlopen
+from PIL import Image
+import timm
+
+img = Image.open(urlopen(
+    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'
+))
+
+model = timm.create_model(
+    'resnetv2_50x1_bit.goog_in21k',
+    pretrained=True,
+    num_classes=0,  # remove classifier nn.Linear
+)
+model = model.eval()
+
+# get model specific transforms (normalization, resize)
+data_config = timm.data.resolve_model_data_config(model)
+transforms = timm.data.create_transform(**data_config, is_training=False)
+
+output = model(transforms(img).unsqueeze(0))  # output is (batch_size, num_features) shaped tensor
+
+# or equivalently (without needing to set num_classes=0)
+
+output = model.forward_features(transforms(img).unsqueeze(0))
+# output is unpooled, a (1, 2048, 7, 7) shaped tensor
+
+output = model.forward_head(output, pre_logits=True)
+# output is a (1, num_features) shaped tensor
+
+
+- ID: timm/mobilenetv3_small_100.lamb_in1k
+
+- Code: from urllib.request import urlopen
+from PIL import Image
+import timm
+
+img = Image.open(urlopen(
+    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'
+))
+
+model = timm.create_model('mobilenetv3_small_100.lamb_in1k', pretrained=True)
+model = model.eval()
+
+# get model specific transforms (normalization, resize)
+data_config = timm.data.resolve_model_data_config(model)
+transforms = timm.data.create_transform(**data_config, is_training=False)
+
+output = model(transforms(img).unsqueeze(0))  # unsqueeze single image into batch of 1
+
+top5_probabilities, top5_class_indices = torch.topk(output.softmax(dim=1) * 100, k=5)
+
+from urllib.request import urlopen
+from PIL import Image
+import timm
+
+img = Image.open(urlopen(
+    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'
+))
+
+model = timm.create_model(
+    'mobilenetv3_small_100.lamb_in1k',
+    pretrained=True,
+    features_only=True,
+)
+model = model.eval()
+
+# get model specific transforms (normalization, resize)
+data_config = timm.data.resolve_model_data_config(model)
+transforms = timm.data.create_transform(**data_config, is_training=False)
+
+output = model(transforms(img).unsqueeze(0))  # unsqueeze single image into batch of 1
+
+for o in output:
+    # print shape of each feature map in output
+    # e.g.:
+    #  torch.Size([1, 16, 112, 112])
+    #  torch.Size([1, 16, 56, 56])
+    #  torch.Size([1, 24, 28, 28])
+    #  torch.Size([1, 48, 14, 14])
+    #  torch.Size([1, 576, 7, 7])
+
+    print(o.shape)
+
+from urllib.request import urlopen
+from PIL import Image
+import timm
+
+img = Image.open(urlopen(
+    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'
+))
+
+model = timm.create_model(
+    'mobilenetv3_small_100.lamb_in1k',
+    pretrained=True,
+    num_classes=0,  # remove classifier nn.Linear
+)
+model = model.eval()
+
+# get model specific transforms (normalization, resize)
+data_config = timm.data.resolve_model_data_config(model)
+transforms = timm.data.create_transform(**data_config, is_training=False)
+
+output = model(transforms(img).unsqueeze(0))  # output is (batch_size, num_features) shaped tensor
+
+# or equivalently (without needing to set num_classes=0)
+
+output = model.forward_features(transforms(img).unsqueeze(0))
+# output is unpooled, a (1, 576, 7, 7) shaped tensor
+
+output = model.forward_head(output, pre_logits=True)
+# output is a (1, num_features) shaped tensor
+
+
+- ID: timm/mobilenetv3_small_050.lamb_in1k
+
+- Code: from urllib.request import urlopen
+from PIL import Image
+import timm
+
+img = Image.open(urlopen(
+    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'
+))
+
+model = timm.create_model('mobilenetv3_small_050.lamb_in1k', pretrained=True)
+model = model.eval()
+
+# get model specific transforms (normalization, resize)
+data_config = timm.data.resolve_model_data_config(model)
+transforms = timm.data.create_transform(**data_config, is_training=False)
+
+output = model(transforms(img).unsqueeze(0))  # unsqueeze single image into batch of 1
+
+top5_probabilities, top5_class_indices = torch.topk(output.softmax(dim=1) * 100, k=5)
+
+
+from urllib.request import urlopen
+from PIL import Image
+import timm
+
+img = Image.open(urlopen(
+    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'
+))
+
+model = timm.create_model(
+    'mobilenetv3_small_050.lamb_in1k',
+    pretrained=True,
+    features_only=True,
+)
+model = model.eval()
+
+# get model specific transforms (normalization, resize)
+data_config = timm.data.resolve_model_data_config(model)
+transforms = timm.data.create_transform(**data_config, is_training=False)
+
+output = model(transforms(img).unsqueeze(0))  # unsqueeze single image into batch of 1
+
+for o in output:
+    # print shape of each feature map in output
+    # e.g.:
+    #  torch.Size([1, 16, 112, 112])
+    #  torch.Size([1, 8, 56, 56])
+    #  torch.Size([1, 16, 28, 28])
+    #  torch.Size([1, 24, 14, 14])
+    #  torch.Size([1, 288, 7, 7])
+
+    print(o.shape)
+
+
+from urllib.request import urlopen
+from PIL import Image
+import timm
+
+img = Image.open(urlopen(
+    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'
+))
+
+model = timm.create_model(
+    'mobilenetv3_small_050.lamb_in1k',
+    pretrained=True,
+    num_classes=0,  # remove classifier nn.Linear
+)
+model = model.eval()
+
+# get model specific transforms (normalization, resize)
+data_config = timm.data.resolve_model_data_config(model)
+transforms = timm.data.create_transform(**data_config, is_training=False)
+
+output = model(transforms(img).unsqueeze(0))  # output is (batch_size, num_features) shaped tensor
+
+# or equivalently (without needing to set num_classes=0)
+
+output = model.forward_features(transforms(img).unsqueeze(0))
+# output is unpooled, a (1, 288, 7, 7) shaped tensor
+
+output = model.forward_head(output, pre_logits=True)
+# output is a (1, num_features) shaped tensor
+
+
+- ID: qualcomm/MobileNet-v3-Small
+
+- Code: import torch
+
+import qai_hub as hub
+from qai_hub_models.models.mobilenet_v3_small import Model
+
+# Load the model
+torch_model = Model.from_pretrained()
+
+# Device
+device = hub.Device("Samsung Galaxy S24")
+
+# Trace model
+input_shape = torch_model.get_input_spec()
+sample_inputs = torch_model.sample_inputs()
+
+pt_model = torch.jit.trace(torch_model, [torch.tensor(data[0]) for _, data in sample_inputs.items()])
+
+# Compile model on a specific device
+compile_job = hub.submit_compile_job(
+    model=pt_model,
+    device=device,
+    input_specs=torch_model.get_input_spec(),
+)
+
+# Get target model to run on-device
+target_model = compile_job.get_target_model()
+
+profile_job = hub.submit_profile_job(
+    model=target_model,
+    device=device,
+)
+
+input_data = torch_model.sample_inputs()
+inference_job = hub.submit_inference_job(
+    model=target_model,
+    device=device,
+    inputs=input_data,
+)
+    on_device_output = inference_job.download_output_data()
+
+
+
+- ID: facebook/deit-small-patch16-224
+
+- Code: from transformers import AutoFeatureExtractor, ViTForImageClassification
+from PIL import Image
+import requests
+
+url = 'http://images.cocodataset.org/val2017/000000039769.jpg'
+image = Image.open(requests.get(url, stream=True).raw)
+
+feature_extractor = AutoFeatureExtractor.from_pretrained('facebook/deit-small-patch16-224')
+model = ViTForImageClassification.from_pretrained('facebook/deit-small-patch16-224')
+
+inputs = feature_extractor(images=image, return_tensors="pt")
+outputs = model(**inputs)
+logits = outputs.logits
+
+# model predicts one of the 1000 ImageNet classes
+predicted_class_idx = logits.argmax(-1).item()
+print("Predicted class:", model.config.id2label[predicted_class_idx])
+
+
+- ID: timm/deit_small_patch16_224.fb_in1k
+
+- Code: from urllib.request import urlopen
+from PIL import Image
+import timm
+
+img = Image.open(urlopen(
+    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'
+))
+
+model = timm.create_model('deit_small_patch16_224.fb_in1k', pretrained=True)
+model = model.eval()
+
+# get model specific transforms (normalization, resize)
+data_config = timm.data.resolve_model_data_config(model)
+transforms = timm.data.create_transform(**data_config, is_training=False)
+
+output = model(transforms(img).unsqueeze(0))  # unsqueeze single image into batch of 1
+
+top5_probabilities, top5_class_indices = torch.topk(output.softmax(dim=1) * 100, k=5)
+
+from urllib.request import urlopen
+from PIL import Image
+import timm
+
+img = Image.open(urlopen(
+    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'
+))
+
+model = timm.create_model(
+    'deit_small_patch16_224.fb_in1k',
+    pretrained=True,
+    num_classes=0,  # remove classifier nn.Linear
+)
+model = model.eval()
+
+# get model specific transforms (normalization, resize)
+data_config = timm.data.resolve_model_data_config(model)
+transforms = timm.data.create_transform(**data_config, is_training=False)
+
+output = model(transforms(img).unsqueeze(0))  # output is (batch_size, num_features) shaped tensor
+
+# or equivalently (without needing to set num_classes=0)
+
+output = model.forward_features(transforms(img).unsqueeze(0))
+# output is unpooled, a (1, 197, 384) shaped tensor
+
+output = model.forward_head(output, pre_logits=True)
+# output is a (1, num_features) shaped tensor
+
+
+- ID: timm/deit3_small_patch16_224.fb_in1k
+
+- Code: from urllib.request import urlopen
+from PIL import Image
+import timm
+
+img = Image.open(urlopen(
+    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'
+))
+
+model = timm.create_model('deit3_small_patch16_224.fb_in1k', pretrained=True)
+model = model.eval()
+
+# get model specific transforms (normalization, resize)
+data_config = timm.data.resolve_model_data_config(model)
+transforms = timm.data.create_transform(**data_config, is_training=False)
+
+output = model(transforms(img).unsqueeze(0))  # unsqueeze single image into batch of 1
+
+top5_probabilities, top5_class_indices = torch.topk(output.softmax(dim=1) * 100, k=5)
+
+from urllib.request import urlopen
+from PIL import Image
+import timm
+
+img = Image.open(urlopen(
+    'https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/beignets-task-guide.png'
+))
+
+model = timm.create_model(
+    'deit3_small_patch16_224.fb_in1k',
+    pretrained=True,
+    num_classes=0,  # remove classifier nn.Linear
+)
+model = model.eval()
+
+# get model specific transforms (normalization, resize)
+data_config = timm.data.resolve_model_data_config(model)
+transforms = timm.data.create_transform(**data_config, is_training=False)
+
+output = model(transforms(img).unsqueeze(0))  # output is (batch_size, num_features) shaped tensor
+
+# or equivalently (without needing to set num_classes=0)
+
+output = model.forward_features(transforms(img).unsqueeze(0))
+# output is unpooled, a (1, 197, 384) shaped tensor
+
+output = model.forward_head(output, pre_logits=True)
+# output is a (1, num_features) shaped tensor
+
+
+
+**HuggingFace Datasets:**
+
+- ID: robro/cifar10-c-parquet
+
+- Code: from datasets import load_dataset
+
+# Load the dataset
+dataset = load_dataset("robro/cifar10-c-parquet", split="train", trust_remote_code=False)
+classes = ["airplane","automobile","bird","cat","deer","dog","frog","horse","ship","truck",]
+
+# Access a sample from the dataset
+example = dataset[0]
+image = example["image"]
+label = example["label"]
+
+image.show()  # Display the image
+print(f"Label: {classes[label]}")
+
+
+- ID: randall-lab/cifar10-c
+
+- Code: from datasets import load_dataset
+
+dataset = load_dataset("randall-lab/cifar10-c", split="test", trust_remote_code=True)
+
+example = dataset[0]
+image = example["image"]
+label = example["label"]
+
+image.show()
+print(f"Label: {label}")
+
+
+- ID: randall-lab/cifar100-c
+
+- Code: from datasets import load_dataset
+
+# Load the dataset
+dataset = load_dataset("randall-lab/cifar100-c", split="test", trust_remote_code=True)
+
+# Access a sample from the dataset
+example = dataset[0]
+image = example["image"]
+label = example["label"]
+
+image.show()  # Display the image
+print(f"Label: {label}")
+
+
+- ID: randall-lab/tiny-imagenet-c
+
+- Code: from datasets import load_dataset
+
+dataset = load_dataset("randall-lab/tiny-imagenet-c", split="test", trust_remote_code=True)
+
+example = dataset[0]
+image = example["image"]
+label = example["label"]
+
+image.show()
+print(f"Label: {label}")
+
+
+- ID: ang9867/ImageNet-C
+
+
+- ID: dgural/bdd100k
+
+- Code: import fiftyone as fo
+import fiftyone.utils.huggingface as fouh
+
+dataset = fouh.load_from_hub("dgural/bdd100k")
+session = fo.launch_app(dataset)
+
+
+- ID: quandelagl/bdd-100k
+
+
+
+
+Analyze the code thoroughly and provide your validation result.
+Output:
+{
+    "is_full_experiment_ready": false,
+    "full_experiment_issue": "Full-experiment file trains a plain classifier for 1 epoch on CIFAR-10-C only; it neither instantiates the FLASH-TTA architecture, nor covers the required datasets (ImageNet-C, BDD-100k, etc.), epochs, ablations, energy/fps metrics or streaming video protocol. Core modules (FlashTTA model, fused stats, streaming GRU, safeguard, INT8 path) are missing, and several files still contain placeholder comments. Therefore the --full-experiment mode is not production-ready."
+}
