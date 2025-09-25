@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+GCKNs are built upon the concept of graph feature maps, associating each node with a point in a Reproducing Kernel Hilbert Space (RKHS). A single-layer model uses a continuous relaxation of the path kernel, replacing hard matching with a Gaussian kernel for inexact matching of node attributes along paths. Scalability is achieved via the Nyström method, which approximates kernel embeddings by projecting path attributes onto a finite-dimensional subspace defined by prototype paths (filters). This allows GCKNs to be interpreted as a new type of GNN where filters can be learned unsupervised (e.g., K-means) or end-to-end with back-propagation. Multilayer extensions iterate this process, allowing for the capture of more complex structures like subtrees (e.g., GCKN-subtree with k2=0) or representing larger receptive fields with smaller path lengths. Practical variants include summing kernels for multi-scale representations, using homogeneous dot-product kernels, alternative pooling operations, and a recursive method for walk kernels. For model interpretation, a method inspired by GNN explainer is adapted to identify important subgraphs by finding subsets of paths that preserve prediction, regularized with an L1-norm mask.
+
+# GitHub URLs List
+['https://github.com/claying/GCKN']
+Output:
+{
+    "index": 0
+}
