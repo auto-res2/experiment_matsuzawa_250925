@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The ATTA problem is formally defined to adapt a pre-trained model (f(x; ϕ)) to streaming test data (Ute(t)) by actively selecting and labeling informative instances (Dte(t)) within a budget (B). The model parameters (θ(t)) are optimized using a weighted combination of cross-entropy loss on labeled data (Dtr(t)) and an unsupervised loss (ℓU). The theoretical framework, based on learning bounds and H∆H-distance, proves that incorporating labeled test instances improves generalization and that selective entropy minimization helps mitigate CF. The proposed algorithm, SimATTA, partitions Ute(t) into high-entropy (Uh(t)) and low-entropy (Ul(t)) samples. Low-entropy samples are pseudo-labeled by the frozen source-pretrained model (f(·; ϕ)), forming Dl(t). High-entropy samples are selected for active labeling using an incremental clustering technique. This clustering method employs weighted K-means to store representative samples (anchors) and adaptively manages cluster budgets by forming new clusters for new distributions and merging old ones, ensuring diversity and coverage. Training weights are balanced based on sample ratios for optimal performance.
+
+# GitHub URLs List
+['https://github.com/divelab/ATTA', 'https://github.com/DequanWang/tent', 'https://github.com/mr-eggplant/EATA', 'https://github.com/qinenergy/cotta', 'https://github.com/mr-eggplant/SAR', 'https://github.com/virajprabhu/CLUE']
+Output:
+{
+    "index": 0
+}
