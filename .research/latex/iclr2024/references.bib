@@ -5,3 +5,913 @@
   publisher = {GitHub},
   url       = {https://github.com/airas-org/airas}
 }
+
+% ===========================================
+% REQUIRED CITATIONS
+% These papers must be cited in the manuscript
+% ===========================================
+
+@article{author-year-adaptive,
+ title = {Adaptive Structural Fingerprints for Graph Attention Networks}
+}
+
+@article{author-year-not,
+ title = {Not All Bits have Equal Value: Heterogeneous Precisions via Trainable Noise}
+}
+
+@article{author-year-robust,
+ title = {Robust Graph Representation Learning via Neural Sparsification}
+}
+
+@article{bondarenko-2023-quantizable,
+ abstract = {Transformer models have been widely adopted in various domains over the last
+years, and especially large language models have advanced the field of AI
+significantly. Due to their size, the capability of these networks has
+increased tremendously, but this has come at the cost of a significant increase
+in necessary compute. Quantization is one of the most effective ways to reduce
+the computational time and memory consumption of neural networks. Many studies
+have shown, however, that modern transformer models tend to learn strong
+outliers in their activations, making them difficult to quantize. To retain
+acceptable performance, the existence of these outliers requires activations to
+be in higher bitwidth or the use of different numeric formats, extra
+fine-tuning, or other workarounds. We show that strong outliers are related to
+very specific behavior of attention heads that try to learn a "no-op" or just a
+partial update of the residual. To achieve the exact zeros needed in the
+attention matrix for a no-update, the input to the softmax is pushed to be
+larger and larger during training, causing outliers in other parts of the
+network. Based on these observations, we propose two simple (independent)
+modifications to the attention mechanism - clipped softmax and gated attention.
+We empirically show that models pre-trained using our methods learn
+significantly smaller outliers while maintaining and sometimes even improving
+the floating-point task performance. This enables us to quantize transformers
+to full INT8 quantization of the activations without any additional effort. We
+demonstrate the effectiveness of our methods on both language models (BERT,
+OPT) and vision transformers.},
+ arxiv_url = {https://arxiv.org/pdf/2306.12929v2.pdf},
+ author = {Yelysei Bondarenko and Markus Nagel and Tijmen Blankevoort},
+ title = {Quantizable Transformers: Removing Outliers by Helping Attention Heads Do Nothing},
+ year = {2023}
+}
+
+@article{ding-2024-sketch,
+ abstract = {Graph Neural Networks (GNNs) are widely applied to graph learning problems
+such as node classification. When scaling up the underlying graphs of GNNs to a
+larger size, we are forced to either train on the complete graph and keep the
+full graph adjacency and node embeddings in memory (which is often infeasible)
+or mini-batch sample the graph (which results in exponentially growing
+computational complexities with respect to the number of GNN layers). Various
+sampling-based and historical-embedding-based methods are proposed to avoid
+this exponential growth of complexities. However, none of these solutions
+eliminates the linear dependence on graph size. This paper proposes a
+sketch-based algorithm whose training time and memory grow sublinearly with
+respect to graph size by training GNNs atop a few compact sketches of graph
+adjacency and node embeddings. Based on polynomial tensor-sketch (PTS) theory,
+our framework provides a novel protocol for sketching non-linear activations
+and graph convolution matrices in GNNs, as opposed to existing methods that
+sketch linear weights or gradients in neural networks. In addition, we develop
+a locality-sensitive hashing (LSH) technique that can be trained to improve the
+quality of sketches. Experiments on large-graph benchmarks demonstrate the
+scalability and competitive performance of our Sketch-GNNs versus their
+full-size GNN counterparts.},
+ arxiv_url = {https://arxiv.org/pdf/2406.15575v1.pdf},
+ author = {Mucong Ding and Tahseen Rabbani and Bang An and Evan Z Wang and Furong Huang},
+ github_url = {https://github.com/devnkong/VQ-GNN},
+ title = {Sketch-GNN: Scalable Graph Neural Networks with Sublinear Training Complexity},
+ year = {2024}
+}
+
+@article{han-2023-hyperattention,
+ abstract = {We present an approximate attention mechanism named HyperAttention to address
+the computational challenges posed by the growing complexity of long contexts
+used in Large Language Models (LLMs). Recent work suggests that in the
+worst-case scenario, quadratic time is necessary unless the entries of the
+attention matrix are bounded or the matrix has low stable rank. We introduce
+two parameters which measure: (1) the max column norm in the normalized
+attention matrix, and (2) the ratio of row norms in the unnormalized attention
+matrix after detecting and removing large entries. We use these fine-grained
+parameters to capture the hardness of the problem. Despite previous lower
+bounds, we are able to achieve a linear time sampling algorithm even when the
+matrix has unbounded entries or a large stable rank, provided the above
+parameters are small. HyperAttention features a modular design that easily
+accommodates integration of other fast low-level implementations, particularly
+FlashAttention. Empirically, employing Locality Sensitive Hashing (LSH) to
+identify large entries, HyperAttention outperforms existing methods, giving
+significant speed improvements compared to state-of-the-art solutions like
+FlashAttention. We validate the empirical performance of HyperAttention on a
+variety of different long-context length datasets. For example, HyperAttention
+makes the inference time of ChatGLM2 50\% faster on 32k context length while
+perplexity increases from 5.6 to 6.3. On larger context length, e.g., 131k,
+with causal masking, HyperAttention offers 5-fold speedup on a single attention
+layer.},
+ arxiv_url = {https://arxiv.org/pdf/2310.05869v3.pdf},
+ author = {Insu Han and Rajesh Jayaram and Amin Karbasi and Vahab Mirrokni and David P. Woodruff and Amir Zandieh},
+ github_url = {https://github.com/insuhan/hyper-attn},
+ title = {HyperAttention: Long-context Attention in Near-Linear Time},
+ year = {2023}
+}
+
+@article{hu-2024-accelerating,
+ abstract = {Training large transformers is slow, but recent innovations on GPU
+architecture give us an advantage. NVIDIA Ampere GPUs can execute a
+fine-grained 2:4 sparse matrix multiplication twice as fast as its dense
+equivalent. In the light of this property, we comprehensively investigate the
+feasibility of accelerating feed-forward networks (FFNs) of transformers in
+pre-training. First, we define a ``flip rate'' to monitor the stability of a
+2:4 training process. Utilizing this metric, we propose three techniques to
+preserve accuracy: to modify the sparse-refined straight-through estimator by
+applying the masked decay term on gradients, to determine a feasible decay
+factor in warm-up stage, and to enhance the model's quality by a dense
+fine-tuning procedure near the end of pre-training. Besides, we devise two
+techniques to practically accelerate training: to calculate transposable 2:4
+masks by convolution, and to accelerate gated activation functions by reducing
+GPU L2 cache miss. Experiments show that our 2:4 sparse training algorithm
+achieves similar convergence to dense training algorithms on several
+transformer pre-training tasks, while actual acceleration can be observed on
+different shapes of transformer block apparently. Our toolkit is available at
+https://github.com/huyz2023/2by4-pretrain.},
+ arxiv_url = {https://arxiv.org/pdf/2404.01847v3.pdf},
+ author = {Yuezhou Hu and Kang Zhao and Weiyu Huang and Jianfei Chen and Jun Zhu},
+ journal = {Proceedings of the 41st International Conference on Machine
+  Learning (2024), in Proceedings of Machine Learning Research 235:19531-19543},
+ title = {Accelerating Transformer Pre-training with 2:4 Sparsity},
+ year = {2024}
+}
+
+@article{hua-2022-transformer,
+ abstract = {We revisit the design choices in Transformers, and propose methods to address
+their weaknesses in handling long sequences. First, we propose a simple layer
+named gated attention unit, which allows the use of a weaker single-head
+attention with minimal quality loss. We then propose a linear approximation
+method complementary to this new layer, which is accelerator-friendly and
+highly competitive in quality. The resulting model, named FLASH, matches the
+perplexity of improved Transformers over both short (512) and long (8K) context
+lengths, achieving training speedups of up to 4.9$\times$ on Wiki-40B and
+12.1$\times$ on PG-19 for auto-regressive language modeling, and 4.8$\times$ on
+C4 for masked language modeling.},
+ arxiv_url = {https://arxiv.org/pdf/2202.10447v2.pdf},
+ author = {Weizhe Hua and Zihang Dai and Hanxiao Liu and Quoc V. Le},
+ title = {Transformer Quality in Linear Time},
+ year = {2022}
+}
+
+@article{javaloy-2022-learnable,
+ abstract = {Existing Graph Neural Networks (GNNs) compute the message exchange between
+nodes by either aggregating uniformly (convolving) the features of all the
+neighboring nodes, or by applying a non-uniform score (attending) to the
+features. Recent works have shown the strengths and weaknesses of the resulting
+GNN architectures, respectively, GCNs and GATs. In this work, we aim at
+exploiting the strengths of both approaches to their full extent. To this end,
+we first introduce the graph convolutional attention layer (CAT), which relies
+on convolutions to compute the attention scores. Unfortunately, as in the case
+of GCNs and GATs, we show that there exists no clear winner between the three
+(neither theoretically nor in practice) as their performance directly depends
+on the nature of the data (i.e., of the graph and features). This result brings
+us to the main contribution of our work, the learnable graph convolutional
+attention network (L-CAT): a GNN architecture that automatically interpolates
+between GCN, GAT and CAT in each layer, by adding only two scalar parameters.
+Our results demonstrate that L-CAT is able to efficiently combine different GNN
+layers along the network, outperforming competing methods in a wide range of
+datasets, and resulting in a more robust model that reduces the need of
+cross-validating.},
+ arxiv_url = {https://arxiv.org/pdf/2211.11853v2.pdf},
+ author = {Adrián Javaloy and Pablo Sanchez-Martin and Amit Levi and Isabel Valera},
+ github_url = {https://github.com/psanch21/LCAT},
+ title = {Learnable Graph Convolutional Attention Networks},
+ year = {2022}
+}
+
+@article{li-2020-sac,
+ abstract = {While the self-attention mechanism has been widely used in a wide variety of
+tasks, it has the unfortunate property of a quadratic cost with respect to the
+input length, which makes it difficult to deal with long inputs. In this paper,
+we present a method for accelerating and structuring self-attentions: Sparse
+Adaptive Connection (SAC). In SAC, we regard the input sequence as a graph and
+attention operations are performed between linked nodes. In contrast with
+previous self-attention models with pre-defined structures (edges), the model
+learns to construct attention edges to improve task-specific performances. In
+this way, the model is able to select the most salient nodes and reduce the
+quadratic complexity regardless of the sequence length. Based on SAC, we show
+that previous variants of self-attention models are its special cases. Through
+extensive experiments on neural machine translation, language modeling, graph
+representation learning and image classification, we demonstrate SAC is
+competitive with state-of-the-art models while significantly reducing memory
+cost.},
+ arxiv_url = {https://arxiv.org/pdf/2003.09833v3.pdf},
+ author = {Xiaoya Li and Yuxian Meng and Mingxin Zhou and Qinghong Han and Fei Wu and Jiwei Li},
+ title = {SAC: Accelerating and Structuring Self-Attention via Sparse Adaptive Connection},
+ year = {2020}
+}
+
+@article{liu-2020-bandit,
+ abstract = {Several sampling algorithms with variance reduction have been proposed for
+accelerating the training of Graph Convolution Networks (GCNs). However, due to
+the intractable computation of optimal sampling distribution, these sampling
+algorithms are suboptimal for GCNs and are not applicable to more general graph
+neural networks (GNNs) where the message aggregator contains learned weights
+rather than fixed weights, such as Graph Attention Networks (GAT). The
+fundamental reason is that the embeddings of the neighbors or learned weights
+involved in the optimal sampling distribution are changing during the training
+and not known a priori, but only partially observed when sampled, thus making
+the derivation of an optimal variance reduced samplers non-trivial. In this
+paper, we formulate the optimization of the sampling variance as an adversary
+bandit problem, where the rewards are related to the node embeddings and
+learned weights, and can vary constantly. Thus a good sampler needs to acquire
+variance information about more neighbors (exploration) while at the same time
+optimizing the immediate sampling variance (exploit). We theoretically show
+that our algorithm asymptotically approaches the optimal variance within a
+factor of 3. We show the efficiency and effectiveness of our approach on
+multiple datasets.},
+ arxiv_url = {https://arxiv.org/pdf/2006.05806v2.pdf},
+ author = {Ziqi Liu and Zhengwei Wu and Zhiqiang Zhang and Jun Zhou and Shuang Yang and Le Song and Yuan Qi},
+ github_url = {https://github.com/xavierzw/ogb-geniepath-bs},
+ title = {Bandit Samplers for Training Graph Neural Networks},
+ year = {2020}
+}
+
+@article{liu-2022-gact,
+ abstract = {Training large neural network (NN) models requires extensive memory
+resources, and Activation Compressed Training (ACT) is a promising approach to
+reduce training memory footprint. This paper presents GACT, an ACT framework to
+support a broad range of machine learning tasks for generic NN architectures
+with limited domain knowledge. By analyzing a linearized version of ACT's
+approximate gradient, we prove the convergence of GACT without prior knowledge
+on operator type or model architecture. To make training stable, we propose an
+algorithm that decides the compression ratio for each tensor by estimating its
+impact on the gradient at run time. We implement GACT as a PyTorch library that
+readily applies to any NN architecture. GACT reduces the activation memory for
+convolutional NNs, transformers, and graph NNs by up to 8.1x, enabling training
+with a 4.2x to 24.7x larger batch size, with negligible accuracy loss. We
+implement GACT as a PyTorch library at
+https://github.com/LiuXiaoxuanPKU/GACT-ICML.},
+ arxiv_url = {https://arxiv.org/pdf/2206.11357v4.pdf},
+ author = {Xiaoxuan Liu and Lianmin Zheng and Dequan Wang and Yukuo Cen and Weize Chen and Xu Han and Jianfei Chen and Zhiyuan Liu and Jie Tang and Joey Gonzalez and Michael Mahoney and Alvin Cheung},
+ github_url = {https://github.com/LiuXiaoxuanPKU/GACT-ICML},
+ title = {GACT: Activation Compressed Training for Generic Network Architectures},
+ year = {2022}
+}
+
+@article{liu-2022-rsc,
+ abstract = {The training of graph neural networks (GNNs) is extremely time consuming
+because sparse graph-based operations are hard to be accelerated by hardware.
+Prior art explores trading off the computational precision to reduce the time
+complexity via sampling-based approximation. Based on the idea, previous works
+successfully accelerate the dense matrix based operations (e.g., convolution
+and linear) with negligible accuracy drop. However, unlike dense matrices,
+sparse matrices are stored in the irregular data format such that each
+row/column may have different number of non-zero entries. Thus, compared to the
+dense counterpart, approximating sparse operations has two unique challenges
+(1) we cannot directly control the efficiency of approximated sparse operation
+since the computation is only executed on non-zero entries; (2) sub-sampling
+sparse matrices is much more inefficient due to the irregular data format. To
+address the issues, our key idea is to control the accuracy-efficiency trade
+off by optimizing computation resource allocation layer-wisely and
+epoch-wisely. Specifically, for the first challenge, we customize the
+computation resource to different sparse operations, while limit the total used
+resource below a certain budget. For the second challenge, we cache previous
+sampled sparse matrices to reduce the epoch-wise sampling overhead. Finally, we
+propose a switching mechanisms to improve the generalization of GNNs trained
+with approximated operations. To this end, we propose Randomized Sparse
+Computation, which for the first time demonstrate the potential of training
+GNNs with approximated operations. In practice, rsc can achieve up to
+$11.6\times$ speedup for a single sparse operation and a $1.6\times$ end-to-end
+wall-clock time speedup with negligible accuracy drop.},
+ arxiv_url = {https://arxiv.org/pdf/2210.10737v2.pdf},
+ author = {Zirui Liu and Shengyuan Chen and Kaixiong Zhou and Daochen Zha and Xiao Huang and Xia Hu},
+ title = {RSC: Accelerate Graph Neural Networks Training via Randomized Sparse Computations},
+ year = {2022}
+}
+
+@article{marisca-2022-learning,
+ abstract = {Modeling multivariate time series as temporal signals over a (possibly
+dynamic) graph is an effective representational framework that allows for
+developing models for time series analysis. In fact, discrete sequences of
+graphs can be processed by autoregressive graph neural networks to recursively
+learn representations at each discrete point in time and space. Spatiotemporal
+graphs are often highly sparse, with time series characterized by multiple,
+concurrent, and long sequences of missing data, e.g., due to the unreliable
+underlying sensor network. In this context, autoregressive models can be
+brittle and exhibit unstable learning dynamics. The objective of this paper is,
+then, to tackle the problem of learning effective models to reconstruct, i.e.,
+impute, missing data points by conditioning the reconstruction only on the
+available observations. In particular, we propose a novel class of
+attention-based architectures that, given a set of highly sparse discrete
+observations, learn a representation for points in time and space by exploiting
+a spatiotemporal propagation architecture aligned with the imputation task.
+Representations are trained end-to-end to reconstruct observations w.r.t. the
+corresponding sensor and its neighboring nodes. Compared to the state of the
+art, our model handles sparse data without propagating prediction errors or
+requiring a bidirectional model to encode forward and backward time
+dependencies. Empirical results on representative benchmarks show the
+effectiveness of the proposed method.},
+ arxiv_url = {https://arxiv.org/pdf/2205.13479v2.pdf},
+ author = {Ivan Marisca and Andrea Cini and Cesare Alippi},
+ github_url = {https://github.com/Graph-Machine-Learning-Group/spin},
+ title = {Learning to Reconstruct Missing Data from Spatiotemporal Graphs with Sparse Observations},
+ year = {2022}
+}
+
+@article{mustafa-2023-are,
+ abstract = {While the expressive power and computational capabilities of graph neural
+networks (GNNs) have been theoretically studied, their optimization and
+learning dynamics, in general, remain largely unexplored. Our study undertakes
+the Graph Attention Network (GAT), a popular GNN architecture in which a node's
+neighborhood aggregation is weighted by parameterized attention coefficients.
+We derive a conservation law of GAT gradient flow dynamics, which explains why
+a high portion of parameters in GATs with standard initialization struggle to
+change during training. This effect is amplified in deeper GATs, which perform
+significantly worse than their shallow counterparts. To alleviate this problem,
+we devise an initialization scheme that balances the GAT network. Our approach
+i) allows more effective propagation of gradients and in turn enables
+trainability of deeper networks, and ii) attains a considerable speedup in
+training and convergence time in comparison to the standard initialization. Our
+main theorem serves as a stepping stone to studying the learning dynamics of
+positive homogeneous models with attention mechanisms.},
+ arxiv_url = {https://arxiv.org/pdf/2310.07235v2.pdf},
+ author = {Nimrah Mustafa and Aleksandar Bojchevski and Rebekka Burkholz},
+ github_url = {https://github.com/Diego999/pyGAT},
+ title = {Are GATs Out of Balance?},
+ year = {2023}
+}
+
+@article{mustafa-2024-gate,
+ abstract = {Graph Attention Networks (GATs) are designed to provide flexible neighborhood
+aggregation that assigns weights to neighbors according to their importance. In
+practice, however, GATs are often unable to switch off task-irrelevant
+neighborhood aggregation, as we show experimentally and analytically. To
+address this challenge, we propose GATE, a GAT extension that holds three major
+advantages: i) It alleviates over-smoothing by addressing its root cause of
+unnecessary neighborhood aggregation. ii) Similarly to perceptrons, it benefits
+from higher depth as it can still utilize additional layers for (non-)linear
+feature transformations in case of (nearly) switched-off neighborhood
+aggregation. iii) By down-weighting connections to unrelated neighbors, it
+often outperforms GATs on real-world heterophilic datasets. To further validate
+our claims, we construct a synthetic test bed to analyze a model's ability to
+utilize the appropriate amount of neighborhood aggregation, which could be of
+independent interest.},
+ arxiv_url = {https://arxiv.org/pdf/2406.00418v2.pdf},
+ author = {Nimrah Mustafa and Rebekka Burkholz},
+ title = {GATE: How to Keep Out Intrusive Neighbors},
+ year = {2024}
+}
+
+@article{shirzad-2024-even,
+ abstract = {Graph Transformers excel in long-range dependency modeling, but generally
+require quadratic memory complexity in the number of nodes in an input graph,
+and hence have trouble scaling to large graphs. Sparse attention variants such
+as Exphormer can help, but may require high-degree augmentations to the input
+graph for good performance, and do not attempt to sparsify an already-dense
+input graph. As the learned attention mechanisms tend to use few of these
+edges, such high-degree connections may be unnecessary. We show (empirically
+and with theoretical backing) that attention scores on graphs are usually quite
+consistent across network widths, and use this observation to propose a
+two-stage procedure, which we call Spexphormer: first, train a narrow network
+on the full augmented graph. Next, use only the active connections to train a
+wider network on a much sparser graph. We establish theoretical conditions when
+a narrow network's attention scores can match those of a wide network, and show
+that Spexphormer achieves good performance with drastically reduced memory
+requirements on various graph datasets.},
+ arxiv_url = {https://arxiv.org/pdf/2411.16278v1.pdf},
+ author = {Hamed Shirzad and Honghao Lin and Balaji Venkatachalam and Ameya Velingker and David Woodruff and Danica Sutherland},
+ github_url = {https://github.com/hamed1375/Sp_Exphormer},
+ title = {Even Sparser Graph Transformers},
+ year = {2024}
+}
+
+@article{such-2019-generative,
+ abstract = {This paper investigates the intriguing question of whether we can create
+learning algorithms that automatically generate training data, learning
+environments, and curricula in order to help AI agents rapidly learn. We show
+that such algorithms are possible via Generative Teaching Networks (GTNs), a
+general approach that is, in theory, applicable to supervised, unsupervised,
+and reinforcement learning, although our experiments only focus on the
+supervised case. GTNs are deep neural networks that generate data and/or
+training environments that a learner (e.g. a freshly initialized neural
+network) trains on for a few SGD steps before being tested on a target task. We
+then differentiate through the entire learning process via meta-gradients to
+update the GTN parameters to improve performance on the target task. GTNs have
+the beneficial property that they can theoretically generate any type of data
+or training environment, making their potential impact large. This paper
+introduces GTNs, discusses their potential, and showcases that they can
+substantially accelerate learning. We also demonstrate a practical and exciting
+application of GTNs: accelerating the evaluation of candidate architectures for
+neural architecture search (NAS), which is rate-limited by such evaluations,
+enabling massive speed-ups in NAS. GTN-NAS improves the NAS state of the art,
+finding higher performing architectures when controlling for the search
+proposal mechanism. GTN-NAS also is competitive with the overall state of the
+art approaches, which achieve top performance while using orders of magnitude
+less computation than typical NAS methods. Speculating forward, GTNs may
+represent a first step toward the ambitious goal of algorithms that generate
+their own training data and, in doing so, open a variety of interesting new
+research questions and directions.},
+ arxiv_url = {https://arxiv.org/pdf/1912.07768v1.pdf},
+ author = {Felipe Petroski Such and Aditya Rawal and Joel Lehman and Kenneth O. Stanley and Jeff Clune},
+ title = {Generative Teaching Networks: Accelerating Neural Architecture Search by Learning to Generate Synthetic Training Data},
+ year = {2019}
+}
+
+@article{tailor-2020-degree,
+ abstract = {Graph neural networks (GNNs) have demonstrated strong performance on a wide
+variety of tasks due to their ability to model non-uniform structured data.
+Despite their promise, there exists little research exploring methods to make
+them more efficient at inference time. In this work, we explore the viability
+of training quantized GNNs, enabling the usage of low precision integer
+arithmetic during inference. We identify the sources of error that uniquely
+arise when attempting to quantize GNNs, and propose an architecturally-agnostic
+method, Degree-Quant, to improve performance over existing quantization-aware
+training baselines commonly used on other architectures, such as CNNs. We
+validate our method on six datasets and show, unlike previous attempts, that
+models generalize to unseen graphs. Models trained with Degree-Quant for INT8
+quantization perform as well as FP32 models in most cases; for INT4 models, we
+obtain up to 26% gains over the baselines. Our work enables up to 4.7x speedups
+on CPU when using INT8 arithmetic.},
+ arxiv_url = {https://arxiv.org/pdf/2008.05000v3.pdf},
+ author = {Shyam A. Tailor and Javier Fernandez-Marques and Nicholas D. Lane},
+ github_url = {https://github.com/camlsys/degree-quant},
+ title = {Degree-Quant: Quantization-Aware Training for Graph Neural Networks},
+ year = {2020}
+}
+
+@article{yang-2023-gated,
+ abstract = {Transformers with linear attention allow for efficient parallel training but
+can simultaneously be formulated as an RNN with 2D (matrix-valued) hidden
+states, thus enjoying linear-time inference complexity. However, linear
+attention generally underperforms ordinary softmax attention. Moreover, current
+implementations of linear attention lack I/O-awareness and are thus slower than
+highly optimized implementations of softmax attention. This work describes a
+hardware-efficient algorithm for linear attention that trades off memory
+movement against parallelizability. The resulting implementation, dubbed
+FLASHLINEARATTENTION, is faster than FLASHATTENTION-2 (Dao, 2023) as a
+standalone layer even on short sequence lengths (e.g., 1K). We then generalize
+this algorithm to a more expressive variant of linear attention with
+data-dependent gates. When used as a replacement for the standard attention
+layer in Transformers, the resulting gated linear attention (GLA) Transformer
+is found to perform competitively against the LLaMA-architecture Transformer
+(Touvron et al., 2023) as well recent linear-time-inference baselines such as
+RetNet (Sun et al., 2023a) and Mamba (Gu & Dao, 2023) on moderate-scale
+language modeling experiments. GLA Transformer is especially effective at
+length generalization, enabling a model trained on 2K to generalize to
+sequences longer than 20K without significant perplexity degradations. For
+training speed, the GLA Transformer has higher throughput than a
+similarly-sized Mamba model.},
+ arxiv_url = {https://arxiv.org/pdf/2312.06635v6.pdf},
+ author = {Songlin Yang and Bailin Wang and Yikang Shen and Rameswar Panda and Yoon Kim},
+ title = {Gated Linear Attention Transformers with Hardware-Efficient Training},
+ year = {2023}
+}
+
+@article{yun-2020-connections,
+ abstract = {Recently, Transformer networks have redefined the state of the art in many
+NLP tasks. However, these models suffer from quadratic computational cost in
+the input sequence length $n$ to compute pairwise attention in each layer. This
+has prompted recent research into sparse Transformers that sparsify the
+connections in the attention layers. While empirically promising for long
+sequences, fundamental questions remain unanswered: Can sparse Transformers
+approximate any arbitrary sequence-to-sequence function, similar to their dense
+counterparts? How does the sparsity pattern and the sparsity level affect their
+performance? In this paper, we address these questions and provide a unifying
+framework that captures existing sparse attention models. We propose sufficient
+conditions under which we prove that a sparse attention model can universally
+approximate any sequence-to-sequence function. Surprisingly, our results show
+that sparse Transformers with only $O(n)$ connections per attention layer can
+approximate the same function class as the dense model with $n^2$ connections.
+Lastly, we present experiments comparing different patterns/levels of sparsity
+on standard NLP tasks.},
+ arxiv_url = {https://arxiv.org/pdf/2006.04862v2.pdf},
+ author = {Chulhee Yun and Yin-Wen Chang and Srinadh Bhojanapalli and Ankit Singh Rawat and Sashank J. Reddi and Sanjiv Kumar},
+ title = {O(n) Connections are Expressive Enough: Universal Approximability of Sparse Transformers},
+ year = {2020}
+}
+
+@article{zandieh-2023-kdeformer,
+ abstract = {Dot-product attention mechanism plays a crucial role in modern deep
+architectures (e.g., Transformer) for sequence modeling, however, na\"ive exact
+computation of this model incurs quadratic time and memory complexities in
+sequence length, hindering the training of long-sequence models. Critical
+bottlenecks are due to the computation of partition functions in the
+denominator of softmax function as well as the multiplication of the softmax
+matrix with the matrix of values. Our key observation is that the former can be
+reduced to a variant of the kernel density estimation (KDE) problem, and an
+efficient KDE solver can be further utilized to accelerate the latter via
+subsampling-based fast matrix products. Our proposed KDEformer can approximate
+the attention in sub-quadratic time with provable spectral norm bounds, while
+all prior results merely provide entry-wise error bounds. Empirically, we
+verify that KDEformer outperforms other attention approximations in terms of
+accuracy, memory, and runtime on various pre-trained models. On BigGAN image
+generation, we achieve better generative scores than the exact computation with
+over $4\times$ speedup. For ImageNet classification with T2T-ViT, KDEformer
+shows over $18\times$ speedup while the accuracy drop is less than $0.5\%$.},
+ arxiv_url = {https://arxiv.org/pdf/2302.02451v2.pdf},
+ author = {Amir Zandieh and Insu Han and Majid Daliri and Amin Karbasi},
+ title = {KDEformer: Accelerating Transformers via Kernel Density Estimation},
+ year = {2023}
+}
+
+@article{zhu-2023-aggregation,
+ abstract = {As graph data size increases, the vast latency and memory consumption during
+inference pose a significant challenge to the real-world deployment of Graph
+Neural Networks (GNNs). While quantization is a powerful approach to reducing
+GNNs complexity, most previous works on GNNs quantization fail to exploit the
+unique characteristics of GNNs, suffering from severe accuracy degradation.
+Through an in-depth analysis of the topology of GNNs, we observe that the
+topology of the graph leads to significant differences between nodes, and most
+of the nodes in a graph appear to have a small aggregation value. Motivated by
+this, in this paper, we propose the Aggregation-Aware mixed-precision
+Quantization ($\rm A^2Q$) for GNNs, where an appropriate bitwidth is
+automatically learned and assigned to each node in the graph. To mitigate the
+vanishing gradient problem caused by sparse connections between nodes, we
+propose a Local Gradient method to serve the quantization error of the node
+features as the supervision during training. We also develop a Nearest Neighbor
+Strategy to deal with the generalization on unseen graphs. Extensive
+experiments on eight public node-level and graph-level datasets demonstrate the
+generality and robustness of our proposed method. Compared to the FP32 models,
+our method can achieve up to a 18.6x (i.e., 1.70bit) compression ratio with
+negligible accuracy degradation. Morever, compared to the state-of-the-art
+quantization method, our method can achieve up to 11.4\% and 9.5\% accuracy
+improvements on the node-level and graph-level tasks, respectively, and up to
+2x speedup on a dedicated hardware accelerator.},
+ arxiv_url = {https://arxiv.org/pdf/2302.00193v1.pdf},
+ author = {Zeyu Zhu and Fanrong Li and Zitao Mo and Qinghao Hu and Gang Li and Zejian Liu and Xiaoyao Liang and Jian Cheng},
+ title = {$\rm A^2Q$: Aggregation-Aware Quantization for Graph Neural Networks},
+ year = {2023}
+}
+
+% ===========================================
+% REFERENCE CANDIDATES
+% Additional reference papers for context
+% ===========================================
+
+@article{author-year-don,
+ title = {Don’t waste your bits! squeeze activations and gradients for deep neural networks via tinyscript}
+}
+
+@article{author-year-exact,
+ title = {EXACT: Scalable graph neural networks training via extreme activation compression}
+}
+
+@article{author-year-jpeg,
+ title = {Jpeg-act: accelerating deep learning via transform-based lossy compression}
+}
+
+@article{author-year-lossy,
+ title = {AC-GC: Lossy activation compression with guaranteed convergence}
+}
+
+@article{author-year-ultra,
+ title = {Ultra-low precision 4-bit training of deep neural networks}
+}
+
+@article{banner-2018-scalable,
+ abstract = {Quantized Neural Networks (QNNs) are often used to improve network efficiency
+during the inference phase, i.e. after the network has been trained. Extensive
+research in the field suggests many different quantization schemes. Still, the
+number of bits required, as well as the best quantization scheme, are yet
+unknown. Our theoretical analysis suggests that most of the training process is
+robust to substantial precision reduction, and points to only a few specific
+operations that require higher precision. Armed with this knowledge, we
+quantize the model parameters, activations and layer gradients to 8-bit,
+leaving at a higher precision only the final step in the computation of the
+weight gradients. Additionally, as QNNs require batch-normalization to be
+trained at high precision, we introduce Range Batch-Normalization (BN) which
+has significantly higher tolerance to quantization noise and improved
+computational complexity. Our simulations show that Range BN is equivalent to
+the traditional batch norm if a precise scale adjustment, which can be
+approximated analytically, is applied. To the best of the authors' knowledge,
+this work is the first to quantize the weights, activations, as well as a
+substantial volume of the gradients stream, in all layers (including batch
+normalization) to 8-bit while showing state-of-the-art results over the
+ImageNet-1K dataset.},
+ arxiv_url = {https://arxiv.org/pdf/1805.11046v3.pdf},
+ author = {Ron Banner and Itay Hubara and Elad Hoffer and Daniel Soudry},
+ title = {Scalable methods for 8-bit training of neural networks},
+ year = {2018}
+}
+
+@article{chakrabarti-2019-backprop,
+ abstract = {Training convolutional neural network models is memory intensive since
+back-propagation requires storing activations of all intermediate layers. This
+presents a practical concern when seeking to deploy very deep architectures in
+production, especially when models need to be frequently re-trained on updated
+datasets. In this paper, we propose a new implementation for back-propagation
+that significantly reduces memory usage, by enabling the use of approximations
+with negligible computational cost and minimal effect on training performance.
+The algorithm reuses common buffers to temporarily store full activations and
+compute the forward pass exactly. It also stores approximate per-layer copies
+of activations, at significant memory savings, that are used in the backward
+pass. Compared to simply approximating activations within standard
+back-propagation, our method limits accumulation of errors across layers. This
+allows the use of much lower-precision approximations without affecting
+training accuracy. Experiments on CIFAR-10, CIFAR-100, and ImageNet show that
+our method yields performance close to exact training, while storing
+activations compactly with as low as 4-bit precision.},
+ arxiv_url = {https://arxiv.org/pdf/1901.07988v2.pdf},
+ author = {Ayan Chakrabarti and Benjamin Moseley},
+ title = {Backprop with approximate activations for memory-efficient network training},
+ year = {2019}
+}
+
+@article{chen-2016-training,
+ abstract = {We propose a systematic approach to reduce the memory consumption of deep
+neural network training. Specifically, we design an algorithm that costs
+O(sqrt(n)) memory to train a n layer network, with only the computational cost
+of an extra forward pass per mini-batch. As many of the state-of-the-art models
+hit the upper bound of the GPU memory, our algorithm allows deeper and more
+complex models to be explored, and helps advance the innovations in deep
+learning research. We focus on reducing the memory cost to store the
+intermediate feature maps and gradients during training. Computation graph
+analysis is used for automatic in-place operation and memory sharing
+optimizations. We show that it is possible to trade computation for memory -
+giving a more memory efficient training algorithm with a little extra
+computation cost. In the extreme case, our analysis also shows that the memory
+consumption can be reduced to O(log n) with as little as O(n log n) extra cost
+for forward computation. Our experiments show that we can reduce the memory
+cost of a 1,000-layer deep residual network from 48G to 7G with only 30 percent
+additional running time cost on ImageNet problems. Similarly, significant
+memory cost reduction is observed in training complex recurrent neural networks
+on very long sequences.},
+ arxiv_url = {https://arxiv.org/pdf/1604.06174v2.pdf},
+ author = {Tianqi Chen and Bing Xu and Chiyuan Zhang and Carlos Guestrin},
+ title = {Training deep nets with sublinear memory cost},
+ year = {2016}
+}
+
+@article{chen-2020-statistical,
+ abstract = {Fully quantized training (FQT), which uses low-bitwidth hardware by
+quantizing the activations, weights, and gradients of a neural network model,
+is a promising approach to accelerate the training of deep neural networks. One
+major challenge with FQT is the lack of theoretical understanding, in
+particular of how gradient quantization impacts convergence properties. In this
+paper, we address this problem by presenting a statistical framework for
+analyzing FQT algorithms. We view the quantized gradient of FQT as a stochastic
+estimator of its full precision counterpart, a procedure known as
+quantization-aware training (QAT). We show that the FQT gradient is an unbiased
+estimator of the QAT gradient, and we discuss the impact of gradient
+quantization on its variance. Inspired by these theoretical results, we develop
+two novel gradient quantizers, and we show that these have smaller variance
+than the existing per-tensor quantizer. For training ResNet-50 on ImageNet, our
+5-bit block Householder quantizer achieves only 0.5% validation accuracy loss
+relative to QAT, comparable to the existing INT8 baseline.},
+ arxiv_url = {https://arxiv.org/pdf/2010.14298v1.pdf},
+ author = {Jianfei Chen and Yu Gai and Zhewei Yao and Michael W. Mahoney and Joseph E. Gonzalez},
+ title = {A statistical framework for low-bitwidth training of deep neural networks},
+ year = {2020}
+}
+
+@article{chen-2021-actnn,
+ abstract = {The increasing size of neural network models has been critical for
+improvements in their accuracy, but device memory is not growing at the same
+rate. This creates fundamental challenges for training neural networks within
+limited memory environments. In this work, we propose ActNN, a memory-efficient
+training framework that stores randomly quantized activations for back
+propagation. We prove the convergence of ActNN for general network
+architectures, and we characterize the impact of quantization on the
+convergence via an exact expression for the gradient variance. Using our
+theory, we propose novel mixed-precision quantization strategies that exploit
+the activation's heterogeneity across feature dimensions, samples, and layers.
+These techniques can be readily applied to existing dynamic graph frameworks,
+such as PyTorch, simply by substituting the layers. We evaluate ActNN on
+mainstream computer vision models for classification, detection, and
+segmentation tasks. On all these tasks, ActNN compresses the activation to 2
+bits on average, with negligible accuracy loss. ActNN reduces the memory
+footprint of the activation by 12x, and it enables training with a 6.6x to 14x
+larger batch size.},
+ arxiv_url = {https://arxiv.org/pdf/2104.14129v2.pdf},
+ author = {Jianfei Chen and Lianmin Zheng and Zhewei Yao and Dequan Wang and Ion Stoica and Michael W. Mahoney and Joseph E. Gonzalez},
+ title = {Actnn: Reducing training memory footprint via 2-bit activation compressed training},
+ year = {2021}
+}
+
+@article{devlin-2018-bert,
+ abstract = {We introduce a new language representation model called BERT, which stands
+for Bidirectional Encoder Representations from Transformers. Unlike recent
+language representation models, BERT is designed to pre-train deep
+bidirectional representations from unlabeled text by jointly conditioning on
+both left and right context in all layers. As a result, the pre-trained BERT
+model can be fine-tuned with just one additional output layer to create
+state-of-the-art models for a wide range of tasks, such as question answering
+and language inference, without substantial task-specific architecture
+modifications.
+  BERT is conceptually simple and empirically powerful. It obtains new
+state-of-the-art results on eleven natural language processing tasks, including
+pushing the GLUE score to 80.5% (7.7% point absolute improvement), MultiNLI
+accuracy to 86.7% (4.6% absolute improvement), SQuAD v1.1 question answering
+Test F1 to 93.2 (1.5 point absolute improvement) and SQuAD v2.0 Test F1 to 83.1
+(5.1 point absolute improvement).},
+ arxiv_url = {https://arxiv.org/pdf/1810.04805v2.pdf},
+ author = {Jacob Devlin and Ming-Wei Chang and Kenton Lee and Kristina Toutanova},
+ title = {Bert: Pre-training of deep bidirectional transformers for language understanding},
+ year = {2018}
+}
+
+@article{fedus-2021-switch,
+ abstract = {In deep learning, models typically reuse the same parameters for all inputs.
+Mixture of Experts (MoE) defies this and instead selects different parameters
+for each incoming example. The result is a sparsely-activated model -- with
+outrageous numbers of parameters -- but a constant computational cost. However,
+despite several notable successes of MoE, widespread adoption has been hindered
+by complexity, communication costs and training instability -- we address these
+with the Switch Transformer. We simplify the MoE routing algorithm and design
+intuitive improved models with reduced communication and computational costs.
+Our proposed training techniques help wrangle the instabilities and we show
+large sparse models may be trained, for the first time, with lower precision
+(bfloat16) formats. We design models based off T5-Base and T5-Large to obtain
+up to 7x increases in pre-training speed with the same computational resources.
+These improvements extend into multilingual settings where we measure gains
+over the mT5-Base version across all 101 languages. Finally, we advance the
+current scale of language models by pre-training up to trillion parameter
+models on the "Colossal Clean Crawled Corpus" and achieve a 4x speedup over the
+T5-XXL model.},
+ arxiv_url = {https://arxiv.org/pdf/2101.03961v3.pdf},
+ author = {William Fedus and Barret Zoph and Noam Shazeer},
+ title = {Switch transformers: Scaling to trillion parameter models with simple and efficient sparsity},
+ year = {2021}
+}
+
+@article{jain-2019-checkmate,
+ abstract = {We formalize the problem of trading-off DNN training time and memory
+requirements as the tensor rematerialization optimization problem, a
+generalization of prior checkpointing strategies. We introduce Checkmate, a
+system that solves for optimal rematerialization schedules in reasonable times
+(under an hour) using off-the-shelf MILP solvers or near-optimal schedules with
+an approximation algorithm, then uses these schedules to accelerate millions of
+training iterations. Our method scales to complex, realistic architectures and
+is hardware-aware through the use of accelerator-specific, profile-based cost
+models. In addition to reducing training cost, Checkmate enables real-world
+networks to be trained with up to 5.1x larger input sizes. Checkmate is an
+open-source project, available at https://github.com/parasj/checkmate.},
+ arxiv_url = {https://arxiv.org/pdf/1910.02653v3.pdf},
+ author = {Paras Jain and Ajay Jain and Aniruddha Nrusimha and Amir Gholami and Pieter Abbeel and Kurt Keutzer and Ion Stoica and Joseph E. Gonzalez},
+ title = {Checkmate: Breaking the memory wall with optimal tensor rematerialization},
+ year = {2019}
+}
+
+@article{jin-2020-novel,
+ abstract = {Deep neural networks (DNNs) are becoming increasingly deeper, wider, and
+non-linear due to the growing demands on prediction accuracy and analysis
+quality. When training a DNN model, the intermediate activation data must be
+saved in the memory during forward propagation and then restored for backward
+propagation. However, state-of-the-art accelerators such as GPUs are only
+equipped with very limited memory capacities due to hardware design
+constraints, which significantly limits the maximum batch size and hence
+performance speedup when training large-scale DNNs.
+  In this paper, we propose a novel memory-driven high performance DNN training
+framework that leverages error-bounded lossy compression to significantly
+reduce the memory requirement for training in order to allow training larger
+networks. Different from the state-of-the-art solutions that adopt image-based
+lossy compressors such as JPEG to compress the activation data, our framework
+purposely designs error-bounded lossy compression with a strict
+error-controlling mechanism. Specifically, we provide theoretical analysis on
+the compression error propagation from the altered activation data to the
+gradients, and then empirically investigate the impact of altered gradients
+over the entire training process. Based on these analyses, we then propose an
+improved lossy compressor and an adaptive scheme to dynamically configure the
+lossy compression error-bound and adjust the training batch size to further
+utilize the saved memory space for additional speedup. We evaluate our design
+against state-of-the-art solutions with four popular DNNs and the ImageNet
+dataset. Results demonstrate that our proposed framework can significantly
+reduce the training memory consumption by up to 13.5x and 1.8x over the
+baseline training and state-of-the-art framework with compression,
+respectively, with little or no accuracy loss.},
+ arxiv_url = {https://arxiv.org/pdf/2011.09017v1.pdf},
+ author = {Sian Jin and Guanpeng Li and Shuaiwen Leon Song and Dingwen Tao},
+ title = {A novel memory-efficient deep learning training framework via error-bounded lossy compression},
+ year = {2020}
+}
+
+@article{kipf-2016-semi,
+ abstract = {We present a scalable approach for semi-supervised learning on
+graph-structured data that is based on an efficient variant of convolutional
+neural networks which operate directly on graphs. We motivate the choice of our
+convolutional architecture via a localized first-order approximation of
+spectral graph convolutions. Our model scales linearly in the number of graph
+edges and learns hidden layer representations that encode both local graph
+structure and features of nodes. In a number of experiments on citation
+networks and on a knowledge graph dataset we demonstrate that our approach
+outperforms related methods by a significant margin.},
+ arxiv_url = {https://arxiv.org/pdf/1609.02907v4.pdf},
+ author = {Thomas N. Kipf and Max Welling},
+ title = {Semi-supervised classification with graph convolutional networks},
+ year = {2016}
+}
+
+@article{micikevicius-2017-mixed,
+ abstract = {Deep neural networks have enabled progress in a wide variety of applications.
+Growing the size of the neural network typically results in improved accuracy.
+As model sizes grow, the memory and compute requirements for training these
+models also increases. We introduce a technique to train deep neural networks
+using half precision floating point numbers. In our technique, weights,
+activations and gradients are stored in IEEE half-precision format.
+Half-precision floating numbers have limited numerical range compared to
+single-precision numbers. We propose two techniques to handle this loss of
+information. Firstly, we recommend maintaining a single-precision copy of the
+weights that accumulates the gradients after each optimizer step. This
+single-precision copy is rounded to half-precision format during training.
+Secondly, we propose scaling the loss appropriately to handle the loss of
+information with half-precision gradients. We demonstrate that this approach
+works for a wide variety of models including convolution neural networks,
+recurrent neural networks and generative adversarial networks. This technique
+works for large scale models with more than 100 million parameters trained on
+large datasets. Using this approach, we can reduce the memory consumption of
+deep learning models by nearly 2x. In future processors, we can also expect a
+significant computation speedup using half-precision hardware units.},
+ arxiv_url = {https://arxiv.org/pdf/1710.03740v3.pdf},
+ author = {Paulius Micikevicius and Sharan Narang and Jonah Alben and Gregory Diamos and Erich Elsen and David Garcia and Boris Ginsburg and Michael Houston and Oleksii Kuchaiev and Ganesh Venkatesh and Hao Wu},
+ title = {Mixed precision training},
+ year = {2017}
+}
+
+@article{pan-2021-mesa,
+ abstract = {There has been an explosion of interest in designing high-performance
+Transformers. While Transformers have delivered significant performance
+improvements, training such networks is extremely memory intensive owing to
+storing all intermediate activations that are needed for gradient computation
+during backpropagation, especially for long sequences. To this end, we present
+Mesa, a memory-saving training framework for Transformers. Specifically, Mesa
+uses exact activations during forward pass while storing a low-precision
+version of activations to reduce memory consumption during training. The
+low-precision activations are then dequantized during back-propagation to
+compute gradients. Besides, to address the heterogeneous activation
+distributions in the multi-head self-attention layers, we propose a head-wise
+activation quantization strategy, which quantizes activations based on the
+statistics of each head to minimize the approximation error. To further boost
+training efficiency, we learn quantization parameters by running estimates.
+More importantly, by re-investing the saved memory in employing a larger batch
+size or scaling up model size, we may further improve the performance under
+constrained computational resources. Extensive experiments on ImageNet,
+CIFAR-100 and ADE20K demonstrate that Mesa can achieve flexible memory-savings
+(up to 50%) during training while achieving comparable or even better
+performance. Code is available at https://github.com/ziplab/Mesa.},
+ arxiv_url = {https://arxiv.org/pdf/2111.11124v3.pdf},
+ author = {Zizheng Pan and Peng Chen and Haoyu He and Jing Liu and Jianfei Cai and Bohan Zhuang},
+ title = {Mesa: A memory-saving training framework for transformers},
+ year = {2021}
+}
+
+@article{vaswani-2017-attention,
+ abstract = {The dominant sequence transduction models are based on complex recurrent or
+convolutional neural networks in an encoder-decoder configuration. The best
+performing models also connect the encoder and decoder through an attention
+mechanism. We propose a new simple network architecture, the Transformer, based
+solely on attention mechanisms, dispensing with recurrence and convolutions
+entirely. Experiments on two machine translation tasks show these models to be
+superior in quality while being more parallelizable and requiring significantly
+less time to train. Our model achieves 28.4 BLEU on the WMT 2014
+English-to-German translation task, improving over the existing best results,
+including ensembles by over 2 BLEU. On the WMT 2014 English-to-French
+translation task, our model establishes a new single-model state-of-the-art
+BLEU score of 41.8 after training for 3.5 days on eight GPUs, a small fraction
+of the training costs of the best models from the literature. We show that the
+Transformer generalizes well to other tasks by applying it successfully to
+English constituency parsing both with large and limited training data.},
+ arxiv_url = {https://arxiv.org/pdf/1706.03762v7.pdf},
+ author = {Ashish Vaswani and Noam Shazeer and Niki Parmar and Jakob Uszkoreit and Llion Jones and Aidan N. Gomez and Lukasz Kaiser and Illia Polosukhin},
+ title = {Attention is all you need},
+ year = {2017}
+}
+
+@article{wang-2018-training,
+ abstract = {The state-of-the-art hardware platforms for training Deep Neural Networks
+(DNNs) are moving from traditional single precision (32-bit) computations
+towards 16 bits of precision -- in large part due to the high energy efficiency
+and smaller bit storage associated with using reduced-precision
+representations. However, unlike inference, training with numbers represented
+with less than 16 bits has been challenging due to the need to maintain
+fidelity of the gradient computations during back-propagation. Here we
+demonstrate, for the first time, the successful training of DNNs using 8-bit
+floating point numbers while fully maintaining the accuracy on a spectrum of
+Deep Learning models and datasets. In addition to reducing the data and
+computation precision to 8 bits, we also successfully reduce the arithmetic
+precision for additions (used in partial product accumulation and weight
+updates) from 32 bits to 16 bits through the introduction of a number of key
+ideas including chunk-based accumulation and floating point stochastic
+rounding. The use of these novel techniques lays the foundation for a new
+generation of hardware training platforms with the potential for 2-4x improved
+throughput over today's systems.},
+ arxiv_url = {https://arxiv.org/pdf/1812.08011v1.pdf},
+ author = {Naigang Wang and Jungwook Choi and Daniel Brand and Chia-Yu Chen and Kailash Gopalakrishnan},
+ title = {Training deep neural networks with 8-bit floating point numbers},
+ year = {2018}
+}
+
+@article{wu-2018-training,
+ abstract = {Researches on deep neural networks with discrete parameters and their
+deployment in embedded systems have been active and promising topics. Although
+previous works have successfully reduced precision in inference, transferring
+both training and inference processes to low-bitwidth integers has not been
+demonstrated simultaneously. In this work, we develop a new method termed as
+"WAGE" to discretize both training and inference, where weights (W),
+activations (A), gradients (G) and errors (E) among layers are shifted and
+linearly constrained to low-bitwidth integers. To perform pure discrete
+dataflow for fixed-point devices, we further replace batch normalization by a
+constant scaling layer and simplify other components that are arduous for
+integer implementation. Improved accuracies can be obtained on multiple
+datasets, which indicates that WAGE somehow acts as a type of regularization.
+Empirically, we demonstrate the potential to deploy training in hardware
+systems such as integer-based deep learning accelerators and neuromorphic chips
+with comparable accuracy and higher energy efficiency, which is crucial to
+future AI applications in variable scenarios with transfer and continual
+learning demands.},
+ arxiv_url = {https://arxiv.org/pdf/1802.04680v1.pdf},
+ author = {Shuang Wu and Guoqi Li and Feng Chen and Luping Shi},
+ title = {Training and inference with integers in deep neural networks},
+ year = {2018}
+}
