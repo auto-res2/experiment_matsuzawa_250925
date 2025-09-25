@@ -79,6 +79,11 @@ File names must follow the format: `<figure_topic>[_<condition>][_pairN].pdf`
 ## Full Experiment Validation Feedback
 
 
+**Critical Issue Detected**: The previous code generation failed full experiment validation:
+Generated code is only stubs: no real dataset loading, no training/evaluation loops, empty YAML files, NotImplementedError placeholders. --full-experiment does not execute anything. Fails all validation criteria (1-6).
+
+**Required Action**: Address this validation failure by ensuring your generated code strictly follows the Hugging Face code requirements and implements genuine full experiments using real datasets and models.
+
 
 
 # Experimental Environment
