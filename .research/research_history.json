@@ -6,5 +6,82 @@
     "distributed GAT training",
     "quantized GAT training",
     "GPU accelerated GAT"
+  ],
+  "research_study_list": [
+    {
+      "title": "GACT: Activation Compressed Training for Generic Network Architectures"
+    },
+    {
+      "title": "GACT: Activation Compressed Training for Generic Network Architectures"
+    },
+    {
+      "title": "Generative Teaching Networks: Accelerating Neural Architecture Search by Learning to Generate Synthetic Training Data"
+    },
+    {
+      "title": "Accelerating Transformer Pre-training with 2:4 Sparsity"
+    },
+    {
+      "title": "Transformer Quality in Linear Time"
+    },
+    {
+      "title": "Dynamic Rescaling for Training GNNs"
+    },
+    {
+      "title": "Bandit Samplers for Training Graph Neural Networks"
+    },
+    {
+      "title": "Graph Ladling: Shockingly Simple Parallel GNN Training without Intermediate Communication"
+    },
+    {
+      "title": "Are GATs Out of Balance?"
+    },
+    {
+      "title": "GBA: A Tuning-free Approach to Switch between Synchronous and Asynchronous Training for Recommendation Models"
+    },
+    {
+      "title": "Dynamic Rescaling for Training GNNs"
+    },
+    {
+      "title": "Are GATs Out of Balance?"
+    },
+    {
+      "title": "GraphSAINT: Graph Sampling Based Inductive Learning Method"
+    },
+    {
+      "title": "Bandit Samplers for Training Graph Neural Networks"
+    },
+    {
+      "title": "Accelerating Gossip SGD with Periodic Global Averaging"
+    },
+    {
+      "title": "Degree-Quant: Quantization-Aware Training for Graph Neural Networks"
+    },
+    {
+      "title": "$\\rm A^2Q$: Aggregation-Aware Quantization for Graph Neural Networks"
+    },
+    {
+      "title": "Not All Bits have Equal Value: Heterogeneous Precisions via Trainable Noise"
+    },
+    {
+      "title": "Are GATs Out of Balance?"
+    },
+    {
+      "title": "Quantizable Transformers: Removing Outliers by Helping Attention Heads Do Nothing"
+    },
+    {
+      "title": "Bandit Samplers for Training Graph Neural Networks"
+    },
+    {
+      "title": "GNNAutoScale: Scalable and Expressive Graph Neural Networks via Historical Embeddings"
+    },
+    {
+      "title": "Adaptive Structural Fingerprints for Graph Attention Networks"
+    },
+    {
+      "title": "GATE: How to Keep Out Intrusive Neighbors"
+    },
+    {
+      "title": "Recipe for a General, Powerful, Scalable Graph Transformer"
+    }
   ]
 }
