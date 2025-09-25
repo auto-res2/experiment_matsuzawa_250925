@@ -5,3 +5,775 @@
   publisher = {GitHub},
   url       = {https://github.com/airas-org/airas}
 }
+
+% ===========================================
+% REQUIRED CITATIONS
+% These papers must be cited in the manuscript
+% ===========================================
+
+@article{author-year-test,
+ title = {Test Time Adaptation With Regularized Loss for Weakly Supervised Salient Object Detection}
+}
+
+@article{author-year-ttt,
+ title = {TTT++: When Does Self-Supervised Test-Time Training Fail or Thrive?}
+}
+
+@article{chen-2023-improved,
+ abstract = {The main challenge in domain generalization (DG) is to handle the
+distribution shift problem that lies between the training and test data. Recent
+studies suggest that test-time training (TTT), which adapts the learned model
+with test data, might be a promising solution to the problem. Generally, a TTT
+strategy hinges its performance on two main factors: selecting an appropriate
+auxiliary TTT task for updating and identifying reliable parameters to update
+during the test phase. Both previous arts and our experiments indicate that TTT
+may not improve but be detrimental to the learned model if those two factors
+are not properly considered. This work addresses those two factors by proposing
+an Improved Test-Time Adaptation (ITTA) method. First, instead of heuristically
+defining an auxiliary objective, we propose a learnable consistency loss for
+the TTT task, which contains learnable parameters that can be adjusted toward
+better alignment between our TTT task and the main prediction task. Second, we
+introduce additional adaptive parameters for the trained model, and we suggest
+only updating the adaptive parameters during the test phase. Through extensive
+experiments, we show that the proposed two strategies are beneficial for the
+learned model (see Figure 1), and ITTA could achieve superior performance to
+the current state-of-the-art methods on several DG benchmarks. Code is
+available at https://github.com/liangchen527/ITTA.},
+ arxiv_url = {https://arxiv.org/pdf/2304.04494v2.pdf},
+ author = {Liang Chen and Yong Zhang and Yibing Song and Ying Shan and Lingqiao Liu},
+ github_url = {https://github.com/liangchen527/ITTA},
+ title = {Improved Test-Time Adaptation for Domain Generalization},
+ year = {2023}
+}
+
+@article{goyal-2022-test,
+ abstract = {Test-time adaptation (TTA) refers to adapting neural networks to distribution
+shifts, with access to only the unlabeled test samples from the new domain at
+test-time. Prior TTA methods optimize over unsupervised objectives such as the
+entropy of model predictions in TENT [Wang et al., 2021], but it is unclear
+what exactly makes a good TTA loss. In this paper, we start by presenting a
+surprising phenomenon: if we attempt to meta-learn the best possible TTA loss
+over a wide class of functions, then we recover a function that is remarkably
+similar to (a temperature-scaled version of) the softmax-entropy employed by
+TENT. This only holds, however, if the classifier we are adapting is trained
+via cross-entropy; if trained via squared loss, a different best TTA loss
+emerges. To explain this phenomenon, we analyze TTA through the lens of the
+training losses's convex conjugate. We show that under natural conditions, this
+(unsupervised) conjugate function can be viewed as a good local approximation
+to the original supervised loss and indeed, it recovers the best losses found
+by meta-learning. This leads to a generic recipe that can be used to find a
+good TTA loss for any given supervised training loss function of a general
+class. Empirically, our approach consistently dominates other baselines over a
+wide range of benchmarks. Our approach is particularly of interest when applied
+to classifiers trained with novel loss functions, e.g., the recently-proposed
+PolyLoss, where it differs substantially from (and outperforms) an
+entropy-based loss. Further, we show that our approach can also be interpreted
+as a kind of self-training using a very specific soft label, which we refer to
+as the conjugate pseudolabel. Overall, our method provides a broad framework
+for better understanding and improving test-time adaptation. Code is available
+at https://github.com/locuslab/tta_conjugate.},
+ arxiv_url = {https://arxiv.org/pdf/2207.09640v2.pdf},
+ author = {Sachin Goyal and Mingjie Sun and Aditi Raghunathan and Zico Kolter},
+ title = {Test Time Adaptation via Conjugate Pseudo-labels},
+ year = {2022}
+}
+
+@article{gui-2024-active,
+ abstract = {Test-time adaptation (TTA) addresses distribution shifts for streaming test
+data in unsupervised settings. Currently, most TTA methods can only deal with
+minor shifts and rely heavily on heuristic and empirical studies.
+  To advance TTA under domain shifts, we propose the novel problem setting of
+active test-time adaptation (ATTA) that integrates active learning within the
+fully TTA setting.
+  We provide a learning theory analysis, demonstrating that incorporating
+limited labeled test instances enhances overall performances across test
+domains with a theoretical guarantee. We also present a sample entropy
+balancing for implementing ATTA while avoiding catastrophic forgetting (CF). We
+introduce a simple yet effective ATTA algorithm, known as SimATTA, using
+real-time sample selection techniques. Extensive experimental results confirm
+consistency with our theoretical analyses and show that the proposed ATTA
+method yields substantial performance improvements over TTA methods while
+maintaining efficiency and shares similar effectiveness to the more demanding
+active domain adaptation (ADA) methods. Our code is available at
+https://github.com/divelab/ATTA},
+ arxiv_url = {https://arxiv.org/pdf/2404.05094v1.pdf},
+ author = {Shurui Gui and Xiner Li and Shuiwang Ji},
+ github_url = {https://github.com/divelab/ATTA},
+ title = {Active Test-Time Adaptation: Theoretical Analyses and An Algorithm},
+ year = {2024}
+}
+
+@article{hoang-2023-persistent,
+ abstract = {Current test-time adaptation (TTA) approaches aim to adapt a machine learning
+model to environments that change continuously. Yet, it is unclear whether TTA
+methods can maintain their adaptability over prolonged periods. To answer this
+question, we introduce a diagnostic setting - recurring TTA where environments
+not only change but also recur over time, creating an extensive data stream.
+This setting allows us to examine the error accumulation of TTA models, in the
+most basic scenario, when they are regularly exposed to previous testing
+environments. Furthermore, we simulate a TTA process on a simple yet
+representative $\epsilon$-perturbed Gaussian Mixture Model Classifier, deriving
+theoretical insights into the dataset- and algorithm-dependent factors
+contributing to gradual performance degradation. Our investigation leads us to
+propose persistent TTA (PeTTA), which senses when the model is diverging
+towards collapse and adjusts the adaptation strategy, striking a balance
+between the dual objectives of adaptation and model collapse prevention. The
+supreme stability of PeTTA over existing approaches, in the face of lifelong
+TTA scenarios, has been demonstrated over comprehensive experiments on various
+benchmarks. Our project page is available at https://hthieu166.github.io/petta.},
+ arxiv_url = {https://arxiv.org/pdf/2311.18193v4.pdf},
+ author = {Trung-Hieu Hoang and Duc Minh Vo and Minh N. Do},
+ github_url = {https://github.com/BIT-DA/RoTTA},
+ title = {Persistent Test-time Adaptation in Recurring Testing Scenarios},
+ year = {2023}
+}
+
+@article{li-2022-trainable,
+ abstract = {Weight averaging is a widely used technique for accelerating training and
+improving the generalization of deep neural networks (DNNs). While existing
+approaches like stochastic weight averaging (SWA) rely on pre-set weighting
+schemes, they can be suboptimal when handling diverse weights. We introduce
+Trainable Weight Averaging (TWA), a novel optimization method that operates
+within a reduced subspace spanned by candidate weights and learns optimal
+weighting coefficients through optimization. TWA offers greater flexibility and
+can be applied to different training scenarios. For large-scale applications,
+we develop a distributed training framework that combines parallel computation
+with low-bit compression for the projection matrix, effectively managing memory
+and computational demands. TWA can be implemented using either training data
+(TWA-t) or validation data (TWA-v), with the latter providing more effective
+averaging. Extensive experiments showcase TWA's advantages: (i) it consistently
+outperforms SWA in generalization performance and flexibility, (ii) when
+applied during early training, it reduces training time by over 40\% on CIFAR
+datasets and 30\% on ImageNet while maintaining comparable performance, and
+(iii) during fine-tuning, it significantly enhances generalization by weighted
+averaging of model checkpoints. In summary, we present an efficient and
+effective framework for trainable weight averaging. The code is available at
+https://github.com/nblt/TWA.},
+ arxiv_url = {https://arxiv.org/pdf/2205.13104v4.pdf},
+ author = {Tao Li and Zhehao Huang and Yingwen Wu and Zhengbao He and Qinghua Tao and Xiaolin Huang and Chih-Jen Lin},
+ github_url = {https://github.com/nblt/TWA},
+ title = {Trainable Weight Averaging: Efficient Training by Optimizing Historical Solutions},
+ year = {2022}
+}
+
+@article{niu-2023-towards,
+ abstract = {Test-time adaptation (TTA) has shown to be effective at tackling distribution
+shifts between training and testing data by adapting a given model on test
+samples. However, the online model updating of TTA may be unstable and this is
+often a key obstacle preventing existing TTA methods from being deployed in the
+real world. Specifically, TTA may fail to improve or even harm the model
+performance when test data have: 1) mixed distribution shifts, 2) small batch
+sizes, and 3) online imbalanced label distribution shifts, which are quite
+common in practice. In this paper, we investigate the unstable reasons and find
+that the batch norm layer is a crucial factor hindering TTA stability.
+Conversely, TTA can perform more stably with batch-agnostic norm layers, \ie,
+group or layer norm. However, we observe that TTA with group and layer norms
+does not always succeed and still suffers many failure cases. By digging into
+the failure cases, we find that certain noisy test samples with large gradients
+may disturb the model adaption and result in collapsed trivial solutions, \ie,
+assigning the same class label for all samples. To address the above collapse
+issue, we propose a sharpness-aware and reliable entropy minimization method,
+called SAR, for further stabilizing TTA from two aspects: 1) remove partial
+noisy samples with large gradients, 2) encourage model weights to go to a flat
+minimum so that the model is robust to the remaining noisy samples. Promising
+results demonstrate that SAR performs more stably over prior methods and is
+computationally efficient under the above wild test scenarios.},
+ arxiv_url = {https://arxiv.org/pdf/2302.12400v1.pdf},
+ author = {Shuaicheng Niu and Jiaxiang Wu and Yifan Zhang and Zhiquan Wen and Yaofo Chen and Peilin Zhao and Mingkui Tan},
+ title = {Towards Stable Test-time Adaptation in Dynamic Wild World},
+ year = {2023}
+}
+
+@article{song-2023-ecotta,
+ abstract = {This paper presents a simple yet effective approach that improves continual
+test-time adaptation (TTA) in a memory-efficient manner. TTA may primarily be
+conducted on edge devices with limited memory, so reducing memory is crucial
+but has been overlooked in previous TTA studies. In addition, long-term
+adaptation often leads to catastrophic forgetting and error accumulation, which
+hinders applying TTA in real-world deployments. Our approach consists of two
+components to address these issues. First, we present lightweight meta networks
+that can adapt the frozen original networks to the target domain. This novel
+architecture minimizes memory consumption by decreasing the size of
+intermediate activations required for backpropagation. Second, our novel
+self-distilled regularization controls the output of the meta networks not to
+deviate significantly from the output of the frozen original networks, thereby
+preserving well-trained knowledge from the source domain. Without additional
+memory, this regularization prevents error accumulation and catastrophic
+forgetting, resulting in stable performance even in long-term test-time
+adaptation. We demonstrate that our simple yet effective strategy outperforms
+other state-of-the-art methods on various benchmarks for image classification
+and semantic segmentation tasks. Notably, our proposed method with ResNet-50
+and WideResNet-40 takes 86% and 80% less memory than the recent
+state-of-the-art method, CoTTA.},
+ arxiv_url = {https://arxiv.org/pdf/2303.01904v4.pdf},
+ author = {Junha Song and Jungsoo Lee and In So Kweon and Sungha Choi},
+ github_url = {https://github.com/qinenergy/cotta},
+ title = {EcoTTA: Memory-Efficient Continual Test-Time Adaptation via Self-Distilled Regularization},
+ year = {2023}
+}
+
+@article{sun-2019-test,
+ abstract = {In this paper, we propose Test-Time Training, a general approach for
+improving the performance of predictive models when training and test data come
+from different distributions. We turn a single unlabeled test sample into a
+self-supervised learning problem, on which we update the model parameters
+before making a prediction. This also extends naturally to data in an online
+stream. Our simple approach leads to improvements on diverse image
+classification benchmarks aimed at evaluating robustness to distribution
+shifts.},
+ arxiv_url = {https://arxiv.org/pdf/1909.13231v3.pdf},
+ author = {Yu Sun and Xiaolong Wang and Zhuang Liu and John Miller and Alexei A. Efros and Moritz Hardt},
+ title = {Test-Time Training with Self-Supervision for Generalization under Distribution Shifts},
+ year = {2019}
+}
+
+@article{tang-2024-accelerating,
+ abstract = {Diffusion models have emerged as state-of-the-art generative models for image
+generation. However, sampling from diffusion models is usually time-consuming
+due to the inherent autoregressive nature of their sampling process. In this
+work, we propose a novel approach that accelerates the sampling of diffusion
+models by parallelizing the autoregressive process. Specifically, we
+reformulate the sampling process as solving a system of triangular nonlinear
+equations through fixed-point iteration. With this innovative formulation, we
+explore several systematic techniques to further reduce the iteration steps
+required by the solving process. Applying these techniques, we introduce
+ParaTAA, a universal and training-free parallel sampling algorithm that can
+leverage extra computational and memory resources to increase the sampling
+speed. Our experiments demonstrate that ParaTAA can decrease the inference
+steps required by common sequential sampling algorithms such as DDIM and DDPM
+by a factor of 4$\sim$14 times. Notably, when applying ParaTAA with 100 steps
+DDIM for Stable Diffusion, a widely-used text-to-image diffusion model, it can
+produce the same images as the sequential sampling in only 7 inference steps.
+The code is available at https://github.com/TZW1998/ParaTAA-Diffusion.},
+ arxiv_url = {https://arxiv.org/pdf/2402.09970v2.pdf},
+ author = {Zhiwei Tang and Jiasheng Tang and Hao Luo and Fan Wang and Tsung-Hui Chang},
+ title = {Accelerating Parallel Sampling of Diffusion Models},
+ year = {2024}
+}
+
+@article{wang-2020-tent,
+ abstract = {A model must adapt itself to generalize to new and different data during
+testing. In this setting of fully test-time adaptation the model has only the
+test data and its own parameters. We propose to adapt by test entropy
+minimization (tent): we optimize the model for confidence as measured by the
+entropy of its predictions. Our method estimates normalization statistics and
+optimizes channel-wise affine transformations to update online on each batch.
+Tent reduces generalization error for image classification on corrupted
+ImageNet and CIFAR-10/100 and reaches a new state-of-the-art error on
+ImageNet-C. Tent handles source-free domain adaptation on digit recognition
+from SVHN to MNIST/MNIST-M/USPS, on semantic segmentation from GTA to
+Cityscapes, and on the VisDA-C benchmark. These results are achieved in one
+epoch of test-time optimization without altering training.},
+ arxiv_url = {https://arxiv.org/pdf/2006.10726v3.pdf},
+ author = {Dequan Wang and Evan Shelhamer and Shaoteng Liu and Bruno Olshausen and Trevor Darrell},
+ github_url = {https://github.com/DequanWang/tent},
+ title = {Tent: Fully Test-Time Adaptation by Entropy Minimization},
+ year = {2020}
+}
+
+@article{yoo-2023-what,
+ abstract = {It is a well-known fact that the performance of deep learning models
+deteriorates when they encounter a distribution shift at test time. Test-time
+adaptation (TTA) algorithms have been proposed to adapt the model online while
+inferring test data. However, existing research predominantly focuses on
+classification tasks through the optimization of batch normalization layers or
+classification heads, but this approach limits its applicability to various
+model architectures like Transformers and makes it challenging to apply to
+other tasks, such as object detection. In this paper, we propose a novel online
+adaption approach for object detection in continually changing test domains,
+considering which part of the model to update, how to update it, and when to
+perform the update. By introducing architecture-agnostic and lightweight
+adaptor modules and only updating these while leaving the pre-trained backbone
+unchanged, we can rapidly adapt to new test domains in an efficient way and
+prevent catastrophic forgetting. Furthermore, we present a practical and
+straightforward class-wise feature aligning method for object detection to
+resolve domain shifts. Additionally, we enhance efficiency by determining when
+the model is sufficiently adapted or when additional adaptation is needed due
+to changes in the test distribution. Our approach surpasses baselines on widely
+used benchmarks, achieving improvements of up to 4.9\%p and 7.9\%p in mAP for
+COCO $\rightarrow$ COCO-corrupted and SHIFT, respectively, while maintaining
+about 20 FPS or higher.},
+ arxiv_url = {https://arxiv.org/pdf/2312.08875v1.pdf},
+ author = {Jayeon Yoo and Dongkwan Lee and Inseop Chung and Donghyun Kim and Nojun Kwak},
+ title = {What How and When Should Object Detectors Update in Continually Changing Test Domains?},
+ year = {2023}
+}
+
+@article{yuan-2023-robust,
+ abstract = {Test-time adaptation (TTA) intends to adapt the pretrained model to test
+distributions with only unlabeled test data streams. Most of the previous TTA
+methods have achieved great success on simple test data streams such as
+independently sampled data from single or multiple distributions. However,
+these attempts may fail in dynamic scenarios of real-world applications like
+autonomous driving, where the environments gradually change and the test data
+is sampled correlatively over time. In this work, we explore such practical
+test data streams to deploy the model on the fly, namely practical test-time
+adaptation (PTTA). To do so, we elaborate a Robust Test-Time Adaptation (RoTTA)
+method against the complex data stream in PTTA. More specifically, we present a
+robust batch normalization scheme to estimate the normalization statistics.
+Meanwhile, a memory bank is utilized to sample category-balanced data with
+consideration of timeliness and uncertainty. Further, to stabilize the training
+procedure, we develop a time-aware reweighting strategy with a teacher-student
+model. Extensive experiments prove that RoTTA enables continual testtime
+adaptation on the correlatively sampled data streams. Our method is easy to
+implement, making it a good choice for rapid deployment. The code is publicly
+available at https://github.com/BIT-DA/RoTTA},
+ arxiv_url = {https://arxiv.org/pdf/2303.13899v1.pdf},
+ author = {Longhui Yuan and Binhui Xie and Shuang Li},
+ github_url = {https://github.com/BIT-DA/RoTTA},
+ title = {Robust Test-Time Adaptation in Dynamic Scenarios},
+ year = {2023}
+}
+
+@article{yuan-2023-tea,
+ abstract = {Test-time adaptation (TTA) aims to improve model generalizability when test
+data diverges from training distribution, offering the distinct advantage of
+not requiring access to training data and processes, especially valuable in the
+context of large pre-trained models. However, current TTA methods fail to
+address the fundamental issue: covariate shift, i.e., the decreased
+generalizability can be attributed to the model's reliance on the marginal
+distribution of the training data, which may impair model calibration and
+introduce confirmation bias. To address this, we propose a novel energy-based
+perspective, enhancing the model's perception of target data distributions
+without requiring access to training data or processes. Building on this
+perspective, we introduce $\textbf{T}$est-time $\textbf{E}$nergy
+$\textbf{A}$daptation ($\textbf{TEA}$), which transforms the trained classifier
+into an energy-based model and aligns the model's distribution with the test
+data's, enhancing its ability to perceive test distributions and thus improving
+overall generalizability. Extensive experiments across multiple tasks,
+benchmarks and architectures demonstrate TEA's superior generalization
+performance against state-of-the-art methods. Further in-depth analyses reveal
+that TEA can equip the model with a comprehensive perception of test
+distribution, ultimately paving the way toward improved generalization and
+calibration.},
+ arxiv_url = {https://arxiv.org/pdf/2311.14402v2.pdf},
+ author = {Yige Yuan and Bingbing Xu and Liang Hou and Fei Sun and Huawei Shen and Xueqi Cheng},
+ github_url = {https://github.com/yuanyige/tea},
+ title = {TEA: Test-time Energy Adaptation},
+ year = {2023}
+}
+
+@article{zhao-2023-delta,
+ abstract = {Fully test-time adaptation aims at adapting a pre-trained model to the test
+stream during real-time inference, which is urgently required when the test
+distribution differs from the training distribution. Several efforts have been
+devoted to improving adaptation performance. However, we find that two
+unfavorable defects are concealed in the prevalent adaptation methodologies
+like test-time batch normalization (BN) and self-learning. First, we reveal
+that the normalization statistics in test-time BN are completely affected by
+the currently received test samples, resulting in inaccurate estimates. Second,
+we show that during test-time adaptation, the parameter update is biased
+towards some dominant classes. In addition to the extensively studied test
+stream with independent and class-balanced samples, we further observe that the
+defects can be exacerbated in more complicated test environments, such as
+(time) dependent or class-imbalanced data. We observe that previous approaches
+work well in certain scenarios while show performance degradation in others due
+to their faults. In this paper, we provide a plug-in solution called DELTA for
+Degradation-freE fuLly Test-time Adaptation, which consists of two components:
+(i) Test-time Batch Renormalization (TBR), introduced to improve the estimated
+normalization statistics. (ii) Dynamic Online re-weighTing (DOT), designed to
+address the class bias within optimization. We investigate various test-time
+adaptation methods on three commonly used datasets with four scenarios, and a
+newly introduced real-world dataset. DELTA can help them deal with all
+scenarios simultaneously, leading to SOTA performance.},
+ arxiv_url = {https://arxiv.org/pdf/2301.13018v1.pdf},
+ author = {Bowen Zhao and Chen Chen and Shu-Tao Xia},
+ title = {DELTA: DEGRADATION-FREE FULLY TEST-TIME ADAPTATION},
+ year = {2023}
+}
+
+% ===========================================
+% REFERENCE CANDIDATES
+% Additional reference papers for context
+% ===========================================
+
+@article{author-year-covariate,
+ title = {Covariate shift and local learning by distribution matching}
+}
+
+@article{author-year-domain,
+ title = {Domain adaptation in the absence of source domain data}
+}
+
+@article{author-year-semi,
+ title = {Semi-supervised learning by entropy minimization}
+}
+
+@article{bai-2020-multiscale,
+ abstract = {We propose a new class of implicit networks, the multiscale deep equilibrium
+model (MDEQ), suited to large-scale and highly hierarchical pattern recognition
+domains. An MDEQ directly solves for and backpropagates through the equilibrium
+points of multiple feature resolutions simultaneously, using implicit
+differentiation to avoid storing intermediate states (and thus requiring only
+$O(1)$ memory consumption). These simultaneously-learned multi-resolution
+features allow us to train a single model on a diverse set of tasks and loss
+functions, such as using a single MDEQ to perform both image classification and
+semantic segmentation. We illustrate the effectiveness of this approach on two
+large-scale vision tasks: ImageNet classification and semantic segmentation on
+high-resolution images from the Cityscapes dataset. In both settings, MDEQs are
+able to match or exceed the performance of recent competitive computer vision
+models: the first time such performance and scale have been achieved by an
+implicit deep learning approach. The code and pre-trained models are at
+https://github.com/locuslab/mdeq .},
+ arxiv_url = {https://arxiv.org/pdf/2006.08656v2.pdf},
+ author = {Shaojie Bai and Vladlen Koltun and J. Zico Kolter},
+ title = {Multiscale deep equilibrium models},
+ year = {2020}
+}
+
+@article{berthelot-2019-mixmatch,
+ abstract = {Semi-supervised learning has proven to be a powerful paradigm for leveraging
+unlabeled data to mitigate the reliance on large labeled datasets. In this
+work, we unify the current dominant approaches for semi-supervised learning to
+produce a new algorithm, MixMatch, that works by guessing low-entropy labels
+for data-augmented unlabeled examples and mixing labeled and unlabeled data
+using MixUp. We show that MixMatch obtains state-of-the-art results by a large
+margin across many datasets and labeled data amounts. For example, on CIFAR-10
+with 250 labels, we reduce error rate by a factor of 4 (from 38% to 11%) and by
+a factor of 2 on STL-10. We also demonstrate how MixMatch can help achieve a
+dramatically better accuracy-privacy trade-off for differential privacy.
+Finally, we perform an ablation study to tease apart which components of
+MixMatch are most important for its success.},
+ arxiv_url = {https://arxiv.org/pdf/1905.02249v2.pdf},
+ author = {David Berthelot and Nicholas Carlini and Ian Goodfellow and Nicolas Papernot and Avital Oliver and Colin Raffel},
+ title = {Mixmatch: A holistic approach to semi-supervised learning},
+ year = {2019}
+}
+
+@article{carlucci-2017-autodial,
+ abstract = {Classifiers trained on given databases perform poorly when tested on data
+acquired in different settings. This is explained in domain adaptation through
+a shift among distributions of the source and target domains. Attempts to align
+them have traditionally resulted in works reducing the domain shift by
+introducing appropriate loss terms, measuring the discrepancies between source
+and target distributions, in the objective function. Here we take a different
+route, proposing to align the learned representations by embedding in any given
+network specific Domain Alignment Layers, designed to match the source and
+target feature distributions to a reference one. Opposite to previous works
+which define a priori in which layers adaptation should be performed, our
+method is able to automatically learn the degree of feature alignment required
+at different levels of the deep network. Thorough experiments on different
+public benchmarks, in the unsupervised setting, confirm the power of our
+approach.},
+ arxiv_url = {https://arxiv.org/pdf/1704.08082v3.pdf},
+ author = {Fabio Maria Carlucci and Lorenzo Porzi and Barbara Caputo and Elisa Ricci and Samuel Rota Bulò},
+ title = {Autodial: Automatic domain alignment layers},
+ year = {2017}
+}
+
+@article{cordts-2016-the,
+ abstract = {Visual understanding of complex urban street scenes is an enabling factor for
+a wide range of applications. Object detection has benefited enormously from
+large-scale datasets, especially in the context of deep learning. For semantic
+urban scene understanding, however, no current dataset adequately captures the
+complexity of real-world urban scenes.
+  To address this, we introduce Cityscapes, a benchmark suite and large-scale
+dataset to train and test approaches for pixel-level and instance-level
+semantic labeling. Cityscapes is comprised of a large, diverse set of stereo
+video sequences recorded in streets from 50 different cities. 5000 of these
+images have high quality pixel-level annotations; 20000 additional images have
+coarse annotations to enable methods that leverage large volumes of
+weakly-labeled data. Crucially, our effort exceeds previous attempts in terms
+of dataset size, annotation richness, scene variability, and complexity. Our
+accompanying empirical study provides an in-depth analysis of the dataset
+characteristics, as well as a performance evaluation of several
+state-of-the-art approaches based on our benchmark.},
+ arxiv_url = {https://arxiv.org/pdf/1604.01685v2.pdf},
+ author = {Marius Cordts and Mohamed Omran and Sebastian Ramos and Timo Rehfeld and Markus Enzweiler and Rodrigo Benenson and Uwe Franke and Stefan Roth and Bernt Schiele},
+ title = {The cityscapes dataset for semantic urban scene understanding},
+ year = {2016}
+}
+
+@article{dhillon-2019-baseline,
+ abstract = {Fine-tuning a deep network trained with the standard cross-entropy loss is a
+strong baseline for few-shot learning. When fine-tuned transductively, this
+outperforms the current state-of-the-art on standard datasets such as
+Mini-ImageNet, Tiered-ImageNet, CIFAR-FS and FC-100 with the same
+hyper-parameters. The simplicity of this approach enables us to demonstrate the
+first few-shot learning results on the ImageNet-21k dataset. We find that using
+a large number of meta-training classes results in high few-shot accuracies
+even for a large number of few-shot classes. We do not advocate our approach as
+the solution for few-shot learning, but simply use the results to highlight
+limitations of current benchmarks and few-shot protocols. We perform extensive
+studies on benchmark datasets to propose a metric that quantifies the
+"hardness" of a few-shot episode. This metric can be used to report the
+performance of few-shot algorithms in a more systematic way.},
+ arxiv_url = {https://arxiv.org/pdf/1909.02729v5.pdf},
+ author = {Guneet S. Dhillon and Pratik Chaudhari and Avinash Ravichandran and Stefano Soatto},
+ journal = {International Conference on Learning Representations (ICLR), 2020},
+ title = {A baseline for few-shot image classiﬁcation},
+ year = {2019}
+}
+
+@article{doersch-2015-unsupervised,
+ abstract = {This work explores the use of spatial context as a source of free and
+plentiful supervisory signal for training a rich visual representation. Given
+only a large, unlabeled image collection, we extract random pairs of patches
+from each image and train a convolutional neural net to predict the position of
+the second patch relative to the first. We argue that doing well on this task
+requires the model to learn to recognize objects and their parts. We
+demonstrate that the feature representation learned using this within-image
+context indeed captures visual similarity across images. For example, this
+representation allows us to perform unsupervised visual discovery of objects
+like cats, people, and even birds from the Pascal VOC 2011 detection dataset.
+Furthermore, we show that the learned ConvNet can be used in the R-CNN
+framework and provides a significant boost over a randomly-initialized ConvNet,
+resulting in state-of-the-art performance among algorithms which use only
+Pascal-provided training set annotations.},
+ arxiv_url = {https://arxiv.org/pdf/1505.05192v3.pdf},
+ author = {Carl Doersch and Abhinav Gupta and Alexei A. Efros},
+ title = {Unsupervised visual representation learning by context prediction},
+ year = {2015}
+}
+
+@article{donahue-2013-decaf,
+ abstract = {We evaluate whether features extracted from the activation of a deep
+convolutional network trained in a fully supervised fashion on a large, fixed
+set of object recognition tasks can be re-purposed to novel generic tasks. Our
+generic tasks may differ significantly from the originally trained tasks and
+there may be insufficient labeled or unlabeled data to conventionally train or
+adapt a deep architecture to the new tasks. We investigate and visualize the
+semantic clustering of deep convolutional features with respect to a variety of
+such tasks, including scene recognition, domain adaptation, and fine-grained
+recognition challenges. We compare the efficacy of relying on various network
+levels to define a fixed feature, and report novel results that significantly
+outperform the state-of-the-art on several important vision challenges. We are
+releasing DeCAF, an open-source implementation of these deep convolutional
+activation features, along with all associated network parameters to enable
+vision researchers to be able to conduct experimentation with deep
+representations across a range of visual concept learning paradigms.},
+ arxiv_url = {https://arxiv.org/pdf/1310.1531v1.pdf},
+ author = {Jeff Donahue and Yangqing Jia and Oriol Vinyals and Judy Hoffman and Ning Zhang and Eric Tzeng and Trevor Darrell},
+ title = {Decaf: A deep convolutional activation feature for generic visual recognition},
+ year = {2013}
+}
+
+@article{gammerman-2013-learning,
+ abstract = {We describe a method for predicting a classification of an object given
+classifications of the objects in the training set, assuming that the pairs
+object/classification are generated by an i.i.d. process from a continuous
+probability distribution. Our method is a modification of Vapnik's
+support-vector machine; its main novelty is that it gives not only the
+prediction itself but also a practicable measure of the evidence found in
+support of that prediction. We also describe a procedure for assigning degrees
+of confidence to predictions made by the support vector machine. Some
+experimental results are presented, and possible extensions of the algorithms
+are discussed.},
+ arxiv_url = {https://arxiv.org/pdf/1301.7375v1.pdf},
+ author = {Alex Gammerman and Volodya Vovk and Vladimir Vapnik},
+ title = {Learning by transduction},
+ year = {2013}
+}
+
+@article{ganin-2014-unsupervised,
+ abstract = {Top-performing deep architectures are trained on massive amounts of labeled
+data. In the absence of labeled data for a certain task, domain adaptation
+often provides an attractive option given that labeled data of similar nature
+but from a different domain (e.g. synthetic images) are available. Here, we
+propose a new approach to domain adaptation in deep architectures that can be
+trained on large amount of labeled data from the source domain and large amount
+of unlabeled data from the target domain (no labeled target-domain data is
+necessary).
+  As the training progresses, the approach promotes the emergence of "deep"
+features that are (i) discriminative for the main learning task on the source
+domain and (ii) invariant with respect to the shift between the domains. We
+show that this adaptation behaviour can be achieved in almost any feed-forward
+model by augmenting it with few standard layers and a simple new gradient
+reversal layer. The resulting augmented architecture can be trained using
+standard backpropagation.
+  Overall, the approach can be implemented with little effort using any of the
+deep-learning packages. The method performs very well in a series of image
+classification experiments, achieving adaptation effect in the presence of big
+domain shifts and outperforming previous state-of-the-art on Office datasets.},
+ arxiv_url = {https://arxiv.org/pdf/1409.7495v2.pdf},
+ author = {Yaroslav Ganin and Victor Lempitsky},
+ title = {Unsupervised domain adaptation by backpropagation},
+ year = {2014}
+}
+
+@article{geirhos-2018-generalisation,
+ abstract = {We compare the robustness of humans and current convolutional deep neural
+networks (DNNs) on object recognition under twelve different types of image
+degradations. First, using three well known DNNs (ResNet-152, VGG-19,
+GoogLeNet) we find the human visual system to be more robust to nearly all of
+the tested image manipulations, and we observe progressively diverging
+classification error-patterns between humans and DNNs when the signal gets
+weaker. Secondly, we show that DNNs trained directly on distorted images
+consistently surpass human performance on the exact distortion types they were
+trained on, yet they display extremely poor generalisation abilities when
+tested on other distortion types. For example, training on salt-and-pepper
+noise does not imply robustness on uniform white noise and vice versa. Thus,
+changes in the noise distribution between training and testing constitutes a
+crucial challenge to deep learning vision systems that can be systematically
+addressed in a lifelong machine learning approach. Our new dataset consisting
+of 83K carefully measured human psychophysical trials provide a useful
+reference for lifelong robustness against image degradations set by the human
+visual system.},
+ arxiv_url = {https://arxiv.org/pdf/1808.08750v3.pdf},
+ author = {Robert Geirhos and Carlos R. Medina Temme and Jonas Rauber and Heiko H. Schütt and Matthias Bethge and Felix A. Wichmann},
+ title = {Generalisation in humans and deep neural networks},
+ year = {2018}
+}
+
+@article{geirhos-2018-imagenet,
+ abstract = {Convolutional Neural Networks (CNNs) are commonly thought to recognise
+objects by learning increasingly complex representations of object shapes. Some
+recent studies suggest a more important role of image textures. We here put
+these conflicting hypotheses to a quantitative test by evaluating CNNs and
+human observers on images with a texture-shape cue conflict. We show that
+ImageNet-trained CNNs are strongly biased towards recognising textures rather
+than shapes, which is in stark contrast to human behavioural evidence and
+reveals fundamentally different classification strategies. We then demonstrate
+that the same standard architecture (ResNet-50) that learns a texture-based
+representation on ImageNet is able to learn a shape-based representation
+instead when trained on "Stylized-ImageNet", a stylized version of ImageNet.
+This provides a much better fit for human behavioural performance in our
+well-controlled psychophysical lab setting (nine experiments totalling 48,560
+psychophysical trials across 97 observers) and comes with a number of
+unexpected emergent benefits such as improved object detection performance and
+previously unseen robustness towards a wide range of image distortions,
+highlighting advantages of a shape-based representation.},
+ arxiv_url = {https://arxiv.org/pdf/1811.12231v3.pdf},
+ author = {Robert Geirhos and Patricia Rubisch and Claudio Michaelis and Matthias Bethge and Felix A. Wichmann and Wieland Brendel},
+ title = {Imagenet-trained CNNs are biased towards texture; increasing shape bias improves accuracy and robustness},
+ year = {2018}
+}
+
+@article{gidaris-2018-unsupervised,
+ abstract = {Over the last years, deep convolutional neural networks (ConvNets) have
+transformed the field of computer vision thanks to their unparalleled capacity
+to learn high level semantic image features. However, in order to successfully
+learn those features, they usually require massive amounts of manually labeled
+data, which is both expensive and impractical to scale. Therefore, unsupervised
+semantic feature learning, i.e., learning without requiring manual annotation
+effort, is of crucial importance in order to successfully harvest the vast
+amount of visual data that are available today. In our work we propose to learn
+image features by training ConvNets to recognize the 2d rotation that is
+applied to the image that it gets as input. We demonstrate both qualitatively
+and quantitatively that this apparently simple task actually provides a very
+powerful supervisory signal for semantic feature learning. We exhaustively
+evaluate our method in various unsupervised feature learning benchmarks and we
+exhibit in all of them state-of-the-art performance. Specifically, our results
+on those benchmarks demonstrate dramatic improvements w.r.t. prior
+state-of-the-art approaches in unsupervised representation learning and thus
+significantly close the gap with supervised feature learning. For instance, in
+PASCAL VOC 2007 detection task our unsupervised pre-trained AlexNet model
+achieves the state-of-the-art (among unsupervised methods) mAP of 54.4% that is
+only 2.4 points lower from the supervised case. We get similarly striking
+results when we transfer our unsupervised learned features on various other
+tasks, such as ImageNet classification, PASCAL classification, PASCAL
+segmentation, and CIFAR-10 classification. The code and models of our paper
+will be published on: https://github.com/gidariss/FeatureLearningRotNet .},
+ arxiv_url = {https://arxiv.org/pdf/1803.07728v1.pdf},
+ author = {Spyros Gidaris and Praveer Singh and Nikos Komodakis},
+ title = {Unsupervised representation learning by predicting image rotations},
+ year = {2018}
+}
+
+@article{goyal-2017-accurate,
+ abstract = {Deep learning thrives with large neural networks and large datasets. However,
+larger networks and larger datasets result in longer training times that impede
+research and development progress. Distributed synchronous SGD offers a
+potential solution to this problem by dividing SGD minibatches over a pool of
+parallel workers. Yet to make this scheme efficient, the per-worker workload
+must be large, which implies nontrivial growth in the SGD minibatch size. In
+this paper, we empirically show that on the ImageNet dataset large minibatches
+cause optimization difficulties, but when these are addressed the trained
+networks exhibit good generalization. Specifically, we show no loss of accuracy
+when training with large minibatch sizes up to 8192 images. To achieve this
+result, we adopt a hyper-parameter-free linear scaling rule for adjusting
+learning rates as a function of minibatch size and develop a new warmup scheme
+that overcomes optimization challenges early in training. With these simple
+techniques, our Caffe2-based system trains ResNet-50 with a minibatch size of
+8192 on 256 GPUs in one hour, while matching small minibatch accuracy. Using
+commodity hardware, our implementation achieves ~90% scaling efficiency when
+moving from 8 to 256 GPUs. Our findings enable training visual recognition
+models on internet-scale data with high efficiency.},
+ arxiv_url = {https://arxiv.org/pdf/1706.02677v2.pdf},
+ author = {Priya Goyal and Piotr Dollár and Ross Girshick and Pieter Noordhuis and Lukasz Wesolowski and Aapo Kyrola and Andrew Tulloch and Yangqing Jia and Kaiming He},
+ title = {Accurate, large minibatch sgd: training imagenet in 1 hour},
+ year = {2017}
+}
+
+@article{guo-2017-calibration,
+ abstract = {Confidence calibration -- the problem of predicting probability estimates
+representative of the true correctness likelihood -- is important for
+classification models in many applications. We discover that modern neural
+networks, unlike those from a decade ago, are poorly calibrated. Through
+extensive experiments, we observe that depth, width, weight decay, and Batch
+Normalization are important factors influencing calibration. We evaluate the
+performance of various post-processing calibration methods on state-of-the-art
+architectures with image and document classification datasets. Our analysis and
+experiments not only offer insights into neural network learning, but also
+provide a simple and straightforward recipe for practical settings: on most
+datasets, temperature scaling -- a single-parameter variant of Platt Scaling --
+is surprisingly effective at calibrating predictions.},
+ arxiv_url = {https://arxiv.org/pdf/1706.04599v2.pdf},
+ author = {Chuan Guo and Geoff Pleiss and Yu Sun and Kilian Q. Weinberger},
+ title = {On calibration of modern neural networks},
+ year = {2017}
+}
+
+@article{he-2015-deep,
+ abstract = {Deeper neural networks are more difficult to train. We present a residual
+learning framework to ease the training of networks that are substantially
+deeper than those used previously. We explicitly reformulate the layers as
+learning residual functions with reference to the layer inputs, instead of
+learning unreferenced functions. We provide comprehensive empirical evidence
+showing that these residual networks are easier to optimize, and can gain
+accuracy from considerably increased depth. On the ImageNet dataset we evaluate
+residual nets with a depth of up to 152 layers---8x deeper than VGG nets but
+still having lower complexity. An ensemble of these residual nets achieves
+3.57% error on the ImageNet test set. This result won the 1st place on the
+ILSVRC 2015 classification task. We also present analysis on CIFAR-10 with 100
+and 1000 layers.
+  The depth of representations is of central importance for many visual
+recognition tasks. Solely due to our extremely deep representations, we obtain
+a 28% relative improvement on the COCO object detection dataset. Deep residual
+nets are foundations of our submissions to ILSVRC & COCO 2015 competitions,
+where we also won the 1st places on the tasks of ImageNet detection, ImageNet
+localization, COCO detection, and COCO segmentation.},
+ arxiv_url = {https://arxiv.org/pdf/1512.03385v1.pdf},
+ author = {Kaiming He and Xiangyu Zhang and Shaoqing Ren and Jian Sun},
+ title = {Deep residual learning for image recognition},
+ year = {2015}
+}
+
+@article{hendrycks-2019-augmix,
+ abstract = {Modern deep neural networks can achieve high accuracy when the training
+distribution and test distribution are identically distributed, but this
+assumption is frequently violated in practice. When the train and test
+distributions are mismatched, accuracy can plummet. Currently there are few
+techniques that improve robustness to unforeseen data shifts encountered during
+deployment. In this work, we propose a technique to improve the robustness and
+uncertainty estimates of image classifiers. We propose AugMix, a data
+processing technique that is simple to implement, adds limited computational
+overhead, and helps models withstand unforeseen corruptions. AugMix
+significantly improves robustness and uncertainty measures on challenging image
+classification benchmarks, closing the gap between previous methods and the
+best possible performance in some cases by more than half.},
+ arxiv_url = {https://arxiv.org/pdf/1912.02781v2.pdf},
+ author = {Dan Hendrycks and Norman Mu and Ekin D. Cubuk and Barret Zoph and Justin Gilmer and Balaji Lakshminarayanan},
+ title = {Augmix: A simple data processing method to improve robustness and uncertainty},
+ year = {2019}
+}
+
+@article{hendrycks-2019-benchmarking,
+ abstract = {In this paper we establish rigorous benchmarks for image classifier
+robustness. Our first benchmark, ImageNet-C, standardizes and expands the
+corruption robustness topic, while showing which classifiers are preferable in
+safety-critical applications. Then we propose a new dataset called ImageNet-P
+which enables researchers to benchmark a classifier's robustness to common
+perturbations. Unlike recent robustness research, this benchmark evaluates
+performance on common corruptions and perturbations not worst-case adversarial
+perturbations. We find that there are negligible changes in relative corruption
+robustness from AlexNet classifiers to ResNet classifiers. Afterward we
+discover ways to enhance corruption and perturbation robustness. We even find
+that a bypassed adversarial defense provides substantial common perturbation
+robustness. Together our benchmarks may aid future work toward networks that
+robustly generalize.},
+ arxiv_url = {https://arxiv.org/pdf/1903.12261v1.pdf},
+ author = {Dan Hendrycks and Thomas Dietterich},
+ title = {Benchmarking neural network robustness to common corruptions and perturbations},
+ year = {2019}
+}
