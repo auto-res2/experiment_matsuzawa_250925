@@ -1,0 +1,84 @@
+
+Input:
+# Instructions:
+You determine whether the Python script has succeeded or failed based on the given information.
+Output True if the script SUCCEEDED, False if it FAILED.
+Follow the rules below:
+
+# Rules:
+- Output False if "Error Data" contains any error messages or exceptions.
+- Output False if both "Error Data" and "Output Data" are empty.
+- Output False if "Output Data" does not contain clear experimental results such as:
+  - Quantitative results or measurements
+  - Numerical comparisons or improvements
+  - Completion messages indicating successful execution
+  - Statistical analysis or evaluation results
+- Output True ONLY if "Output Data" contains clear evidence of successful experimental execution with meaningful results.
+
+# Error Data:
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/toma/pt-80-1-a-13/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/main.py", line 60, in <module>
+    main()
+  File "/home/toma/pt-80-1-a-13/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/main.py", line 54, in main
+    _run(merged)
+  File "/home/toma/pt-80-1-a-13/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/main.py", line 25, in _run
+    Trainer(cfg).run()
+    ^^^^^^^^^^^^
+  File "/home/toma/pt-80-1-a-13/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/train.py", line 78, in __init__
+    (self.train_set, self.val_set, self.test_set) = create_datasets(cfg, tf_train, tf_val)
+                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/toma/pt-80-1-a-13/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/preprocess.py", line 248, in create_datasets
+    test_set = DATASET_FACTORY[name](cfg, tf_val)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/toma/pt-80-1-a-13/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/preprocess.py", line 180, in _create_imagenetc
+    raise FileNotFoundError(f"Unable to load ImageNet-C from HuggingFace alternatives. Please provide a local path.")
+FileNotFoundError: Unable to load ImageNet-C from HuggingFace alternatives. Please provide a local path.
+# Output Data:
+===== EXPERIMENT SUMMARY =====
+{
+    "train_loss_per_epoch": [],
+    "val_acc_per_epoch": [],
+    "timestamp": "20250925_081643",
+    "config": {
+        "description": "FLASH-TTA \u2013 corruption robustness bench (CIFAR-10-C + ImageNet-C).\nUses pre-trained backbones and runs *no supervised training* (epochs: 0).\n",
+        "seed": 0,
+        "output_dir": "runs/full_experiment",
+        "figures_dir": "figures",
+        "experiment_id": "cifar10c_resnet50_flash_tta",
+        "dataset": {
+            "name": "CIFAR10C",
+            "path": "hf://randall-lab/cifar10-c",
+            "num_classes": 10
+        },
+        "model": {
+            "name": "resnet50.a1_in1k",
+            "pretrained": true,
+            "num_classes": 10,
+            "method": "flash_tta",
+            "proj_dim": 16,
+            "gru_hidden": 256
+        },
+        "training": {
+            "epochs": 0,
+            "batch_size": 128,
+            "lr": 0.0003
+        },
+        "evaluation": {
+            "batch_size": 256
+        }
+    },
+    "test_metrics": {
+        "accuracy_top1": 10.289999842643738,
+        "ece": 0.20670966382473704,
+        "brier": NaN,
+        "latency_ms_mean": 43.51708288192749,
+        "latency_ms_std": 93.69577031178557
+    }
+}
+==============================
+Output:
+{
+    "is_experiment_successful": false
+}
