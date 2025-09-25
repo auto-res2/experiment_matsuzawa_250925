@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The methodology focuses on identifying and mitigating unique sources of error during GNN quantization. The aggregation phase in GNNs is identified as a critical source of numerical error, especially for high in-degree nodes, leading to widely varying output magnitudes and distorted quantization ranges. To address this, Degree-Quant (DQ) is proposed, consisting of two core components: 1) Stochastic Protection from Quantization: During training, a topology-aware mask is generated where nodes with higher in-degree are stochastically protected (i.e., computations performed at full precision for message passing, aggregation, and update phases). This aims to encourage more accurate weight updates by allowing better gradient flow through critical nodes. All weights, however, are quantized. At inference time, protection is disabled. 2) Percentile Tracking of Quantization Ranges: Instead of traditional min-max or momentum-based methods, DQ uses percentile-based tracking for `qmin` and `qmax` by clipping the top and bottom 0.1% of tensor values. This stabilizes quantization ranges, making them more representative of the majority of values and reducing rounding error, especially given the large fluctuations in aggregation output variance in GNNs. DQ is integrated into a standard Quantization-Aware Training (QAT) scheme, simulating quantization in the forward pass and using STE for gradient calculation.
+
+# GitHub URLs List
+['https://github.com/camlsys/degree-quant', 'https://github.com/camlsys/degree-quant']
+Output:
+{
+    "index": 0
+}
