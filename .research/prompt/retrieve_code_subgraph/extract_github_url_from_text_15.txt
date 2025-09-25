@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The core methodology involves developing an efficient CUDA kernel in Triton that preserves FlashAttention's memory management while accommodating arbitrary causal structures defined by key and query indexing. Two main dynamic sparsity strategies are implemented: 1. QK-Sparse Attention: This method dynamically drops keys and queries for each attention head, creating smaller, compact tensors (Qc, Kc, Vc). It then uses the original indices (qidx, kidx) to determine the relevant key blocks (up to `jstop`) to compute and applies a local causal mask within each tile, ensuring computational efficiency despite the non-triangular mask. Softmax statistics accumulation is modified to handle 'stranded' queries (no keys). 2. Hash-Sparse Attention: This approach assigns a bucket identifier to each key and query, then reorders Q, K, V tensors by these hash buckets (using stable sort to preserve temporal order within buckets). The kernel uses these hash indices (qhash, khash) to identify starting (`jstart`) and stopping (`jstop`) key blocks, computing attention only for queries and keys within the same or relevant hash buckets. A combined causal and bucket-based mask is applied locally within each tile.
+
+# GitHub URLs List
+['https://github.com/epfml/dynamic-sparse-flash-attention']
+Output:
+{
+    "index": 0
+}
