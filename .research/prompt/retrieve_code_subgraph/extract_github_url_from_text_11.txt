@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The ATTA framework continuously selects informative instances from streaming test data for labeling by an oracle within a defined budget. The pre-trained model is initialized with source parameters and adapted in real-time. SimATTA, the proposed algorithm, first partitions unlabeled test samples into high-entropy (Uh(t)) and low-entropy (Ul(t)) sets using an entropy threshold. Low-entropy samples are pseudo-labeled by the frozen source-pretrained model and aggregated to form a source-like dataset (Dl(t)) to mitigate CF. High-entropy samples are selected for active labeling using an incremental clustering technique, primarily a weighted K-means variation, to reduce redundancy and increase distribution coverage; these selected samples are referred to as anchors (Dh(t)). The model is then fine-tuned using a balanced combination of labeled test anchors (Dh(t)) and pseudo-labeled source-like samples (Dl(t)), where training weights are set approximately equal to sample ratios to achieve optimal adaptation and CF mitigation.
+
+# GitHub URLs List
+['https://github.com/divelab/ATTA', 'https://github.com/DequanWang/tent', 'https://github.com/mr-eggplant/EATA', 'https://github.com/qinenergy/cotta', 'https://github.com/mr-eggplant/SAR', 'https://github.com/virajprabhu/CLUE']
+Output:
+{
+    "index": 0
+}
