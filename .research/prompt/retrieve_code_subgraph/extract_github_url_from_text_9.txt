@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The core methodology involves implementing dynamic sparsity. For the Sparse Feedforward Layer, a controller, trained using the Gumbel-Softmax trick, dynamically selects only a fraction (1 in N) of parameters to activate for each input token during decoding. For the Sparse QKV Layer, dmodel is subdivided into S modules (dmodel/S), which are processed by a novel multiplicative layer (to represent arbitrary permutations) followed by a 2D convolutional layer. This reduces parameters from O(dmodel^2) to O(dmodel^1.5). The Terraformer architecture for long sequences modifies the decoder block to include two attention mechanisms before the feedforward block, concatenates encoder and decoder representations, and incorporates reversible layers for memory efficiency and low-rank recurrence (using simple recurrent units) for better generalization, especially out-of-distribution.
+
+# GitHub URLs List
+['https://github.com/google/trax', 'https://github.com/google-research/google-research']
+Output:
+{
+    "index": 0
+}
