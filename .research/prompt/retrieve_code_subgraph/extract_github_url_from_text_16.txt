@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The core methodology involves deriving a conservation law for GAT gradient flow dynamics, including variations like shared feature weights and multiple attention heads, using the concept of neuron-wise balancedness from traditional deep neural networks. This law explains why parameter norms become unbalanced during training with standard initialization. Based on this insight, a balanced initialization scheme is proposed (Procedure 2.6). This scheme sets attention parameters to zero and scales feature weights to ensure the L2-norms of incoming and outgoing weights to a neuron are balanced (c=0). Specifically, it scales Wl+1[:, i] based on Wl[i, :] norms. Two balanced initialization variants are tested: BalX (Balanced Xavier) and BalO (Balanced Looks-Linear Orthogonal initialization, where feature weights are initially orthogonal matrices with a looks-linear mirrored block structure).
+
+# GitHub URLs List
+['https://github.com/Diego999/pyGAT']
+Output:
+{
+    "index": 0
+}
