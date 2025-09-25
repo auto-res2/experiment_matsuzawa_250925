@@ -1,0 +1,28 @@
+experiment_name: "reddit_comments_haqgat"
+
+dataset:
+  name: "REDDIT_COMMENTS"
+
+model:
+  name: "HAQGAT"
+  in_channels: 602          # will be overridden by loader if mismatched
+  hidden_channels: 256
+  num_layers: 4
+  num_classes: 41           # overridden if mismatched
+  heads: 8
+  K0_init: 8
+  m_init: 16
+
+training:
+  epochs: 100
+  batch_size: 0  # full-batch
+  lr: 0.002
+  weight_decay: 0.0005
+  gamma: 0.0005
+  epsilon: 0.005
+  dropout: 0.3
+  qat: true
+
+evaluation:
+  save_dir: "results"
+  seed: 1
