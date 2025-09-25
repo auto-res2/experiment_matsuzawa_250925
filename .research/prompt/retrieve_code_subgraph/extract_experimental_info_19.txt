@@ -1,0 +1,1487 @@
+
+Input:
+You are a researcher with expertise in engineering in the field of machine learning.
+
+# Instructions
+- The content described in “Repository Content” corresponds to the GitHub repository of the method described in “Method.”
+- Please extract the following two pieces of information from “Repository Content”:
+    - experimental_code：Extract the implementation sections that are directly related to the method described in “Method.”
+    - experimental_info：Extract and output the experimental settings related to the method described in “Method.”
+
+# Method
+The methodology introduces two key components. First, the Graph Convolutional Attention Layer (CAT) computes attention scores by utilizing convolved features (averaged neighborhood features) as inputs to its score function. This is formalized as Ψ(hi,hj) = α(W˜hi,W˜hj) where ˜hi = 1/|N∗i| ∑ℓ∈N∗i hℓ. Second, the Learnable Graph Convolutional Attention Network (L-CAT) builds upon this by introducing a learnable interpolation mechanism. L-CAT's attention score is defined as Ψ(hi,hj) = λ1 ·α(W˜hi,W˜hj) where ˜hi = hi + λ2 ∑ℓ∈Ni hℓ / (1 + λ2|Ni|). Two scalar parameters, λ1 and λ2 (constrained to [0,1] via a sigmoid function), are learned per layer, enabling L-CAT to dynamically interpolate between a GCN (λ1=0), GAT (λ1=1, λ2=0), and CAT (λ1=1, λ2=1) operation. The theoretical analysis employs a contextual stochastic block model (CSBM) to compare the different GNN architectures.
+
+# Repository Content
+File Path: __init__.py
+Content:
+
+File Path: lcat/__init__.py
+Content:
+
+File Path: lcat/dgl/__init__.py
+Content:
+from .gatv1 import GATv1Layer
+from .gatv2 import GATv2Layer
+
+File Path: lcat/dgl/gatgcn2.py
+Content:
+from typing import Union, Tuple
+import math
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from dgl import function as fn
+from dgl.nn.functional import edge_softmax
+from torch_geometric.nn.dense.linear import Linear, Parameter
+from torch_geometric.nn.inits import constant
+
+
+class GATv1Layer(nn.Module):
+
+    def __init__(
+            self,
+            in_channels: Union[int, Tuple[int, int]],
+            out_channels: int,
+            negative_slope: float = 0.2,
+            add_self_loops: bool = True,
+            heads: int = 1,
+            bias: bool = True,
+            convolve: bool = True,
+            lambda_policy: str = None,  # [None, 'learn1', 'learn2', 'learn12', 'gcn_gat']
+            share_weights_score: bool = False,
+            share_weights_value: bool = False,
+            gcn_mode: bool = False,
+    ):
+        super().__init__()
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.heads = heads
+        self.negative_slope = negative_slope
+        self.add_self_loops = add_self_loops
+        self.convolve = convolve
+        self.lambda_policy = lambda_policy
+        self.gcn_mode = gcn_mode
+        assert out_channels % heads == 0, f'{out_channels} {heads}'
+        assert not gcn_mode or (gcn_mode and self.convolve)
+        assert lambda_policy in [None, 'learn1', 'learn2', 'learn12', 'gcn_gat']
+
+        self.lin_l = Linear(in_channels, out_channels, bias=bias, weight_initializer='glorot')
+        if share_weights_score:
+            self.lin_r = self.lin_l
+        else:
+            self.lin_r = Linear(in_channels, out_channels, bias=bias, weight_initializer='glorot')
+
+        if share_weights_value:
+            self.lin_v = self.lin_l
+        else:
+            self.lin_v = Linear(in_channels, out_channels, bias=bias, weight_initializer='glorot')
+
+        # The learnable parameters to compute attention coefficients:
+        self.att_l = Parameter(torch.Tensor(1, self.heads, out_channels // self.heads))
+        self.att_r = Parameter(torch.Tensor(1, self.heads, out_channels // self.heads))
+
+        self.lmbda_ = None
+        self.lmbda2_ = None
+        if self.lambda_policy is not None:
+            self.lmbda_ = nn.Parameter(torch.ones([]) * 0, requires_grad=True)
+            self.lmbda2_ = nn.Parameter(torch.ones([]) * 0, requires_grad=True)
+
+        self.bias = 0.
+        if bias:
+            self.bias = nn.Parameter(torch.Tensor(out_channels))
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        # Alternative initilization in case it doesn't work
+        #gain = nn.init.calculate_gain('relu')
+        #nn.init.xavier_normal_(self.lin_l.weight, gain=gain)
+        #nn.init.xavier_normal_(self.lin_r.weight, gain=gain)
+        #nn.init.xavier_normal_(self.lin_v.weight, gain=gain)
+        #nn.init.xavier_normal_(self.att_r, gain=gain)
+        #nn.init.xavier_normal_(self.att_l, gain=gain)
+
+        constant(self.att_l, 1.)
+        constant(self.att_r, 1.)
+        self.lin_l.reset_parameters()
+        self.lin_r.reset_parameters()
+        self.lin_v.reset_parameters()
+
+        constant(self.lmbda_, math.log10(6))
+        constant(self.lmbda2_, 1.4)
+        constant(self.bias, 0.)
+
+    @property
+    def lmbda(self):  # The one that controls GCN-->GATConv
+        if self.gcn_mode:
+            return 0.
+        if self.lambda_policy is None:
+            return 1.
+        elif self.lambda_policy == 'learn2':
+            return 1.
+
+        return torch.sigmoid(10 ** self.lmbda_ - 6)
+
+    @property
+    def lmbda2(self):  # The one that controls GATConv-->GAT
+        if self.lambda_policy is None:
+            return 1.
+        elif self.lambda_policy == 'learn1':
+            return 1.
+        elif self.lambda_policy == 'gcn_gat':
+            return 0.
+
+        return torch.sigmoid(10 ** (2.2 - self.lmbda2_) - 6)
+
+    def forward(self, graph, x):
+        with graph.local_scope():
+            # assert not graph.is_block
+
+            x_l = self.lin_l(x).view(-1, self.heads, self.out_channels // self.heads) * self.att_l
+            x_r = self.lin_r(x).view(-1, self.heads, self.out_channels // self.heads) * self.att_r
+            x_v = self.lin_v(x).view(-1, self.heads, self.out_channels // self.heads)
+
+            x_l = x_l.sum(dim=-1, keepdim=True)
+            x_r = x_r.sum(dim=-1, keepdim=True)
+
+            if self.convolve:
+                x_lr = torch.cat((x_l, x_r), dim=1)
+
+                graph.srcdata.update({'hsrc': x_lr})  # (num_nodes, num_heads, num_feats)
+                graph.dstdata.update({
+                    'hdst': 0. * x_lr[:graph.number_of_dst_nodes()]  # (num_nodes, num_heads, num_feats)
+                })
+
+                graph.update_all(fn.u_add_v('hsrc', 'hdst', 'hconv'), fn.sum('hconv', 'hconvsum'))
+
+                num_neigh = graph.in_degrees().unsqueeze(-1).unsqueeze(-1)
+                x_agg = self.lmbda * graph.dstdata.pop('hconvsum')
+
+                diff = graph.num_src_nodes() - graph.num_dst_nodes()
+                if diff > 0:
+                    zeroes = x_agg.new_zeros((diff,) + x_agg.shape[1:])
+                    x_agg = torch.cat((x_agg, zeroes), dim=0)
+                    zeroes = num_neigh.new_zeros((diff, ) + num_neigh.shape[1:])
+                    num_neigh = torch.cat((num_neigh, zeroes), dim=0)
+
+                x_agg = self.lmbda2 * (graph.srcdata['hsrc'] + x_agg)
+                x_agg = x_agg / (1 + self.lmbda * num_neigh)
+
+                x_l, x_r = x_agg[:, :self.heads], x_agg[:, self.heads:]
+
+            assert x.dim() == 2
+
+            if graph.is_block:
+                x_r = x_r[:graph.number_of_dst_nodes()]
+
+            # (num_src_edge, num_heads, out_dim)
+            graph.srcdata.update({'el': x_l})
+            graph.srcdata.update({'ev': x_v})
+            graph.dstdata.update({'er': x_r})
+
+            graph.apply_edges(fn.u_add_v('el', 'er', 'e'))
+            score = F.leaky_relu(graph.edata.pop('e'), self.negative_slope)  # (num_src_edge, num_heads, out_dim)
+            graph.edata['a'] = edge_softmax(graph, score)
+
+            graph.update_all(fn.u_mul_e('ev', 'a', 'm'), fn.sum('m', 'ft'))
+            out = graph.dstdata['ft']
+
+            return out
+
+    def __repr__(self) -> str:
+        return (f'{self.__class__.__name__}({self.in_channels}, '
+                f'{self.out_channels})')
+
+File Path: lcat/dgl/gatv1.py
+Content:
+from typing import Union, Tuple
+import math
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from dgl import function as fn
+from dgl.nn.functional import edge_softmax
+from torch_geometric.nn.dense.linear import Linear, Parameter
+from torch_geometric.nn.inits import constant
+
+
+class GATv1Layer(nn.Module):
+
+    def __init__(
+            self,
+            in_channels: Union[int, Tuple[int, int]],
+            out_channels: int,
+            negative_slope: float = 0.2,
+            add_self_loops: bool = True,
+            heads: int = 1,
+            bias: bool = True,
+            convolve: bool = True,
+            lambda_policy: str = None,  # [None, 'learn1', 'learn2', 'learn12', 'gcn_gat']
+            share_weights_score: bool = False,
+            share_weights_value: bool = False,
+            gcn_mode: bool = False,
+    ):
+        super().__init__()
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.heads = heads
+        self.negative_slope = negative_slope
+        self.add_self_loops = add_self_loops
+        self.convolve = convolve
+        self.lambda_policy = lambda_policy
+        self.gcn_mode = gcn_mode
+        assert out_channels % heads == 0, f'{out_channels} {heads}'
+        assert not gcn_mode or (gcn_mode and self.convolve)
+        assert lambda_policy in [None, 'learn1', 'learn2', 'learn12', 'gcn_gat']
+
+        self.lin_l = Linear(in_channels, out_channels, bias=bias, weight_initializer='glorot')
+        if share_weights_score:
+            self.lin_r = self.lin_l
+        else:
+            self.lin_r = Linear(in_channels, out_channels, bias=bias, weight_initializer='glorot')
+
+        if share_weights_value:
+            self.lin_v = self.lin_l
+        else:
+            self.lin_v = Linear(in_channels, out_channels, bias=bias, weight_initializer='glorot')
+
+        # The learnable parameters to compute attention coefficients:
+        self.att_l = Parameter(torch.Tensor(1, self.heads, out_channels // self.heads))
+        self.att_r = Parameter(torch.Tensor(1, self.heads, out_channels // self.heads))
+
+        self.lmbda_ = None
+        self.lmbda2_ = None
+        if self.lambda_policy is not None:
+            self.lmbda_ = nn.Parameter(torch.ones([]) * 0, requires_grad=True)
+            self.lmbda2_ = nn.Parameter(torch.ones([]) * 0, requires_grad=True)
+
+        self.bias = 0.
+        if bias:
+            self.bias = nn.Parameter(torch.Tensor(out_channels))
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        # Alternative initilization in case it doesn't work
+        #gain = nn.init.calculate_gain('relu')
+        #nn.init.xavier_normal_(self.lin_l.weight, gain=gain)
+        #nn.init.xavier_normal_(self.lin_r.weight, gain=gain)
+        #nn.init.xavier_normal_(self.lin_v.weight, gain=gain)
+        #nn.init.xavier_normal_(self.att_r, gain=gain)
+        #nn.init.xavier_normal_(self.att_l, gain=gain)
+
+        constant(self.att_l, 1.)
+        constant(self.att_r, 1.)
+        self.lin_l.reset_parameters()
+        self.lin_r.reset_parameters()
+        self.lin_v.reset_parameters()
+
+        constant(self.lmbda_, math.log10(6))
+        constant(self.lmbda2_, 1.4)
+        constant(self.bias, 0.)
+
+    @property
+    def lmbda(self):  # The one that controls GCN-->GATConv
+        if self.gcn_mode:
+            return 0.
+        if self.lambda_policy is None:
+            return 1.
+        elif self.lambda_policy == 'learn2':
+            return 1.
+
+        return torch.sigmoid(10 ** self.lmbda_ - 6)
+
+    @property
+    def lmbda2(self):  # The one that controls GATConv-->GAT
+        if self.lambda_policy is None:
+            return 1.
+        elif self.lambda_policy == 'learn1':
+            return 1.
+        elif self.lambda_policy == 'gcn_gat':
+            return 0.
+
+        return torch.sigmoid(10 ** (2.2 - self.lmbda2_) - 6)
+
+    def forward(self, graph, x):
+        with graph.local_scope():
+            # assert not graph.is_block
+
+            x_l = self.lin_l(x).view(-1, self.heads, self.out_channels // self.heads) * self.att_l
+            x_r = self.lin_r(x).view(-1, self.heads, self.out_channels // self.heads) * self.att_r
+            x_v = self.lin_v(x).view(-1, self.heads, self.out_channels // self.heads)
+
+            x_l = x_l.sum(dim=-1, keepdim=True)
+            x_r = x_r.sum(dim=-1, keepdim=True)
+
+            if self.convolve:
+                x_lr = torch.cat((x_l, x_r), dim=1)
+
+                graph.srcdata.update({'hsrc': x_lr})  # (num_nodes, num_heads, num_feats)
+                graph.dstdata.update({
+                    'hdst': 0. * x_lr[:graph.number_of_dst_nodes()]  # (num_nodes, num_heads, num_feats)
+                })
+
+                graph.update_all(fn.u_add_v('hsrc', 'hdst', 'hconv'), fn.sum('hconv', 'hconvsum'))
+
+                num_neigh = graph.in_degrees().unsqueeze(-1).unsqueeze(-1)
+                x_agg = self.lmbda * graph.dstdata.pop('hconvsum')
+
+                diff = graph.num_src_nodes() - graph.num_dst_nodes()
+                if diff > 0:
+                    zeroes = x_agg.new_zeros((diff,) + x_agg.shape[1:])
+                    x_agg = torch.cat((x_agg, zeroes), dim=0)
+                    zeroes = num_neigh.new_zeros((diff, ) + num_neigh.shape[1:])
+                    num_neigh = torch.cat((num_neigh, zeroes), dim=0)
+
+                x_agg = self.lmbda2 * (graph.srcdata['hsrc'] + x_agg)
+                x_agg = x_agg / (1 + self.lmbda * num_neigh)
+
+                x_l, x_r = x_agg[:, :self.heads], x_agg[:, self.heads:]
+
+            assert x.dim() == 2
+
+            if graph.is_block:
+                x_r = x_r[:graph.number_of_dst_nodes()]
+
+            # (num_src_edge, num_heads, out_dim)
+            graph.srcdata.update({'el': x_l})
+            graph.srcdata.update({'ev': x_v})
+            graph.dstdata.update({'er': x_r})
+
+            graph.apply_edges(fn.u_add_v('el', 'er', 'e'))
+            score = F.leaky_relu(graph.edata.pop('e'), self.negative_slope)  # (num_src_edge, num_heads, out_dim)
+            graph.edata['a'] = edge_softmax(graph, score)
+
+            graph.update_all(fn.u_mul_e('ev', 'a', 'm'), fn.sum('m', 'ft'))
+            out = graph.dstdata['ft']
+
+            return out
+
+    def __repr__(self) -> str:
+        return (f'{self.__class__.__name__}({self.in_channels}, '
+                f'{self.out_channels})')
+
+File Path: lcat/dgl/gatv2.py
+Content:
+from typing import Union, Tuple
+import math
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from dgl import function as fn
+from dgl.nn.functional import edge_softmax
+from torch_geometric.nn.dense.linear import Linear, Parameter
+from torch_geometric.nn.inits import constant
+
+
+class GATv2Layer(nn.Module):
+
+    def __init__(
+            self,
+            in_channels: Union[int, Tuple[int, int]],
+            out_channels: int,
+            negative_slope: float = 0.2,
+            add_self_loops: bool = True,
+            heads: int = 1,
+            bias: bool = True,
+            convolve: bool = True,
+            lambda_policy: str = None,  # [None,  'learn1', 'learn2', 'learn12', 'gcn_gat']
+            share_weights_score: bool = False,
+            share_weights_value: bool = False,
+            gcn_mode: bool = False,
+    ):
+        super().__init__()
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.heads = heads
+        self.negative_slope = negative_slope
+        self.add_self_loops = add_self_loops
+        self.convolve = convolve
+        self.lambda_policy = lambda_policy
+        self.gcn_mode = gcn_mode
+        assert out_channels % heads == 0, f'{out_channels} {heads}'
+        assert not gcn_mode or (gcn_mode and self.convolve)
+        assert lambda_policy in [None, 'learn1', 'learn2', 'learn12', 'gcn_gat']
+
+        self.lin_l = Linear(in_channels, out_channels, bias=bias, weight_initializer='glorot')
+        if share_weights_score:
+            self.lin_r = self.lin_l
+        else:
+            self.lin_r = Linear(in_channels, out_channels, bias=bias, weight_initializer='glorot')
+
+        if share_weights_value:
+            self.lin_v = self.lin_l
+        else:
+            self.lin_v = Linear(in_channels, out_channels, bias=bias, weight_initializer='glorot')
+
+        # The learnable parameters to compute attention coefficients:
+        self.att = Parameter(torch.Tensor(1, self.heads, out_channels // self.heads))
+
+        self.lmbda_ = None
+        self.lmbda2_ = None
+        if self.lambda_policy is not None:
+            self.lmbda_ = nn.Parameter(torch.ones([]) * 0, requires_grad=True)
+            self.lmbda2_ = nn.Parameter(torch.ones([]) * 0, requires_grad=True)
+
+        self.bias = 0.
+        if bias:
+            self.bias = nn.Parameter(torch.Tensor(out_channels))
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        # Alternative initilization in case it doesn't work
+        #gain = nn.init.calculate_gain('relu')
+        #nn.init.xavier_normal_(self.lin_l.weight, gain=gain)
+        #nn.init.xavier_normal_(self.lin_r.weight, gain=gain)
+        #nn.init.xavier_normal_(self.lin_v.weight, gain=gain)
+        #nn.init.xavier_normal_(self.att, gain=gain)
+
+        constant(self.att, 1.)
+        self.lin_l.reset_parameters()
+        self.lin_r.reset_parameters()
+        self.lin_v.reset_parameters()
+
+        constant(self.lmbda_, math.log10(6))
+        constant(self.lmbda2_, 1.4)
+        constant(self.bias, 0.)
+
+    @property
+    def lmbda(self):  # The one that controls GCN-->GATConv
+        if self.gcn_mode:
+            return 0.
+        if self.lambda_policy is None:
+            return 1.
+        elif self.lambda_policy == 'learn2':
+            return 1.
+
+        return torch.sigmoid(10 ** self.lmbda_ - 6)
+
+    @property
+    def lmbda2(self):  # The one that controls GATConv-->GAT
+        if self.lambda_policy is None:
+            return 1.
+        elif self.lambda_policy == 'learn1':
+            return 1.
+        elif self.lambda_policy == 'gcn_gat':
+            return 0.
+
+        return torch.sigmoid(10 ** (2.2 - self.lmbda2_) - 6)
+
+    def forward(self, graph, x):
+        with graph.local_scope():
+            # assert not graph.is_block
+
+            x_l = self.lin_l(x).view(-1, self.heads, self.out_channels // self.heads)
+            x_r = self.lin_r(x).view(-1, self.heads, self.out_channels // self.heads)
+            x_v = self.lin_v(x).view(-1, self.heads, self.out_channels // self.heads)
+
+            if self.convolve:
+                x_lr = torch.cat((x_l, x_r), dim=1)
+
+                graph.srcdata.update({'hsrc': x_lr})  # (num_nodes, num_heads, num_feats)
+                graph.dstdata.update({
+                    'hdst': 0. * x_lr[:graph.number_of_dst_nodes()]  # (num_nodes, num_heads, num_feats)
+                })
+
+                graph.update_all(fn.u_add_v('hsrc', 'hdst', 'hconv'), fn.sum('hconv', 'hconvsum'))
+
+                num_neigh = graph.in_degrees().unsqueeze(-1).unsqueeze(-1)
+                x_agg = self.lmbda * graph.dstdata.pop('hconvsum')
+
+                diff = graph.num_src_nodes() - graph.num_dst_nodes()
+                if diff > 0:
+                    zeroes = x_agg.new_zeros((diff,) + x_agg.shape[1:])
+                    x_agg = torch.cat((x_agg, zeroes), dim=0)
+                    zeroes = num_neigh.new_zeros((diff, ) + num_neigh.shape[1:])
+                    num_neigh = torch.cat((num_neigh, zeroes), dim=0)
+
+                x_agg = self.lmbda2 * (graph.srcdata['hsrc'] + x_agg)
+                x_agg = x_agg / (1 + self.lmbda * num_neigh)
+
+                x_l, x_r = x_agg[:, :self.heads], x_agg[:, self.heads:]
+
+            assert x.dim() == 2
+
+            if graph.is_block:
+                x_r = x_r[:graph.number_of_dst_nodes()]
+
+            # (num_src_edge, num_heads, out_dim)
+            graph.srcdata.update({'el': x_l})
+            graph.srcdata.update({'ev': x_v})
+            graph.dstdata.update({'er': x_r})
+
+            graph.apply_edges(fn.u_add_v('el', 'er', 'e'))
+            e = F.leaky_relu(graph.edata.pop('e'), self.negative_slope)  # (num_src_edge, num_heads, out_dim)
+            score = (e * self.att).sum(dim=-1, keepdim=True)  # (num_edge, num_heads, 1)
+            graph.edata['a'] = edge_softmax(graph, score)
+
+            graph.update_all(fn.u_mul_e('ev', 'a', 'm'), fn.sum('m', 'ft'))
+            out = graph.dstdata['ft']
+
+            return out
+
+    def __repr__(self) -> str:
+        return (f'{self.__class__.__name__}({self.in_channels}, '
+                f'{self.out_channels})')
+
+File Path: lcat/pyg/__init__.py
+Content:
+from .generalgat import GeneralGATLayer, GeneralGATConv
+from .gatv1 import GATv1Layer
+from .gatv2 import GATv2Layer
+from .gatgcn2 import GAT2v1Layer, GAT2v2Layer
+from .gatpna import GATPNAv1Layer, GATPNAv2Layer
+File Path: lcat/pyg/gatgcn2.py
+Content:
+from math import log
+from typing import Union, Tuple
+
+import torch
+from torch import Tensor
+from torch_geometric.nn.conv.gcn_conv import gcn_norm
+from torch_geometric.typing import Adj, OptTensor, PairTensor
+from torch_sparse import SparseTensor
+
+from .gatv1 import GATv1Layer
+from .gatv2 import GATv2Layer
+
+
+class GAT2v1Layer(GATv1Layer):
+    x_0: OptTensor
+
+    def __init__(
+            self,
+            channels: Union[int, Tuple[int, int]],
+            alpha: float,
+            theta: float = None,
+            layer: int = None,
+            normalize: bool = True,
+            add_self_loops: bool = True,
+            negative_slope: float = 0.2,
+            heads: int = 1,
+            bias: bool = True,
+            mode: str = 'gcn',
+            share_weights_score: bool = False,
+            share_weights_value: bool = False,
+            **kwargs,
+    ):
+        assert share_weights_value  # TODO
+
+        kwargs.setdefault('aggr', 'add')
+        super().__init__(channels, channels // heads, negative_slope, add_self_loops,
+                         heads, bias, mode, share_weights_score,
+                         share_weights_value, **kwargs)
+        self.alpha = alpha
+        self.beta = 1.
+        if theta is not None or layer is not None:
+            assert theta is not None and layer is not None
+            self.beta = log(theta / layer + 1)
+        self.normalize = normalize
+        self.x_0 = None
+
+    def get_x_v(self, x):
+        return x
+
+    def forward(self, x: Union[Tensor, PairTensor], x_0: Tensor, edge_index: Adj, size_target: int = None,
+                edge_weight: OptTensor = None, return_attention_info: bool = False):
+        assert not return_attention_info  # TODO
+
+        if self.normalize:
+            if isinstance(edge_index, Tensor):
+                edge_index, edge_weight = gcn_norm(  # yapf: disable
+                    edge_index, edge_weight, x.size(self.node_dim), False,
+                    self.add_self_loops, self.flow, dtype=x.dtype)
+
+            elif isinstance(edge_index, SparseTensor):
+                edge_index = gcn_norm(  # yapf: disable
+                    edge_index, edge_weight, x.size(self.node_dim), False,
+                    self.add_self_loops, self.flow, dtype=x.dtype)
+
+        self.x_0 = x_0
+        return super().forward(x, edge_index, size_target, edge_weight, return_attention_info)
+
+    def update_fn(self, x_agg, x_i):
+        x_0 = self.x_0
+        x_agg = self.merge_heads(x_agg)
+
+        x_agg.mul_(1 - self.alpha)
+        x_0 = self.alpha * x_0[:x_agg.size(0)]
+
+        x_agg = x_agg.add_(x_0)
+        x_agg = torch.addmm(x_agg, x_agg, self.lin_v.weight, beta=1. - self.beta, alpha=self.beta)
+
+        return x_agg
+
+
+class GAT2v2Layer(GATv2Layer):
+    x_0: OptTensor
+
+    def __init__(
+            self,
+            channels: Union[int, Tuple[int, int]],
+            alpha: float,
+            theta: float = None,
+            layer: int = None,
+            normalize: bool = True,
+            add_self_loops: bool = True,
+            negative_slope: float = 0.2,
+            heads: int = 1,
+            bias: bool = True,
+            mode: str = 'gcn',
+            share_weights_score: bool = False,
+            share_weights_value: bool = False,
+            **kwargs,
+    ):
+        assert share_weights_value  # TODO
+
+        kwargs.setdefault('aggr', 'add')
+        super().__init__(channels, channels // heads, negative_slope, add_self_loops,
+                         heads, bias, mode, share_weights_score,
+                         share_weights_value, **kwargs)
+        self.alpha = alpha
+        self.beta = 1.
+        if theta is not None or layer is not None:
+            assert theta is not None and layer is not None
+            self.beta = log(theta / layer + 1)
+        self.normalize = normalize
+        self.x_0 = None
+
+    def get_x_v(self, x):
+        return x
+
+    def forward(self, x: Union[Tensor, PairTensor], x_0: Tensor, edge_index: Adj, size_target: int = None,
+                edge_weight: OptTensor = None, return_attention_info: bool = False):
+        assert not return_attention_info  # TODO
+
+        if self.normalize:
+            if isinstance(edge_index, Tensor):
+                edge_index, edge_weight = gcn_norm(  # yapf: disable
+                    edge_index, edge_weight, x.size(self.node_dim), False,
+                    self.add_self_loops,  dtype=x.dtype)
+
+            elif isinstance(edge_index, SparseTensor):
+                edge_index = gcn_norm(  # yapf: disable
+                    edge_index, edge_weight, x.size(self.node_dim), False,
+                    self.add_self_loops, dtype=x.dtype)
+
+        self.x_0 = x_0
+        return super().forward(x, edge_index, size_target, edge_weight, return_attention_info)
+
+    def update_fn(self, x_agg, x_i):
+        x_0 = self.x_0
+        x_agg = self.merge_heads(x_agg)
+
+        x_agg.mul_(1 - self.alpha)
+        x_0 = self.alpha * x_0[:x_agg.size(0)]
+
+        x_agg = x_agg.add_(x_0)
+        x_agg = torch.addmm(x_agg, x_agg, self.lin_v.weight, beta=1. - self.beta, alpha=self.beta)
+
+        return x_agg
+
+File Path: lcat/pyg/gatpna.py
+Content:
+from typing import Union, List, Tuple, Optional, Dict
+from torch import Tensor
+
+import torch
+from torch import nn
+from torch_scatter import scatter
+from torch_geometric.utils import degree
+from torch_geometric.nn.dense.linear import Linear
+
+# from torch_geometric.nn.aggr import DegreeScalerAggregation
+from .gatv1 import GATv1Layer
+from .gatv2 import GATv2Layer
+from torch_geometric.nn import PNAConv
+
+
+class GATPNAv1Layer(GATv1Layer):
+    def __init__(
+            self,
+            in_channels: Union[int, Tuple[int, int]],
+            out_channels: int,
+            aggregators: List[str],
+            scalers: List[str],
+            deg: Tensor,
+            negative_slope: float = 0.2,
+            heads: int = 1,
+            bias: bool = True,
+            mode: str = 'gcn',
+            share_weights_score: bool = False,
+            share_weights_value: bool = False,
+            **kwargs,
+    ):
+        assert bias == False
+        assert 'add_self_loops' not in kwargs
+        assert in_channels % heads == 0
+
+        super().__init__(in_channels, in_channels // heads, negative_slope, False,
+                         heads, False, mode, share_weights_score,
+                         share_weights_value, aggr='add', **kwargs)
+
+        self.aggregators = aggregators
+        self.scalers = scalers
+
+        deg = deg.to(torch.float)
+        self.avg_deg: Dict[str, float] = {
+            'lin': deg.mean().item(),
+            'log': (deg + 1).log().mean().item(),
+            'exp': deg.exp().mean().item(),
+        }
+
+        in_channels = (len(aggregators) * len(scalers) + 1) * in_channels // heads
+        self.post_nns = Linear(in_channels * heads, out_channels)
+        self.lin = Linear(out_channels, out_channels, bias=bias)
+        self.real_out_channels = out_channels
+
+    def update_fn(self, x_agg, x_i):
+        x_agg = torch.cat([x_i, x_agg], dim=-1)
+        x_agg = self.merge_heads(x_agg)
+        x_agg = self.post_nns(x_agg)
+        x_agg = self.lin(x_agg)
+        return x_agg
+
+    def aggregate(self, inputs: Tensor, index: Tensor,
+                  dim_size: Optional[int] = None, convolve: bool = False) -> Tensor:
+        if convolve:
+            return super().aggregate(inputs, index, dim_size=dim_size)
+
+        outs = []
+        for aggregator in self.aggregators:
+            if aggregator == 'sum':
+                out = scatter(inputs, index, 0, None, dim_size, reduce='sum')
+            elif aggregator == 'mean':
+                out = scatter(inputs, index, 0, None, dim_size, reduce='mean')
+            elif aggregator == 'min':
+                out = scatter(inputs, index, 0, None, dim_size, reduce='min')
+            elif aggregator == 'max':
+                out = scatter(inputs, index, 0, None, dim_size, reduce='max')
+            elif aggregator == 'var' or aggregator == 'std':
+                mean = scatter(inputs, index, 0, None, dim_size, reduce='mean')
+                mean_squares = scatter(inputs * inputs, index, 0, None,
+                                       dim_size, reduce='mean')
+                out = mean_squares - mean * mean
+                if aggregator == 'std':
+                    out = torch.sqrt(torch.relu(out) + 1e-5)
+            else:
+                raise ValueError(f'Unknown aggregator "{aggregator}".')
+            outs.append(out)
+        out = torch.cat(outs, dim=-1)
+
+        deg = degree(index, dim_size, dtype=inputs.dtype)
+        deg = deg.clamp_(1).view(-1, 1, 1)
+
+        outs = []
+        for scaler in self.scalers:
+            if scaler == 'identity':
+                out_scaler = out
+            elif scaler == 'amplification':
+                out_scaler = out * (torch.log(deg + 1) / self.avg_deg['log'])
+            elif scaler == 'attenuation':
+                out_scaler = out * (self.avg_deg['log'] / torch.log(deg + 1))
+            elif scaler == 'linear':
+                out_scaler = out * (deg / self.avg_deg['lin'])
+            elif scaler == 'inverse_linear':
+                out_scaler = out * (self.avg_deg['lin'] / deg)
+            else:
+                raise ValueError(f'Unknown scaler "{scaler}".')
+            outs.append(out_scaler)
+
+        outs = torch.cat(outs, dim=-1)
+        return outs
+
+    def __repr__(self) -> str:
+        return (f'{self.__class__.__name__}({self.in_channels}, '
+                f'{self.real_out_channels})')
+
+
+class GATPNAv2Layer(GATv2Layer):
+    def __init__(
+            self,
+            in_channels: Union[int, Tuple[int, int]],
+            out_channels: int,
+            aggregators: List[str],
+            scalers: List[str],
+            deg: Tensor,
+            negative_slope: float = 0.2,
+            heads: int = 1,
+            bias: bool = True,
+            mode: str = 'gcn',
+            share_weights_score: bool = False,
+            share_weights_value: bool = False,
+            **kwargs,
+    ):
+        assert bias == False
+        assert 'add_self_loops' not in kwargs
+        assert in_channels % heads == 0
+        super().__init__(in_channels, in_channels // heads, negative_slope, False,
+                         heads, False, mode, share_weights_score,
+                         share_weights_value, aggr='add', **kwargs)
+
+        self.aggregators = aggregators
+        self.scalers = scalers
+
+        deg = deg.to(torch.float)
+        self.avg_deg: Dict[str, float] = {
+            'lin': deg.mean().item(),
+            'log': (deg + 1).log().mean().item(),
+            'exp': deg.exp().mean().item(),
+        }
+
+        in_channels = (len(aggregators) * len(scalers) + 1) * in_channels // heads
+        self.post_nns = Linear(in_channels * heads, out_channels)
+        self.lin = Linear(out_channels, out_channels, bias=bias)
+        self.real_out_channels = out_channels
+
+    def update_fn(self, x_agg, x_i):
+        x_agg = torch.cat([x_i, x_agg], dim=-1)
+        x_agg = self.merge_heads(x_agg)
+        x_agg = self.post_nns(x_agg)
+        x_agg = self.lin(x_agg)
+        return x_agg
+
+    def aggregate(self, inputs: Tensor, index: Tensor,
+                  dim_size: Optional[int] = None, convolve: bool = False) -> Tensor:
+        if convolve:
+            return super().aggregate(inputs, index, dim_size=dim_size)
+
+        outs = []
+        for aggregator in self.aggregators:
+            if aggregator == 'sum':
+                out = scatter(inputs, index, 0, None, dim_size, reduce='sum')
+            elif aggregator == 'mean':
+                out = scatter(inputs, index, 0, None, dim_size, reduce='mean')
+            elif aggregator == 'min':
+                out = scatter(inputs, index, 0, None, dim_size, reduce='min')
+            elif aggregator == 'max':
+                out = scatter(inputs, index, 0, None, dim_size, reduce='max')
+            elif aggregator == 'var' or aggregator == 'std':
+                mean = scatter(inputs, index, 0, None, dim_size, reduce='mean')
+                mean_squares = scatter(inputs * inputs, index, 0, None,
+                                       dim_size, reduce='mean')
+                out = mean_squares - mean * mean
+                if aggregator == 'std':
+                    out = torch.sqrt(torch.relu(out) + 1e-5)
+            else:
+                raise ValueError(f'Unknown aggregator "{aggregator}".')
+            outs.append(out)
+        out = torch.cat(outs, dim=-1)
+
+        deg = degree(index, dim_size, dtype=inputs.dtype)
+        deg = deg.clamp_(1).view(-1, 1, 1)
+
+        outs = []
+        for scaler in self.scalers:
+            if scaler == 'identity':
+                out_scaler = out
+            elif scaler == 'amplification':
+                out_scaler = out * (torch.log(deg + 1) / self.avg_deg['log'])
+            elif scaler == 'attenuation':
+                out_scaler = out * (self.avg_deg['log'] / torch.log(deg + 1))
+            elif scaler == 'linear':
+                out_scaler = out * (deg / self.avg_deg['lin'])
+            elif scaler == 'inverse_linear':
+                out_scaler = out * (self.avg_deg['lin'] / deg)
+            else:
+                raise ValueError(f'Unknown scaler "{scaler}".')
+            outs.append(out_scaler)
+
+        outs = torch.cat(outs, dim=-1)
+        return outs
+
+    def __repr__(self) -> str:
+        return (f'{self.__class__.__name__}({self.in_channels}, '
+                f'{self.real_out_channels})')
+
+File Path: lcat/pyg/gatv1.py
+Content:
+from typing import Union, Tuple
+
+import torch
+import torch.nn.functional as F
+from torch_geometric.nn.dense.linear import Linear, Parameter
+from torch_geometric.nn.inits import constant
+
+from .generalgat import GeneralGATLayer
+
+
+class GATv1Layer(GeneralGATLayer):
+    def __init__(
+            self,
+            in_channels: Union[int, Tuple[int, int]],
+            out_channels: int,
+            negative_slope: float = 0.2,
+            add_self_loops: bool = True,
+            heads: int = 1,
+            bias: bool = True,
+            mode: str = 'gcn',
+            share_weights_score: bool = False,
+            share_weights_value: bool = False,
+            aggr: str = 'mean',
+            **kwargs,
+    ):
+        super().__init__(in_channels,
+                         out_channels,
+                         negative_slope,
+                         add_self_loops,
+                         heads, bias, mode, aggr,
+                         **kwargs)
+
+        self.lin_l = Linear(in_channels, out_channels * self.heads, bias=bias, weight_initializer='glorot')
+        if share_weights_score:
+            self.lin_r = self.lin_l
+        else:
+            self.lin_r = Linear(in_channels, out_channels * self.heads, bias=bias, weight_initializer='glorot')
+
+        if share_weights_value:
+            self.lin_v = self.lin_l if self.flow == 'source_to_target' else self.lin_r
+        else:
+            self.lin_v = Linear(in_channels, out_channels * self.heads, bias=bias, weight_initializer='glorot')
+
+        # The learnable parameters to compute attention coefficients:
+        self.att_r = Parameter(torch.Tensor(1, self.heads, out_channels))
+        self.att_l = Parameter(torch.Tensor(1, self.heads, out_channels))
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        super().reset_parameters()
+        constant(self.att_r, 1.)
+        constant(self.att_l, 1.)
+        self.lin_l.reset_parameters()
+        self.lin_r.reset_parameters()
+        self.lin_v.reset_parameters()
+
+    def get_x_r(self, x):
+        return self.lin_r(x).view(-1, self.heads, self.out_channels) * self.att_r
+
+    def get_x_l(self, x):
+        return self.lin_l(x).view(-1, self.heads, self.out_channels) * self.att_l
+
+    def get_x_v(self, x):
+        return self.lin_v(x)
+
+    def compute_score(self, x_i, x_j, index, ptr, size_i):
+        return F.leaky_relu(torch.sum(x_i + x_j, dim=-1, keepdim=True), self.negative_slope)
+
+File Path: lcat/pyg/gatv2.py
+Content:
+from typing import Union, Tuple
+
+import torch
+import torch.nn.functional as F
+from torch_geometric.nn.dense.linear import Linear, Parameter
+from torch_geometric.nn.inits import constant
+
+from .generalgat import GeneralGATLayer
+
+
+class GATv2Layer(GeneralGATLayer):
+    def __init__(
+            self,
+            in_channels: Union[int, Tuple[int, int]],
+            out_channels: int,
+            negative_slope: float = 0.2,
+            add_self_loops: bool = True,
+            heads: int = 1,
+            bias: bool = True,
+            mode: str = 'gcn',
+            share_weights_score: bool = False,
+            share_weights_value: bool = False,
+            aggr: str = 'mean',
+            **kwargs,
+    ):
+        super().__init__(in_channels,
+                         out_channels,
+                         negative_slope,
+                         add_self_loops,
+                         heads,
+                         bias,
+                         mode,
+                         aggr,
+                         **kwargs)
+
+        self.lin_l = Linear(in_channels, out_channels * self.heads, bias=bias, weight_initializer='glorot')
+        if share_weights_score:
+            self.lin_r = self.lin_l
+        else:
+            self.lin_r = Linear(in_channels, out_channels * self.heads, bias=bias, weight_initializer='glorot')
+
+        if share_weights_value:
+            self.lin_v = self.lin_l if self.flow == 'source_to_target' else self.lin_r
+        else:
+            self.lin_v = Linear(in_channels, out_channels * self.heads, bias=bias, weight_initializer='glorot')
+
+        # The learnable parameters to compute attention coefficients:
+        self.att = Parameter(torch.Tensor(1, self.heads, out_channels))
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        super().reset_parameters()
+        constant(self.att, 1.)
+        self.lin_l.reset_parameters()
+        self.lin_r.reset_parameters()
+        self.lin_v.reset_parameters()
+
+    def get_x_r(self, x):
+        return self.lin_r(x)
+
+    def get_x_l(self, x):
+        return self.lin_l(x)
+
+    def get_x_v(self, x):
+        return self.lin_v(x)
+
+    def compute_score(self, x_i, x_j, index, ptr, size_i):
+        return torch.sum(F.leaky_relu(x_i + x_j, self.negative_slope) * self.att, dim=-1, keepdim=True)
+
+File Path: lcat/pyg/generalgat.py
+Content:
+import math
+from typing import Optional, Union, Tuple
+
+import torch
+import torch.nn as nn
+from torch import Tensor
+from torch_geometric.nn.conv import MessagePassing
+from torch_geometric.nn.inits import constant
+from torch_geometric.typing import Adj, OptTensor, PairTensor
+from torch_geometric.utils import add_self_loops, remove_self_loops, softmax
+from torch_sparse import set_diag, SparseTensor
+
+
+# TODO rename arguments
+class GeneralGATLayer(MessagePassing):
+    _alpha: OptTensor
+
+    def __init__(
+            self,
+            in_channels: Union[int, Tuple[int, int]],
+            out_channels: int,
+            negative_slope: float = 0.2,
+            add_self_loops: bool = True,
+            heads: int = 1,
+            bias: bool = True,
+            mode: str = 'gcn',
+            aggr: str = 'mean',
+            **kwargs,
+    ):
+        super().__init__(aggr=aggr, node_dim=0, **kwargs)
+        assert mode in ['gcn', 'gat', 'cat', 'lcat', 'gcngat', 'gatcat']
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.heads = heads
+        self.negative_slope = negative_slope
+        self.add_self_loops = add_self_loops
+
+        self.convolve = mode in ['gcn', 'cat', 'lcat', 'gatcat']
+
+        self.learn_l1 = mode in ['lcat', 'gcngat']
+        self.learn_l2 = mode in ['lcat', 'gatcat']
+
+        self.mode = mode
+        self.lmbda_ = None
+        self.lmbda2_ = None
+
+        if self.learn_l1:
+            self.lmbda_ = nn.Parameter(torch.ones([]) * 0, requires_grad=True)
+        if self.learn_l2:
+            self.lmbda2_ = nn.Parameter(torch.ones([]) * 0, requires_grad=True)
+
+        self.bias = 0.
+        if bias:
+            self.bias = nn.Parameter(torch.Tensor(out_channels * self.heads))
+
+    @property
+    def lmbda(self):  # The one that controls GCN-->GATConv
+        if self.learn_l1:
+            return torch.sigmoid(10 ** self.lmbda_ - 6)
+        else:
+            if self.mode in ['gcn']:
+                return 0.
+            elif self.mode in ['gat', 'cat', 'gatcat']:
+                return 1.0
+            else:
+                raise NotImplementedError
+
+    @property
+    def lmbda2(self):  # The one that controls GATConv-->GAT
+        if self.learn_l2:
+            return torch.sigmoid(10 ** (2.2 - self.lmbda2_) - 6)
+        else:
+            if self.mode in ['gcn', 'gat', 'gcngat']:
+                return 0.0
+            elif self.mode in ['cat']:
+                return 1.
+            else:
+                raise NotImplementedError
+
+    def reset_parameters(self):
+        constant(self.lmbda_, math.log10(6))
+        constant(self.lmbda2_, 2.2 - math.log10(6))
+        constant(self.bias, 0.)
+
+    def get_x_r(self, x):
+        raise NotImplementedError
+
+    def get_x_l(self, x):
+        raise NotImplementedError
+
+    def get_x_v(self, x):
+        raise NotImplementedError
+
+    def get_x_agg(self, x_l, x_r, edge_index, edge_weight):
+        if isinstance(edge_index, Tensor):
+            edge_index_no_neigh, edge_weight_no_neigh = remove_self_loops(edge_index, edge_weight)
+        elif isinstance(edge_index, SparseTensor):
+            edge_index_no_neigh = set_diag(edge_index, 0)
+            edge_weight_no_neigh = None
+        else:
+            raise NotImplementedError
+
+        aggr = self.aggr
+        self.aggr = 'add'
+        x_lr = torch.cat((x_l, x_r), dim=1)
+        x_neig_sum = self.propagate(edge_index_no_neigh, x=(x_lr, x_lr), size=None, convolve=True,
+                                    edge_weight=edge_weight_no_neigh)
+        self.aggr = aggr
+
+        x_agg = self.lmbda * (x_lr + self.lmbda2 * x_neig_sum)
+
+        # Divide by number of neighbors
+        i, j = (1, 0) if self.flow == 'source_to_target' else (0, 1)
+        if isinstance(edge_index, Tensor):
+            counts = x_agg.new_zeros((x_agg.size(0),))
+            a, b = edge_index_no_neigh[i].unique(return_counts=True)
+            counts = counts.scatter_add(0, a, b.float())
+        elif isinstance(edge_index, SparseTensor):
+            counts = edge_index_no_neigh.sum(dim=j)
+
+        x_agg = x_agg / (1 + self.lmbda2 * counts.unsqueeze(-1).unsqueeze(-1))
+
+        return x_agg
+
+    def merge_heads(self, x):
+        return x.flatten(start_dim=-2)
+
+    def compute_score(self, x_i, x_j, index, ptr, size_i):
+        raise NotImplementedError
+
+    def fix_parameters(self, partial=False):
+        raise NotImplementedError
+
+    def forward(self, x: Union[Tensor, PairTensor], edge_index: Adj, size_target: int = None,
+                edge_weight: OptTensor = None, return_attention_info: bool = False):
+
+        assert isinstance(x, Tensor) and x.dim() == 2
+
+        # We apply the linear layer before convolving to avoid numerical errors
+        x_l = self.get_x_l(x).view(-1, self.heads, self.out_channels)
+        x_r = self.get_x_r(x).view(-1, self.heads, self.out_channels)
+        x_v = self.get_x_v(x).view(-1, self.heads, self.out_channels)
+
+        num_nodes = x.size(0)
+        if size_target is not None:
+            num_nodes = min(num_nodes, size_target)
+
+        if self.convolve:
+            x_agg = self.get_x_agg(x_l=x_l, x_r=x_r, edge_index=edge_index, edge_weight=edge_weight)
+            x_l, x_r = x_agg[:, :self.heads], x_agg[:, self.heads:]
+
+        x_r = x_r[:num_nodes]
+
+        if self.add_self_loops:
+            if isinstance(edge_index, Tensor):
+                edge_index, edge_weight = remove_self_loops(edge_index, edge_weight)
+                edge_index, edge_weight = add_self_loops(edge_index, edge_weight, num_nodes=num_nodes)
+            elif isinstance(edge_index, SparseTensor):
+                edge_index = set_diag(edge_index, 1.)
+
+        i, j = (1, 0) if self.flow == 'source_to_target' else (0, 1)
+        x_lr = [x_l, x_r]
+        x_lr[j] = torch.cat((x_lr[j], x_v), dim=-1)
+
+        out = self.propagate(edge_index, x=x_lr, edge_weight=edge_weight, size=None)
+
+        alpha = self._alpha
+        del self._alpha
+
+        score = self._score
+        del self._score
+
+        out = self.update_fn(x_agg=out, x_i=x_v)
+
+        if return_attention_info:
+            assert alpha is not None
+            return out, (edge_index, alpha), score
+        else:
+            return out
+
+    def update_fn(self, x_agg, x_i):
+        return self.merge_heads(x_agg) + self.bias
+
+    def message(self, x_j: Tensor,
+                x_i: Tensor, index: Tensor,
+                ptr: OptTensor,
+                size_i: Optional[int],
+                edge_weight: OptTensor,
+                convolve=False) -> Tensor:
+        if convolve:
+            return x_j
+
+        s = x_i.size(-1)
+        x_j, x_v = x_j[..., :s], x_j[..., s:]
+
+        score = self.compute_score(x_i, x_j, index, ptr, size_i)
+        self._alpha = softmax(score, index, ptr, size_i)
+        self._score = score
+
+        num_neighbors = softmax(torch.ones_like(score), index, ptr, size_i).reciprocal()
+
+        edge_weight = 1. if edge_weight is None else edge_weight.view(-1, 1, 1)
+        return x_v * (self._alpha * num_neighbors) * edge_weight
+
+    def __repr__(self) -> str:
+        return (f'{self.__class__.__name__}({self.in_channels}, '
+                f'{self.out_channels})')
+
+
+class GeneralGATConv(nn.Module):
+    def __init__(self, LayerName, dim_in, dim_out, bias=False, add_attn_info=False, **kwargs):
+        super(GeneralGATConv, self).__init__()
+
+        self.model = LayerName(dim_in, dim_out, bias=bias, **kwargs)
+        self.add_attn_info = add_attn_info
+
+    def forward(self, batch):
+        if self.add_attn_info:
+            out, (edge_index, alpha), score = self.model(batch.node_feature,
+                                                         batch.edge_index,
+                                                         return_attention_info=True)
+            batch.node_feature = out
+            if hasattr(batch, 'edges_split'):
+                alpha_split = alpha[batch.edges_split]
+            else:
+                alpha_split = alpha
+            cond_1 = (batch.edge_label == 1).flatten()
+            cond_0 = (batch.edge_label == 0).flatten()
+
+            setattr(batch, 'alpha_mean', torch.mean(alpha_split))
+            setattr(batch, 'alpha_std', torch.std(alpha_split))
+            setattr(batch, 'alpha_mean_1', torch.mean(alpha_split[cond_1, :]))
+            setattr(batch, 'alpha_std_1', torch.std(alpha_split[cond_1, :]))
+            setattr(batch, 'alpha_mean_0', torch.mean(alpha_split[cond_0, :]))
+            setattr(batch, 'alpha_std_0', torch.std(alpha_split[cond_0, :]))
+            setattr(batch, 'score', score)
+
+            if hasattr(batch, 'edge_label_ind'):
+                classes = batch.edge_label_ind.unique()
+
+                for c_src in classes:
+                    for c_dst in classes:
+                        tmp = torch.tensor([c_src, c_dst])
+                        cond = (batch.edge_label_ind == tmp).sum(1) == 2
+                        my_str = f'alpha_mean_{int(c_src.item())}{int(c_dst.item())}'
+                        setattr(batch, my_str, torch.mean(alpha_split[cond, ...]))
+        else:
+            batch.node_feature = self.model(batch.node_feature, batch.edge_index)
+
+        batch.lmbda2 = float(self.model.lmbda2)
+        batch.lmbda = float(self.model.lmbda)
+
+        if hasattr(self.model, 'eps'):
+            batch.eps = self.model.eps
+
+        return batch
+
+File Path: tests/__init__.py
+Content:
+
+File Path: tests/test_lcat_pyg.py
+Content:
+import os
+
+import pytest
+import torch.nn as nn
+import torch_geometric.nn as gnn
+from torch_geometric.data import DataLoader
+from torch_geometric.datasets import TUDataset
+
+from lcat.pyg import GATv1Layer, GATv2Layer
+from lcat.pyg import GAT2v1Layer, GAT2v2Layer
+from lcat.pyg import GATPNAv1Layer, GATPNAv2Layer
+
+
+def assert_lcat(output, batch, out_channels, heads):
+    assert output.ndim == 2
+    assert output.shape[0] == batch.x.shape[0]
+    assert output.shape[-1] == out_channels * heads
+
+
+@pytest.fixture(scope="session")
+def dataset():
+    root = os.path.join('..', 'Data')
+    dataset = TUDataset(root=root,
+                        name='MUTAG',
+                        transform=None,
+                        pre_transform=None,
+                        pre_filter=None,
+                        use_node_attr=True,
+                        use_edge_attr=True,
+                        cleaned=True
+                        )
+    return dataset
+
+
+@pytest.mark.parametrize("out_channels", [32])
+@pytest.mark.parametrize("heads", [1, 2, 4])
+@pytest.mark.parametrize("add_self_loops", [True, False])
+@pytest.mark.parametrize("heads_aggr", ['add', 'mean', 'concat'])
+@pytest.mark.parametrize("mode", ['gcn', 'gat', 'cat', 'lcat', 'gcngat', 'gatcat'])
+@pytest.mark.parametrize("att_version", ['v1', 'v2'])
+def test_lcat_module_GAT_GCN(out_channels,
+                             add_self_loops,
+                             heads,
+                             heads_aggr,
+                             mode,
+                             att_version,
+                             dataset):
+    loader = DataLoader(dataset, batch_size=8, shuffle=False)
+    batch = next(iter(loader))
+    in_channels = batch.x.shape[1]
+
+    if att_version == 'v1':
+        LCAT = GATv1Layer
+    elif att_version == 'v2':
+        LCAT = GATv2Layer
+    lcat = LCAT(
+        in_channels=in_channels,
+        out_channels=out_channels,
+        negative_slope=0.2,
+        add_self_loops=add_self_loops,
+        heads=heads,
+        bias=True,
+        mode=mode,
+        share_weights_score=False,
+        shere_weights_value=False,
+        aggr='mean',
+    )
+    output = lcat(x=batch.x,
+                  edge_index=batch.edge_index)
+
+    assert_lcat(output, batch, out_channels, heads)
+
+
+
+@pytest.mark.parametrize("out_channels", [32])
+@pytest.mark.parametrize("heads", [1, 2, 4])
+@pytest.mark.parametrize("add_self_loops", [True, False])
+@pytest.mark.parametrize("heads_aggr", ['add', 'mean', 'concat'])
+@pytest.mark.parametrize("mode", ['gcn', 'gat', 'cat', 'lcat', 'gcngat', 'gatcat'])
+@pytest.mark.parametrize("att_version", ['v1', 'v2'])
+def test_lcat_module_GAT_GCN2(out_channels,
+                              add_self_loops,
+                              heads,
+                              heads_aggr,
+                              mode,
+                              att_version,
+                              dataset):
+    loader = DataLoader(dataset, batch_size=8, shuffle=False)
+    batch = next(iter(loader))
+    in_channels = batch.x.shape[1]
+
+    if att_version == 'v1':
+        LCAT = GAT2v1Layer
+    elif att_version == 'v2':
+        LCAT = GAT2v2Layer
+    lcat = LCAT(
+        channels=out_channels,
+        alpha=0.4,
+        theta=0.1,
+        layer=1,
+        normalize=True,
+        add_self_loops=add_self_loops,
+        heads=heads,
+        bias=True,
+        mode=mode,
+        share_weights_score=True,
+        share_weights_value=True,
+        aggr='mean',
+    )
+
+    mlp = nn.Linear(in_channels, out_channels)
+
+    batch.x = mlp(batch.x)
+    output = lcat(x=batch.x,
+                  x_0=batch.x,
+                  edge_index=batch.edge_index)
+
+    assert_lcat(output, batch, out_channels, 1)
+
+
+
+
+from torch_geometric.nn import PNAConv
+
+
+@pytest.mark.parametrize("out_channels", [32])
+@pytest.mark.parametrize("heads", [1, 2, 4])
+@pytest.mark.parametrize("add_self_loops", [True, False])
+@pytest.mark.parametrize("heads_aggr", ['add', 'mean', 'concat'])
+@pytest.mark.parametrize("mode", ['gcn', 'gat', 'cat', 'lcat', 'gcngat', 'gatcat'])
+@pytest.mark.parametrize("att_version", ['v1', 'v2'])
+def test_lcat_module_GAT_PNA(out_channels,
+                             add_self_loops,
+                             heads,
+                             heads_aggr,
+                             mode,
+                             att_version,
+                             dataset):
+    loader = DataLoader(dataset, batch_size=8, shuffle=False)
+    batch = next(iter(loader))
+    in_channels = batch.x.shape[1]
+
+    if att_version == 'v1':
+        LCAT = GATPNAv1Layer
+    elif att_version == 'v2':
+        LCAT = GATPNAv2Layer
+    else:
+        raise NotImplementedError
+    lcat = LCAT(
+        in_channels=out_channels,
+        out_channels=out_channels,
+        aggregators=['mean', 'min', 'max'],
+        scalers=['identity', 'amplification', 'attenuation'],
+        deg=PNAConv.get_degree_histogram(loader),
+        negative_slope=0.2,
+        heads=heads,
+        bias=False,
+        mode=mode,
+        share_weights_score=False,
+        shere_weights_value=False,
+    )
+    mlp = nn.Linear(in_channels, out_channels)
+
+    batch.x = mlp(batch.x)
+    output = lcat(x=batch.x,
+                  edge_index=batch.edge_index)
+
+    assert_lcat(output, batch, out_channels, 1)
+
+
+
+Output:
+{
+    "experimental_code": "import math\nfrom typing import Optional, Union, Tuple\n\nimport torch\nimport torch.nn as nn\nfrom torch import Tensor\nfrom torch_geometric.nn.conv import MessagePassing\nfrom torch_geometric.nn.inits import constant\nfrom torch_geometric.typing import Adj, OptTensor, PairTensor\nfrom torch_geometric.utils import add_self_loops, remove_self_loops, softmax\nfrom torch_sparse import set_diag, SparseTensor\nimport torch.nn.functional as F\nfrom torch_geometric.nn.dense.linear import Linear, Parameter\n\nclass GeneralGATLayer(MessagePassing):\n    _alpha: OptTensor\n\n    def __init__(\n            self,\n            in_channels: Union[int, Tuple[int, int]],\n            out_channels: int,\n            negative_slope: float = 0.2,\n            add_self_loops: bool = True,\n            heads: int = 1,\n            bias: bool = True,\n            mode: str = 'gcn',\n            aggr: str = 'mean',\n            **kwargs,\n    ):\n        super().__init__(aggr=aggr, node_dim=0, **kwargs)\n        assert mode in ['gcn', 'gat', 'cat', 'lcat', 'gcngat', 'gatcat']\n\n        self.in_channels = in_channels\n        self.out_channels = out_channels\n        self.heads = heads\n        self.negative_slope = negative_slope\n        self.add_self_loops = add_self_loops\n\n        self.convolve = mode in ['gcn', 'cat', 'lcat', 'gatcat']\n\n        self.learn_l1 = mode in ['lcat', 'gcngat']\n        self.learn_l2 = mode in ['lcat', 'gatcat']\n\n        self.mode = mode\n        self.lmbda_ = None\n        self.lmbda2_ = None\n\n        if self.learn_l1:\n            self.lmbda_ = nn.Parameter(torch.ones([]) * 0, requires_grad=True)\n        if self.learn_l2:\n            self.lmbda2_ = nn.Parameter(torch.ones([]) * 0, requires_grad=True)\n\n        self.bias = 0.\n        if bias:\n            self.bias = nn.Parameter(torch.Tensor(out_channels * self.heads))\n\n    @property\n    def lmbda(self):  # The one that controls GCN-->GATConv (λ1 in paper)\n        if self.learn_l1:\n            return torch.sigmoid(10 ** self.lmbda_ - 6)\n        else:\n            if self.mode in ['gcn']:\n                return 0.\n            elif self.mode in ['gat', 'cat', 'gatcat']:\n                return 1.0\n            else:\n                raise NotImplementedError\n\n    @property\n    def lmbda2(self):  # The one that controls GATConv-->GAT (λ2 in paper)\n        if self.learn_l2:\n            return torch.sigmoid(10 ** (2.2 - self.lmbda2_) - 6)\n        else:\n            if self.mode in ['gcn', 'gat', 'gcngat']:\n                return 0.0\n            elif self.mode in ['cat']:\n                return 1.\n            else:\n                raise NotImplementedError\n\n    def reset_parameters(self):\n        constant(self.lmbda_, math.log10(6))\n        constant(self.lmbda2_, 2.2 - math.log10(6))\n        constant(self.bias, 0.)\n\n    def get_x_r(self, x):\n        raise NotImplementedError\n\n    def get_x_l(self, x):\n        raise NotImplementedError\n\n    def get_x_v(self, x):\n        raise NotImplementedError\n\n    def get_x_agg(self, x_l, x_r, edge_index, edge_weight):\n        if isinstance(edge_index, Tensor):\n            edge_index_no_neigh, edge_weight_no_neigh = remove_self_loops(edge_index, edge_weight)\n        elif isinstance(edge_index, SparseTensor):\n            edge_index_no_neigh = set_diag(edge_index, 0)\n            edge_weight_no_neigh = None\n        else:\n            raise NotImplementedError\n\n        aggr = self.aggr\n        self.aggr = 'add'\n        # x_lr represents the current node's transformed features (concat of x_l and x_r) for attention\n        x_lr = torch.cat((x_l, x_r), dim=1)\n        # Sum of neighbor features (∑ℓ∈Ni hℓ)\n        x_neig_sum = self.propagate(edge_index_no_neigh, x=(x_lr, x_lr), size=None, convolve=True,\n                                    edge_weight=edge_weight_no_neigh)\n        self.aggr = aggr\n\n        # Core interpolation for ~hi: λ1_code * (hi + λ2_code * ∑ℓ∈Ni hℓ)\n        x_agg = self.lmbda * (x_lr + self.lmbda2 * x_neig_sum)\n\n        # Divide by (1 + λ2_code * |Ni|)\n        i, j = (1, 0) if self.flow == 'source_to_target' else (0, 1)\n        if isinstance(edge_index, Tensor):\n            counts = x_agg.new_zeros((x_agg.size(0),))\n            a, b = edge_index_no_neigh[i].unique(return_counts=True)\n            counts = counts.scatter_add(0, a, b.float())\n        elif isinstance(edge_index, SparseTensor):\n            counts = edge_index_no_neigh.sum(dim=j)\n\n        x_agg = x_agg / (1 + self.lmbda2 * counts.unsqueeze(-1).unsqueeze(-1))\n\n        return x_agg\n\n    def merge_heads(self, x):\n        return x.flatten(start_dim=-2)\n\n    def compute_score(self, x_i, x_j, index, ptr, size_i):\n        raise NotImplementedError\n\n    def fix_parameters(self, partial=False):\n        raise NotImplementedError\n\n    def forward(self, x: Union[Tensor, PairTensor], edge_index: Adj, size_target: int = None,\n                edge_weight: OptTensor = None, return_attention_info: bool = False):\n\n        assert isinstance(x, Tensor) and x.dim() == 2\n\n        # Apply linear layers before potential convolution\n        x_l = self.get_x_l(x).view(-1, self.heads, self.out_channels)\n        x_r = self.get_x_r(x).view(-1, self.heads, self.out_channels)\n        x_v = self.get_x_v(x).view(-1, self.heads, self.out_channels)\n\n        num_nodes = x.size(0)\n        if size_target is not None:\n            num_nodes = min(num_nodes, size_target)\n\n        if self.convolve: # This branch is active for CAT and L-CAT\n            x_agg = self.get_x_agg(x_l=x_l, x_r=x_r, edge_index=edge_index, edge_weight=edge_weight)\n            # x_l and x_r are now derived from the convolved/interpolated features (~hi)\n            x_l, x_r = x_agg[:, :self.heads], x_agg[:, self.heads:]\n\n        x_r = x_r[:num_nodes]\n\n        if self.add_self_loops:\n            if isinstance(edge_index, Tensor):\n                edge_index, edge_weight = remove_self_loops(edge_index, edge_weight)\n                edge_index, edge_weight = add_self_loops(edge_index, edge_weight, num_nodes=num_nodes)\n            elif isinstance(edge_index, SparseTensor):\n                edge_index = set_diag(edge_index, 1.)\n\n        i, j = (1, 0) if self.flow == 'source_to_target' else (0, 1)\n        x_lr = [x_l, x_r]\n        x_lr[j] = torch.cat((x_lr[j], x_v), dim=-1)\n\n        out = self.propagate(edge_index, x=x_lr, edge_weight=edge_weight, size=None)\n\n        alpha = self._alpha\n        del self._alpha\n\n        score = self._score\n        del self._score\n\n        out = self.update_fn(x_agg=out, x_i=x_v)\n\n        if return_attention_info:\n            assert alpha is not None\n            return out, (edge_index, alpha), score\n        else:\n            return out\n\n    def update_fn(self, x_agg, x_i):\n        return self.merge_heads(x_agg) + self.bias\n\n    def message(self, x_j: Tensor,\n                x_i: Tensor, index: Tensor,\n                ptr: OptTensor,\n                size_i: Optional[int],\n                edge_weight: OptTensor,\n                convolve=False) -> Tensor:\n        if convolve:\n            return x_j\n\n        s = x_i.size(-1)\n        x_j, x_v = x_j[..., :s], x_j[..., s:]\n\n        score = self.compute_score(x_i, x_j, index, ptr, size_i)\n        self._alpha = softmax(score, index, ptr, size_i)\n        self._score = score\n\n        num_neighbors = softmax(torch.ones_like(score), index, ptr, size_i).reciprocal()\n\n        edge_weight = 1. if edge_weight is None else edge_weight.view(-1, 1, 1)\n        return x_v * (self._alpha * num_neighbors) * edge_weight\n\n    def __repr__(self) -> str:\n        return (f'{self.__class__.__name__}({self.in_channels}, '\n                f'{self.out_channels}))'\n\n\nclass GATv1Layer(GeneralGATLayer):\n    def __init__(\n            self,\n            in_channels: Union[int, Tuple[int, int]],\n            out_channels: int,\n            negative_slope: float = 0.2,\n            add_self_loops: bool = True,\n            heads: int = 1,\n            bias: bool = True,\n            mode: str = 'gcn',\n            share_weights_score: bool = False,\n            share_weights_value: bool = False,\n            aggr: str = 'mean',\n            **kwargs,\n    ):\n        super().__init__(in_channels,\n                         out_channels,\n                         negative_slope,\n                         add_self_loops,\n                         heads, bias, mode, aggr,\n                         **kwargs)\n\n        self.lin_l = Linear(in_channels, out_channels * self.heads, bias=bias, weight_initializer='glorot')\n        if share_weights_score:\n            self.lin_r = self.lin_l\n        else:\n            self.lin_r = Linear(in_channels, out_channels * self.heads, bias=bias, weight_initializer='glorot')\n\n        if share_weights_value:\n            self.lin_v = self.lin_l if self.flow == 'source_to_target' else self.lin_r\n        else:\n            self.lin_v = Linear(in_channels, out_channels * self.heads, bias=bias, weight_initializer='glorot')\n\n        self.att_r = Parameter(torch.Tensor(1, self.heads, out_channels))\n        self.att_l = Parameter(torch.Tensor(1, self.heads, out_channels))\n\n        self.reset_parameters()\n\n    def reset_parameters(self):\n        super().reset_parameters()\n        constant(self.att_r, 1.)\n        constant(self.att_l, 1.)\n        self.lin_l.reset_parameters()\n        self.lin_r.reset_parameters()\n        self.lin_v.reset_parameters()\n\n    def get_x_r(self, x):\n        return self.lin_r(x).view(-1, self.heads, self.out_channels) * self.att_r\n\n    def get_x_l(self, x):\n        return self.lin_l(x).view(-1, self.heads, self.out_channels) * self.att_l\n\n    def get_x_v(self, x):\n        return self.lin_v(x)\n\n    def compute_score(self, x_i, x_j, index, ptr, size_i):\n        return F.leaky_relu(torch.sum(x_i + x_j, dim=-1, keepdim=True), self.negative_slope)\n\n\nclass GATv2Layer(GeneralGATLayer):\n    def __init__(\n            self,\n            in_channels: Union[int, Tuple[int, int]],\n            out_channels: int,\n            negative_slope: float = 0.2,\n            add_self_loops: bool = True,\n            heads: int = 1,\n            bias: bool = True,\n            mode: str = 'gcn',\n            share_weights_score: bool = False,\n            share_weights_value: bool = False,\n            aggr: str = 'mean',\n            **kwargs,\n    ):\n        super().__init__(in_channels,\n                         out_channels,\n                         negative_slope,\n                         add_self_loops,\n                         heads,\n                         bias,\n                         mode,\n                         aggr,\n                         **kwargs)\n\n        self.lin_l = Linear(in_channels, out_channels * self.heads, bias=bias, weight_initializer='glorot')\n        if share_weights_score:\n            self.lin_r = self.lin_l\n        else:\n            self.lin_r = Linear(in_channels, out_channels * self.heads, bias=bias, weight_initializer='glorot')\n\n        if share_weights_value:\n            self.lin_v = self.lin_l if self.flow == 'source_to_target' else self.lin_r\n        else:\n            self.lin_v = Linear(in_channels, out_channels * self.heads, bias=bias, weight_initializer='glorot')\n\n        self.att = Parameter(torch.Tensor(1, self.heads, out_channels))\n\n        self.reset_parameters()\n\n    def reset_parameters(self):\n        super().reset_parameters()\n        constant(self.att, 1.)\n        self.lin_l.reset_parameters()\n        self.lin_r.reset_parameters()\n        self.lin_v.reset_parameters()\n\n    def get_x_r(self, x):\n        return self.lin_r(x)\n\n    def get_x_l(self, x):\n        return self.lin_l(x)\n\n    def get_x_v(self, x):\n        return self.lin_v(x)\n\n    def compute_score(self, x_i, x_j, index, ptr, size_i):\n        return torch.sum(F.leaky_relu(x_i + x_j, self.negative_slope) * self.att, dim=-1, keepdim=True)",
+    "experimental_info": "The core implementation is found in `lcat/pyg/generalgat.py`'s `GeneralGATLayer`, which is then specialized by `GATv1Layer` and `GATv2Layer` in `lcat/pyg/gatv1.py` and `lcat/pyg/gatv2.py` respectively.\n\n**For CAT (Graph Convolutional Attention Layer):**\n-   The `GeneralGATLayer` is instantiated with `mode='cat'`. This configures the layer to use `self.convolve = True`, `self.learn_l1 = False`, and `self.learn_l2 = False`.\n-   This results in fixed lambda parameters: `self.lmbda = 1.0` (λ1) and `self.lmbda2 = 1.0` (λ2).\n-   The `get_x_agg` method then computes the input features for attention (`˜hi`) using the formula `(hi + ∑ℓ∈Ni hℓ) / (1 + |Ni|)`, effectively averaging neighborhood features for attention score computation.\n\n**For L-CAT (Learnable Graph Convolutional Attention Network):**\n-   The `GeneralGATLayer` is instantiated with `mode='lcat'`. This configures the layer to use `self.convolve = True`, `self.learn_l1 = True`, and `self.learn_l2 = True`.\n-   This enables learnable lambda parameters: `self.lmbda` (λ1) and `self.lmbda2` (λ2), which are transformed via sigmoid functions: `torch.sigmoid(10 ** self.lmbda_ - 6)` and `torch.sigmoid(10 ** (2.2 - self.lmbda2_) - 6)`.\n-   The `get_x_agg` method interpolates the input features for attention (`˜hi`) using these learned λ1 and λ2 as follows: `λ1_learned * (hi + λ2_learned * ∑ℓ∈Ni hℓ) / (1 + λ2_learned * |Ni|)`. This allows dynamic interpolation between GCN, GAT, and CAT operations.\n\n**Experimental Settings (as derived from `tests/test_lcat_pyg.py`):**\n-   **Layer Type:** `GATv1Layer` or `GATv2Layer` (both inherit from `GeneralGATLayer` to provide attention computation details).\n-   **Dataset:** MUTAG from `torch_geometric.datasets.TUDataset`.\n-   **Batch Size:** 8.\n-   **Input Channels (`in_channels`):** Determined dynamically from `batch.x.shape[1]` of the dataset.\n-   **Output Channels (`out_channels`):** 32.\n-   **Heads:** 1, 2, or 4.\n-   **Negative Slope (for Leaky ReLU in attention score computation):** 0.2.\n-   **Add Self-Loops:** Configurable as True or False.\n-   **Bias:** True.\n-   **Aggregation for heads (after message passing):** 'mean'.\n-   **Share Weights for Score/Value:** `share_weights_score=False`, `share_weights_value=False`.\n-   **Lambda Parameter Initialization (for `mode='lcat'`):**\n    -   `lmbda_` (for λ1): Initialized to `math.log10(6)`. This leads to `sigmoid(0.0) = 0.5` for λ1.\n    -   `lmbda2_` (for λ2): Initialized to `2.2 - math.log10(6)`. This leads to `sigmoid(0.0) = 0.5` for λ2.\n    Thus, both learnable interpolation parameters start at a neutral mid-point."
+}
