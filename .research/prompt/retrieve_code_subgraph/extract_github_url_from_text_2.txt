@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The methodology centers on enhancing graph attention mechanisms. First, the Graph Convolutional Attention Layer (CAT) is proposed, where attention scores are calculated using convolved features (e.g., ˜hi = 1/|N∗i| ∑ℓ∈N∗i hℓ) as inputs to the score function Ψ. This design integrates convolutional information into the attention mechanism. Second, the Learnable Graph Convolutional Attention Network (L-CAT) is introduced, which dynamically interpolates between GCN, GAT, and CAT operations. Its attention score is formulated as Ψ(hi,hj) = λ1 ·α(W˜hi,W˜hj), where ˜hi = hi + λ2 ∑ℓ∈Ni hℓ / (1 + λ2|Ni|). The scalar parameters λ1 and λ2, constrained to [0,1] and learned in log-space through a sigmoid function, control the interpolation: λ1=0 represents GCN, λ1=1 and λ2=0 represents GAT, and λ1=1 and λ2=1 represents CAT. Theoretical analysis comparing GCN, GAT, and CAT architectures is conducted using a contextual stochastic block model (CSBM) to establish their respective regimes of perfect node separability.
+
+# GitHub URLs List
+['https://github.com/psanch21/LCAT']
+Output:
+{
+    "index": 0
+}
