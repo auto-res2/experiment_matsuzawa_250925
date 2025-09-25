@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The methodology centers on "Graph Ladling," a model soup adaptation for GNNs. It involves: 1) Creating K instances (soup ingredients) of the same GNN architecture, sharing a common random initialization. 2) Training these GNN instances independently and in parallel on multiple GPUs, using varied hyperparameters (learning rate, weight decay, seed values). 3) For large graphs, it employs data-centric strategies using state-of-the-art graph sampling (node-wise like GraphSAGE, edge-wise, layer-wise like FastGCN importance sampling) and graph partitioning (e.g., an extension of ClusterGCN using METIS for dividing the graph into clusters). 4) After training, a greedy interpolation soup procedure (Algorithm 1) is used to merge the weights. This procedure sequentially adds models as potential ingredients, keeping them if they improve validation performance, and searching for an optimal interpolation ratio (α ∈ [0, 1]) for merging.
+
+# GitHub URLs List
+['https://github.com/kimiyoung/planetoid', 'https://github.com/kimiyoung/planetoid', 'https://github.com/kimiyoung/planetoid', 'https://github.com/mori97/JKNet-dgl', 'https://github.com/vthost/DAGNN', 'https://github.com/gasteigerjo/ppnp', 'https://github.com/chennnM/GCNII', 'https://github.com/Tiiiger/SGC', 'https://github.com/benedekrozemberczki/ClusterGCN', 'https://github.com/GraphSAINT/GraphSAINT']
+Output:
+{
+    "index": 8
+}
