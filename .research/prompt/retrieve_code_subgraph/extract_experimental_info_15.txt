@@ -1,0 +1,3316 @@
+
+Input:
+You are a researcher with expertise in engineering in the field of machine learning.
+
+# Instructions
+- The content described in “Repository Content” corresponds to the GitHub repository of the method described in “Method.”
+- Please extract the following two pieces of information from “Repository Content”:
+    - experimental_code：Extract the implementation sections that are directly related to the method described in “Method.”
+    - experimental_info：Extract and output the experimental settings related to the method described in “Method.”
+
+# Method
+The core methodology involves developing an efficient CUDA kernel in Triton that preserves FlashAttention's memory management while accommodating arbitrary causal structures defined by key and query indexing. Two main dynamic sparsity strategies are implemented: 1. QK-Sparse Attention: This method dynamically drops keys and queries for each attention head, creating smaller, compact tensors (Qc, Kc, Vc). It then uses the original indices (qidx, kidx) to determine the relevant key blocks (up to `jstop`) to compute and applies a local causal mask within each tile, ensuring computational efficiency despite the non-triangular mask. Softmax statistics accumulation is modified to handle 'stranded' queries (no keys). 2. Hash-Sparse Attention: This approach assigns a bucket identifier to each key and query, then reorders Q, K, V tensors by these hash buckets (using stable sort to preserve temporal order within buckets). The kernel uses these hash indices (qhash, khash) to identify starting (`jstart`) and stopping (`jstop`) key blocks, computing attention only for queries and keys within the same or relevant hash buckets. A combined causal and bucket-based mask is applied locally within each tile.
+
+# Repository Content
+File Path: openwebtext2-experiments/src/config/__init__.py
+Content:
+from . import base
+from . import hashformer
+from . import dropformer
+
+
+CONFIG_FORMAT_TO_MODULE_MAP = {
+    "base": base,
+    "hashformer": hashformer,
+    "dropformer": dropformer
+}
+
+
+def parse_args_with_format(format, base_parser, args, namespace):
+    return CONFIG_FORMAT_TO_MODULE_MAP[format].parse_args(base_parser, args, namespace)
+
+
+def registered_formats():
+    return CONFIG_FORMAT_TO_MODULE_MAP.keys()
+
+File Path: openwebtext2-experiments/src/config/base.py
+Content:
+import torch
+
+import distributed
+
+
+def parse_args(base_parser, args, namespace):
+    parser = base_parser
+    # General training params
+    parser.add_argument('--batch_size', default=50, type=int)
+    parser.add_argument('--acc_steps', default=4, type=int)
+    parser.add_argument('--seed', default=0, type=int)
+    parser.add_argument('--device', default='cuda:0', type=str)
+    parser.add_argument('--iterations', default=15000, type=int)
+    parser.add_argument('--lr', default=2e-3, type=float)
+    parser.add_argument('--warmup_percent', default=0.02, type=float)
+    parser.add_argument('--weight_decay', default=1e-3, type=float)
+    parser.add_argument('--beta1', default=0.9, type=float)
+    parser.add_argument('--beta2', default=0.95, type=float)
+    parser.add_argument('--scheduler', default='cos', choices=['linear', 'cos', 'none'])
+    parser.add_argument('--opt', default='adamw', choices=['adamw', 'sgd'])
+    parser.add_argument('--eval_freq', default=200, type=int) # in iterations
+    parser.add_argument('--results_base_folder', default="./exps", type=str) 
+    parser.add_argument('--grad_clip', default=0.0, type=float) # default value is 1.0 in NanoGPT
+    # Dataset params
+    parser.add_argument('--dataset', default='wikitext', choices=['wikitext', "shakespeare-char", 'arxiv', "arxiv2000", "arxiv+wiki", 'openwebtext2'])
+    parser.add_argument('--vocab_size', default=50304, type=int)
+    parser.add_argument('--data_in_ram', action='store_true') # force the data to RAM, mostly useless except for openwebtext2 
+    # Model params
+    parser.add_argument('--model', default='base', choices=['base', 'sparse-heads-q'])
+    parser.add_argument('--use_pretrained', default="none", type=str) # 'none', 'gpt-2' or a path to the pretraind model
+    parser.add_argument('--dropout', default=0.2, type=float)
+    parser.add_argument('--n_head', default=12, type=int)
+    parser.add_argument('--n_layer', default=24, type=int) # depths in att + ff blocks
+    parser.add_argument('--n_embd', default=768, type=int) # embedding size / hidden size ... 
+    parser.add_argument('--sequence_length', default=512, type=int)
+    parser.add_argument('--dtype', default=torch.bfloat16, type=torch.dtype)
+    parser.add_argument('--bias', default=False, type=bool)
+    parser.add_argument('--no_compile', action='store_true') # if true then model is not compiled 
+    # logging params (WandB)
+    parser.add_argument('--wandb', action='store_true') # whether to use wandb or not
+    parser.add_argument('--wandb_project', default="my-project", type=str)
+    parser.add_argument('--wandb_run_prefix', default="none", type=str) # is added before the autogenerated experiment name
+    parser.add_argument('--eval_seq_prefix', default="The history of Switzerland ", type=str) # prefix used to generate sequences
+    # Distributed args
+    parser.add_argument('--distributed_backend', default=None, type=str, required=False,
+                        choices=distributed.registered_backends())  # distributed backend type
+    return parser.parse_args(args, namespace)
+
+File Path: openwebtext2-experiments/src/config/dropformer.py
+Content:
+import torch
+
+import distributed
+
+
+def parse_args(base_parser, args, namespace):
+    parser = base_parser
+    # General training params
+    parser.add_argument('--batch_size', default=50, type=int)
+    parser.add_argument('--acc_steps', default=4, type=int)
+    parser.add_argument('--seed', default=0, type=int)
+    parser.add_argument('--device', default='cuda:0', type=str)
+    parser.add_argument('--iterations', default=15000, type=int)
+    parser.add_argument('--lr', default=2e-3, type=float)
+    parser.add_argument('--warmup_percent', default=0.02, type=float)
+    parser.add_argument('--weight_decay', default=1e-3, type=float)
+    parser.add_argument('--beta1', default=0.9, type=float)
+    parser.add_argument('--beta2', default=0.95, type=float)
+    parser.add_argument('--scheduler', default='cos', choices=['linear', 'cos', 'none'])
+    parser.add_argument('--opt', default='adamw', choices=['adamw', 'sgd'])
+    parser.add_argument('--eval_freq', default=200, type=int) # in iterations
+    parser.add_argument('--results_base_folder', default="./exps", type=str) 
+    parser.add_argument('--grad_clip', default=0.0, type=float) # default value is 1.0 in NanoGPT
+    # Dataset params
+    parser.add_argument('--dataset', default='wikitext', choices=['wikitext', "shakespeare-char", 'arxiv', "arxiv2000", "arxiv+wiki", 'openwebtext2'])
+    parser.add_argument('--vocab_size', default=50304, type=int)
+    parser.add_argument('--data_in_ram', action='store_true') # force the data to RAM, mostly useless except for openwebtext2 
+    # Model params
+    parser.add_argument('--sparsity', default=0.5, type=float)
+    parser.add_argument('--model', default='base', choices=['base', 'dropformer'])
+    parser.add_argument('--use_pretrained', default="none", type=str) # 'none', 'gpt-2' or a path to the pretraind model
+    parser.add_argument('--dropout', default=0.2, type=float)
+    parser.add_argument('--n_head', default=12, type=int)
+    parser.add_argument('--n_layer', default=24, type=int) # depths in att + ff blocks
+    parser.add_argument('--n_embd', default=768, type=int) # embedding size / hidden size ... 
+    parser.add_argument('--sequence_length', default=512, type=int)
+    parser.add_argument('--dtype', default=torch.bfloat16, type=torch.dtype)
+    parser.add_argument('--bias', default=False, type=bool)
+    parser.add_argument('--no_compile', action='store_true') # if true then model is not compiled 
+    # logging params (WandB)
+    parser.add_argument('--wandb', action='store_true') # whether to use wandb or not
+    parser.add_argument('--wandb_project', default="my-project", type=str)
+    parser.add_argument('--wandb_run_prefix', default="none", type=str) # is added before the autogenerated experiment name
+    parser.add_argument('--eval_seq_prefix', default="The history of Switzerland ", type=str) # prefix used to generate sequences
+    # Distributed args
+    parser.add_argument('--distributed_backend', default=None, type=str, required=False,
+                        choices=distributed.registered_backends())  # distributed backend type
+    return parser.parse_args(args, namespace)
+
+File Path: openwebtext2-experiments/src/config/hashformer.py
+Content:
+import torch
+
+import distributed
+
+
+def parse_args(base_parser, args, namespace):
+    parser = base_parser
+    # General training params
+    parser.add_argument('--batch_size', default=50, type=int)
+    parser.add_argument('--acc_steps', default=4, type=int)
+    parser.add_argument('--seed', default=0, type=int)
+    parser.add_argument('--device', default='cuda:0', type=str)
+    parser.add_argument('--iterations', default=15000, type=int)
+    parser.add_argument('--lr', default=2e-3, type=float)
+    parser.add_argument('--warmup_percent', default=0.02, type=float)
+    parser.add_argument('--weight_decay', default=1e-3, type=float)
+    parser.add_argument('--beta1', default=0.9, type=float)
+    parser.add_argument('--beta2', default=0.95, type=float)
+    parser.add_argument('--scheduler', default='cos', choices=['linear', 'cos', 'none'])
+    parser.add_argument('--opt', default='adamw', choices=['adamw', 'sgd'])
+    parser.add_argument('--eval_freq', default=200, type=int) # in iterations
+    parser.add_argument('--results_base_folder', default="./exps", type=str) 
+    parser.add_argument('--grad_clip', default=0.0, type=float) # default value is 1.0 in NanoGPT
+    # Dataset params
+    parser.add_argument('--dataset', default='wikitext', choices=['wikitext', "shakespeare-char", 'arxiv', "arxiv2000", "arxiv+wiki", 'openwebtext2'])
+    parser.add_argument('--vocab_size', default=50304, type=int)
+    parser.add_argument('--data_in_ram', action='store_true') # force the data to RAM, mostly useless except for openwebtext2 
+    # Model params
+    parser.add_argument('--hashes_per_head', default=1, type=int)
+    parser.add_argument('--nb_hash', default=16, type=int)
+    parser.add_argument('--model', default='base', choices=['base', 'hashformer'])
+    parser.add_argument('--use_pretrained', default="none", type=str) # 'none', 'gpt-2' or a path to the pretraind model
+    parser.add_argument('--dropout', default=0.2, type=float)
+    parser.add_argument('--n_head', default=12, type=int)
+    parser.add_argument('--n_layer', default=24, type=int) # depths in att + ff blocks
+    parser.add_argument('--n_embd', default=768, type=int) # embedding size / hidden size ... 
+    parser.add_argument('--sequence_length', default=512, type=int)
+    parser.add_argument('--dtype', default=torch.bfloat16, type=torch.dtype)
+    parser.add_argument('--bias', default=False, type=bool)
+    parser.add_argument('--no_compile', action='store_true') # if true then model is not compiled 
+    # logging params (WandB)
+    parser.add_argument('--wandb', action='store_true') # whether to use wandb or not
+    parser.add_argument('--wandb_project', default="my-project", type=str)
+    parser.add_argument('--wandb_run_prefix', default="none", type=str) # is added before the autogenerated experiment name
+    parser.add_argument('--eval_seq_prefix', default="The history of Switzerland ", type=str) # prefix used to generate sequences
+    # Distributed args
+    parser.add_argument('--distributed_backend', default=None, type=str, required=False,
+                        choices=distributed.registered_backends())  # distributed backend type
+    return parser.parse_args(args, namespace)
+
+File Path: openwebtext2-experiments/src/data/arxiv.py
+Content:
+import os
+import tarfile
+import logging
+from pathlib import Path
+from typing import Optional
+from multiprocessing import Pool
+from tempfile import NamedTemporaryFile
+from subprocess import Popen, TimeoutExpired, PIPE
+from typing import Tuple, List
+
+import numpy as np
+import requests
+from tqdm.auto import tqdm
+import tiktoken
+
+
+def convert_to_markdown(args: Tuple[Path, Path]):
+    texfile, mdroot = args
+    mdfile = mdroot/f"{texfile.name}.md"
+    with Popen(["pandoc", "--wrap=none", "--from", "latex", texfile,
+                "--output", mdfile], stderr=PIPE) as proc:
+        try:
+            proc.communicate(timeout=1)
+        except TimeoutExpired:
+            proc.kill()
+
+
+
+def fetch_arxiv(root: Path, year: int):
+    # download latex
+    url = f"https://www.cs.cornell.edu/projects/kddcup/download/hep-th-{year}.tar.gz"
+    texroot = root/"tex"
+    print("Downloading Arxiv year", year)
+    req = requests.get(url, timeout=60)
+    with NamedTemporaryFile(suffix=".tar.gz") as f:
+        f.write(req.content)
+        logging.debug("Tar saved in tempfile %s" % f.name)
+        with tarfile.open(f.name) as tar:
+            logging.debug("Extracting tarfile")
+            tar.extractall(texroot)
+
+    # convert to markdown
+    mdroot = root/"md"/str(year)
+    mdroot.mkdir(parents=True)
+    files = list((texroot/str(year)).iterdir())
+    with Pool(os.cpu_count()) as p:
+        args = [(texfile, mdroot) for texfile in files]
+        for _ in tqdm(p.imap_unordered(convert_to_markdown, args),
+                      desc="Converting to markdown", total=len(files)):
+            pass
+
+
+def tokenize_arxiv(root: Path, year: int):
+    tokenizer = tiktoken.get_encoding("gpt2")
+    tokens = []
+    tokens_val = []
+    tokens_test = []
+    mds = root/"md"/str(year)
+
+    # tokenize
+    desc = f"Tokenizing {year}"
+    for i, mdpath in enumerate(tqdm(list(mds.iterdir()), desc=desc)):
+        with open(mdpath, encoding="utf8") as f:
+            text = "".join(f.readlines())
+        if i % 10 <= 6:  # train split
+            tokens += tokenizer.encode(text)
+        elif i % 10 <= 8:  # val split
+            tokens_val += tokenizer.encode(text)
+        else:  # test split
+            tokens_test += tokenizer.encode(text)
+
+    # save to dir
+    tpath = root/str(year)
+    tpath.mkdir(parents=True)
+    for x, name in zip([tokens, tokens_val, tokens_test],
+                       ["train", "val", "test"]):
+        mem = np.memmap(tpath/f"{name}.npy", dtype=np.uint16, mode="w+",
+                        shape=len(x))
+        for i, v in enumerate(x):
+            mem[i] = v
+
+
+def load_arxiv(cachedir: Path, years: Optional[List[int]] = None):
+    all_years = list(range(1992, 2004))
+    if years is None:
+        years = all_years
+    assert set(years) <= set(all_years)
+    root = cachedir/"arxiv"
+    root.mkdir(exist_ok=True, parents=True)
+
+    # download all years requested that are not present
+    for year in years:
+        if not (root/"md"/str(year)).exists():
+            fetch_arxiv(root, year)
+
+    # tokenize all years not previously tokenized
+    for year in years:
+        if not (root/str(year)).exists():
+            tokenize_arxiv(root, year)
+
+    # load meta
+    ret = {}
+    for split in ["train", "val"]:
+        paths = [root/str(year)/f"{split}.npy" for year in years]
+        x = [np.memmap(path, dtype=np.uint16, mode="r") for path in paths]
+        ret[split] = np.concatenate(x)
+    return ret
+
+
+def get_arxiv_2000():
+    return load_arxiv(Path(os.path.dirname(__file__))/"datasets", [2000])
+
+
+def get_arxiv_full():
+    return load_arxiv(Path(os.path.dirname(__file__))/"datasets")
+
+File Path: openwebtext2-experiments/src/data/openwebtext2.py
+Content:
+import os
+from tqdm import tqdm
+import numpy as np
+import tiktoken
+from datasets import load_dataset 
+
+
+OWT2_DATA_PATH = os.path.join(os.path.dirname(__file__), "datasets/openwebtext2/")
+tknzr = tiktoken.get_encoding("gpt2")
+
+def get_openwebtext2_data(num_proc=40):
+    """ https://openwebtext2.readthedocs.io/en/latest/ 
+    """
+    if not os.path.exists(os.path.join(OWT2_DATA_PATH, 'train.bin')):
+        os.makedirs(OWT2_DATA_PATH, exist_ok=True)
+        dataset = load_dataset("the_pile_openwebtext2")
+
+        split_dataset = dataset["train"].train_test_split(test_size=0.0005, seed=2357, shuffle=True)
+        split_dataset['val'] = split_dataset.pop('test')
+        
+        def process(example):
+            ids = tknzr.encode_ordinary(example['text']) # encode_ordinary ignores any special tokens
+            ids.append(tknzr.eot_token) # add the end of text token, e.g. 50256 for gpt2 bpe
+            # note: I think eot should be prepended not appended... hmm. it's called "eot" though...
+            out = {'ids': ids, 'len': len(ids)}
+            return out
+
+        # tokenize the dataset
+        tokenized = split_dataset.map(
+            process,
+            remove_columns=['text'],
+            desc="tokenizing the splits",
+            num_proc=num_proc,
+        )
+
+        # concatenate all the ids in each dataset into one large file we can use for training
+        for split, dset in tokenized.items():
+            arr_len = np.sum(dset['len'])
+            filename = os.path.join(OWT2_DATA_PATH, f'{split}.bin')
+            dtype = np.uint16 # (can do since enc.max_token_value == 50256 is < 2**16)
+            arr = np.memmap(filename, dtype=dtype, mode='w+', shape=(arr_len,))
+            total_batches = 1024
+
+            idx = 0
+            for batch_idx in tqdm(range(total_batches), desc=f'writing {filename}'):
+                # Batch together samples for faster write
+                batch = dset.shard(num_shards=total_batches, index=batch_idx, contiguous=True).with_format('numpy')
+                arr_batch = np.concatenate(batch['ids'])
+                # Write into mmap
+                arr[idx : idx + len(arr_batch)] = arr_batch
+                idx += len(arr_batch)
+            arr.flush()
+
+    train_data = np.memmap(os.path.join(OWT2_DATA_PATH, 'train.bin'), dtype=np.uint16, mode='r')
+    val_data = np.memmap(os.path.join(OWT2_DATA_PATH, 'val.bin'), dtype=np.uint16, mode='r')
+
+    return {'train': train_data, 'val': val_data}
+
+
+File Path: openwebtext2-experiments/src/data/shakespeare.py
+Content:
+import os
+from string import ascii_letters, digits, punctuation
+
+import numpy as np
+import requests
+
+
+_char_decode = dict(enumerate(sorted(set(ascii_letters + digits + punctuation + " \n"))))
+_char_encode = {char: i for i, char in _char_decode.items()}
+
+
+def char_tknzr(txt: str):
+    return [_char_encode[char] for char in txt if char in _char_encode]
+
+
+DATA_PATH = os.path.join(os.path.dirname(__file__), "datasets", "shakespeare")
+
+def get_shakespeare_data():
+    """Inspired from https://github.com/karpathy/nanoGPT/"""
+    raw_path = os.path.join(DATA_PATH, "raw.txt")
+    train_path = os.path.join(DATA_PATH, f"train.npy")
+    test_path = os.path.join(DATA_PATH, f"test.npy")
+
+    # if path is not even there, download all data
+    if not os.path.exists(DATA_PATH):
+        print("Downloading raw Shakespeare texts")
+        url = "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"
+        os.makedirs(DATA_PATH, exist_ok=True)
+        text = requests.get(url, timeout=60).text
+        with open(raw_path, "w+", encoding="utf8") as f:
+            f.write(text)
+
+    # attempt to find cached version for current tokenizer
+    if not os.path.exists(train_path) or not os.path.exists(test_path):
+        print("Tokenizing Shakespeare texts")
+        # load text
+        with open(raw_path, encoding="utf8") as f:
+            text = "".join(f.readlines())
+        i = int(0.8*len(text))
+        # encode text
+        x = np.array(char_tknzr(text[:i]), dtype=np.uint16)
+        x_test = np.array(char_tknzr(text[i:]), dtype=np.uint16)
+        # map memory
+        mem = np.memmap(train_path, dtype=np.uint16, mode="w+", shape=x.shape)
+        mem[:] = x
+        mem = np.memmap(test_path, dtype=np.uint16, mode="w+", shape=x_test.shape)
+        mem[:] = x_test
+
+    # at this point we know that the binfile was properly created so we load it
+    return {"train": np.memmap(train_path, dtype=np.uint16, mode="r"),
+            "val": np.memmap(test_path, dtype=np.uint16, mode="r")}
+
+File Path: openwebtext2-experiments/src/data/utils.py
+Content:
+import numpy as np
+from typing import Dict
+
+from .shakespeare import get_shakespeare_data
+from .wikitext import get_wikitext_data
+from .arxiv import get_arxiv_2000, get_arxiv_full
+from .openwebtext2 import get_openwebtext2_data
+
+
+def get_dataset(args) -> Dict[str, np.ndarray]:
+    """ Fetch the right dataset given by the args.dataset parameter. The logic for each dataset is
+     contained in its own python file. The expected format at the moment is a dictionary of np.memmap
+     containing two keys: 'train' and 'val', corresponding to the tokenized training and validation data. """
+    if args.dataset == 'wikitext':
+        return get_wikitext_data()
+    if args.dataset == "shakespeare-char":
+        return get_shakespeare_data()
+    if args.dataset == "arxiv2000":
+        return get_arxiv_2000()
+    if args.dataset == "arxiv":
+        return get_arxiv_full()
+    if args.dataset == "arxiv+wiki":
+        arxiv_data = get_arxiv_full()
+        wiki_data = get_wikitext_data()
+        train_data = np.concatenate((arxiv_data['train'], wiki_data['train']))
+        val_data = np.concatenate((arxiv_data['val'], wiki_data['val']))
+        return {'train': train_data, 'val': val_data}
+    if args.dataset == 'openwebtext2':
+        return get_openwebtext2_data()
+    else:
+        raise NotImplementedError(f"Unknow dataset key '{args.dataset}'")
+
+File Path: openwebtext2-experiments/src/data/wikitext.py
+Content:
+import os
+import zipfile
+import urllib
+import numpy as np
+import tiktoken
+
+
+WIKITEXT_DATA_PATH = os.path.join(os.path.dirname(__file__), "datasets/wikitext/")
+
+
+def get_wikitext_data():
+    """ Inspired from https://github.com/tysam-code/hlb-gpt """
+    if not os.path.exists(WIKITEXT_DATA_PATH):
+        os.makedirs(WIKITEXT_DATA_PATH, exist_ok=True)
+        print("downloading data and tokenizing (1-2 min)")
+        raw_data_source = 'https://s3.amazonaws.com/research.metamind.io/wikitext/wikitext-103-raw-v1.zip'
+        urllib.request.urlretrieve(raw_data_source, os.path.join(WIKITEXT_DATA_PATH,'data.zip'))
+
+        with zipfile.ZipFile(os.path.join(WIKITEXT_DATA_PATH, "data.zip"), 'r') as zip_ref:
+            zip_ref.extractall(WIKITEXT_DATA_PATH)
+
+        with open(os.path.join(WIKITEXT_DATA_PATH, "wikitext-103-raw/wiki.train.raw"), 'r') as data_file:
+            raw_train_data = data_file.read()
+
+        with open(os.path.join(WIKITEXT_DATA_PATH, "wikitext-103-raw/wiki.valid.raw"), 'r') as data_file:
+            raw_eval_data = data_file.read()
+
+        tokenizer = tiktoken.get_encoding("gpt2")
+        raw_tokenized_train = tokenizer.encode_ordinary(raw_train_data)
+        raw_tokenized_eval = tokenizer.encode_ordinary(raw_eval_data)
+
+        train_tokenized = np.array(raw_tokenized_train, dtype=np.uint16) 
+        eval_tokenized = np.array(raw_tokenized_eval, dtype=np.uint16)
+
+        train_tokenized.tofile(os.path.join(WIKITEXT_DATA_PATH, 'train.bin'))
+        eval_tokenized.tofile(os.path.join(WIKITEXT_DATA_PATH, 'val.bin'))
+        print("completed the tokenization process!")
+
+    train_data = np.memmap(os.path.join(WIKITEXT_DATA_PATH, 'train.bin'), dtype=np.uint16, mode='r')
+    val_data = np.memmap(os.path.join(WIKITEXT_DATA_PATH, 'val.bin'), dtype=np.uint16, mode='r')
+
+    return {'train': train_data, 'val': val_data}
+
+File Path: openwebtext2-experiments/src/distributed/__init__.py
+Content:
+
+from . import ddp
+from . import single
+
+BACKEND_TYPE_TO_MODULE_MAP = {
+    "nccl": ddp.DataParallelDistributedBackend,
+    None: single.SinlgeNodeBackend,
+}
+
+
+def make_backend_from_args(args):
+    return BACKEND_TYPE_TO_MODULE_MAP[args.distributed_backend](args)
+
+
+def registered_backends():
+    return BACKEND_TYPE_TO_MODULE_MAP.keys()
+
+File Path: openwebtext2-experiments/src/distributed/backend.py
+Content:
+
+from typing import List
+
+
+class DistributedBackend(object):
+
+    def __init__(self, args):
+        pass
+
+    def transform_model(self, model):
+        raise NotImplementedError
+
+    def get_context_for_microstep_forward(self, model, microstep_idx, gradient_accumulation_steps):
+        raise NotImplementedError
+
+    def is_master_process(self) -> bool:
+        raise NotImplementedError
+
+    def get_adjusted_args_for_process(self, args):
+        raise NotImplementedError
+
+    def get_raw_model(self, model):
+        raise NotImplementedError
+
+    def translate_model_parameter_name_for_node(self, parameter_name) -> List[str]:
+        raise NotImplementedError
+
+    def get_world_size(self):
+        raise NotImplementedError
+
+    def finalize(self):
+        pass
+
+File Path: openwebtext2-experiments/src/distributed/ddp.py
+Content:
+import os
+import math
+from contextlib import contextmanager
+
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.distributed import init_process_group, destroy_process_group, get_world_size
+
+from .backend import DistributedBackend
+
+
+class DataParallelDistributedBackend(DistributedBackend):
+
+    def __init__(self, args):
+        self.rank = int(os.environ.get('RANK', -1))
+        assert self.rank != -1, "DDP backend can not be used without rank"
+        assert "cuda" in args.device, "DDP backend can not be used on non-CUDA devices"
+        init_process_group(backend=args.distributed_backend)
+        self.local_rank = int(os.environ['LOCAL_RANK'])
+
+    def get_adjusted_args_for_process(self, args):
+        effective_batch_size = args.batch_size * args.acc_steps
+        world_size = self.get_world_size()
+        if effective_batch_size % world_size != 0:
+            raise ValueError(f"Effective batch size "
+                             "{effective_batch_size} is not divisible "
+                             "by the world size {world_size}.")
+        acc_steps_div = math.gcd(args.acc_steps, world_size)
+        args.acc_steps = args.acc_steps // acc_steps_div
+        args.batch_size = args.batch_size // (world_size // acc_steps_div)
+        args.device = f'cuda:{self.local_rank}'
+        args.seed = args.seed + self.local_rank
+        return args
+
+    def transform_model(self, model):
+        return DDP(model, device_ids=[self.local_rank])
+
+    @contextmanager
+    def get_context_for_microstep_forward(self, model, microstep_idx, gradient_accumulation_steps):
+        model.require_backward_grad_sync = (
+            microstep_idx == gradient_accumulation_steps - 1)
+        yield
+
+    def is_master_process(self) -> bool:
+        return self.rank == 0
+
+    def get_raw_model(self, model):
+        return model.module
+
+    def translate_model_parameter_name_for_node(self, parameter_name):
+        return [f'module.{parameter_name}']
+
+    def get_world_size(self):
+        return get_world_size()
+
+    def finalize(self):
+        destroy_process_group()
+
+File Path: openwebtext2-experiments/src/distributed/single.py
+Content:
+from contextlib import nullcontext
+
+from .backend import DistributedBackend
+
+
+class SinlgeNodeBackend(DistributedBackend):
+
+    def transform_model(self, model):
+        return model
+
+    def get_context_for_microstep_forward(self, *args, **kwargs):
+        return nullcontext()
+
+    def get_adjusted_args_for_process(self, args):
+        return args
+
+    def is_master_process(self) -> bool:
+        return True
+
+    def get_raw_model(self, model):
+        return model
+
+    def get_world_size(self):
+        return 1
+
+    def translate_model_parameter_name_for_node(self, parameter_name):
+        return [parameter_name]
+
+File Path: openwebtext2-experiments/src/main.py
+Content:
+import os
+import sys
+import numpy as np
+import torch
+import inspect
+import json
+import copy
+import argparse
+import random
+import wandb
+
+import config
+from models.utils import get_model
+from data.utils import get_dataset
+from optim.base import train_base
+from optim.sparse import train_sparse
+import distributed
+
+
+def get_args():
+    parser = argparse.ArgumentParser(allow_abbrev=False)
+    parser.add_argument('--config_format', default='base', choices=config.registered_formats())
+
+    args, rem_args = parser.parse_known_args()
+
+    return config.parse_args_with_format(format=args.config_format, base_parser=parser, args=rem_args, namespace=args)
+
+
+def get_exp_name(args):
+    """ Returns the name of the experiment, used for saving models and wandb. """
+    exp_name = f"{args.model}_lr{args.lr}_bs{args.batch_size}x{args.acc_steps}_{args.world_size}nodes"
+    if args.wandb_run_prefix != 'none':
+        exp_name = args.wandb_run_prefix + '_' + exp_name
+    if 'sparse' in args.model:
+        exp_name += f"_lmd{args.lmbda}"
+    if 'hash' in args.model:
+        exp_name += f"_nbhash{args.nb_hash}"
+    if 'drop' in args.model:
+        exp_name += f"_sparsity{args.sparsity}"
+    exp_name += f"_T={args.sequence_length}"
+    exp_name += f"_seed={args.seed}"
+    return exp_name
+
+
+def main(args): 
+
+    torch.backends.cuda.matmul.allow_tf32 = True # allows us to make sure we're able to use tensorfloat32 during training
+    torch.backends.cudnn.allow_tf32 = True
+
+    distributed_backend = distributed.make_backend_from_args(args)
+    args = distributed_backend.get_adjusted_args_for_process(args)
+
+    args.device = torch.device(args.device)
+    device_type = "cuda" if "cuda" in str(args.device) else "cpu"
+    if device_type == "cuda":
+        torch.cuda.set_device(args.device)
+
+    torch.manual_seed(args.seed)
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    
+    print(f"Loading dataset '{args.dataset}'")
+    
+    data = get_dataset(args) # data is a dict: {'train': train_tokenized, 'val': eval_tokenized}
+    if args.data_in_ram:
+        data = {'train': np.array(data['train']), 'val': np.array(data['val'])}
+        
+    print(f"Num training tokens: {len(data['train'])}")
+    print(f"Num validation tokens: {len(data['val'])}")
+    
+    model = get_model(args).to(args.device) # todo: take care of initializing the model if args.use_pretrained != 'none'
+
+    model = distributed_backend.transform_model(model)
+    
+    group_specs = distributed_backend.get_raw_model(model).get_parameter_group_specs()
+    param_name_mapping = {p_name: p for p_name, p in model.named_parameters()}
+    optimized_params_cnt = 0
+    for g in group_specs:
+        params = []
+        for p_name in g["params"]:
+            translated_p_names = distributed_backend.translate_model_parameter_name_for_node(p_name)
+            params += [param_name_mapping[p_name] for p_name in translated_p_names]
+        g["params"] = params
+        optimized_params_cnt += sum([p.numel() for p in g["params"]])
+    print("number of optimized parameters: %.2fM" % (optimized_params_cnt/1e6,))
+    if args.opt == 'adamw':
+        use_fused = (device_type == 'cuda') and ('fused' in inspect.signature(torch.optim.AdamW).parameters)
+        print(f"using fused AdamW: {use_fused}")
+        extra_args = dict(fused=True) if use_fused else dict()
+        opt = torch.optim.AdamW(group_specs, lr=args.lr, betas=(args.beta1, args.beta2),
+                                weight_decay=args.weight_decay, **extra_args)
+    else:
+        opt = torch.optim.SGD(group_specs, lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
+    
+    if args.scheduler != 'none':
+        if args.scheduler in ['cos', 'linear']:
+            scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer=opt, max_lr=args.lr, total_steps=args.iterations, 
+                                                            pct_start=args.warmup_percent, anneal_strategy=args.scheduler, 
+                                                            cycle_momentum=False, div_factor=1e2, final_div_factor=.05)
+        else:
+            raise NotImplementedError(f"Unknown scheduler type: {args.scheduler}.")
+    else:
+        scheduler = None
+
+    args.world_size = distributed_backend.get_world_size()
+    exp_name = get_exp_name(args)
+    if distributed_backend.is_master_process() and args.wandb:
+        params_copy = copy.deepcopy(vars(args))
+        del params_copy['device']
+        wandb.init(project=args.wandb_project, name=exp_name, config=params_copy)
+    
+    ckpt_path = os.path.join(args.results_base_folder, args.dataset, args.model, exp_name)
+    if not os.path.exists(ckpt_path):
+        if distributed_backend.is_master_process():
+            os.makedirs(ckpt_path)
+    elif os.path.isfile(os.path.join(ckpt_path, "summary.json")): # the experiment was already completed
+        print(f"Already found experiment '{ckpt_path}'.\nSkipping.")
+        sys.exit(0)
+
+    if args.model == 'base': # all train functions have the same interface
+        train = train_base
+    elif 'hashformer' in args.model:
+        train = train_base
+    elif 'dropformer' in args.model:
+        train = train_base
+    else:
+        raise NotImplementedError(f"No training method implemented for model type '{args.model}'.")
+
+    print(f"\nTraining model={args.model} \n{vars(args)}\n")
+
+    stats = train(model, opt, data, scheduler, args.iterations, args.acc_steps, args.batch_size, args.sequence_length, 
+                  eval_freq=args.eval_freq, 
+                  distributed_backend=distributed_backend,
+                  ckpt_path=f"{ckpt_path}/ckpt.pt", extra_args=args)
+    
+    args.device = None
+    args.dtype = None
+    stats['args'] = vars(args)
+    if distributed_backend.is_master_process():
+        with open(f"{ckpt_path}/summary.json", "w") as fs:
+            json.dump(stats, fs)
+    distributed_backend.finalize()
+
+
+if __name__ == "__main__":
+    args = get_args()
+    main(args)
+
+File Path: openwebtext2-experiments/src/models/base.py
+Content:
+"""
+Full definition of a GPT Language Model, all of it in this single file.
+References:
+1) the official GPT-2 TensorFlow implementation released by OpenAI:
+https://github.com/openai/gpt-2/blob/master/src/model.py
+2) huggingface/transformers PyTorch implementation:
+https://github.com/huggingface/transformers/blob/main/src/transformers/models/gpt2/modeling_gpt2.py
+"""
+
+import math
+import inspect
+
+import tiktoken
+import torch
+import torch.nn as nn
+from torch.nn import functional as F
+
+
+class LayerNorm(nn.Module):
+    """ LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False """
+
+    def __init__(self, ndim, bias):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(ndim))
+        self.bias = nn.Parameter(torch.zeros(ndim)) if bias else None
+
+    def forward(self, input):
+        return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
+
+
+class CausalSelfAttention(nn.Module):
+
+    def __init__(self, config):
+        super().__init__()
+        assert config.n_embd % config.n_head == 0
+        # key, query, value projections for all heads, but in a batch
+        self.c_attn = nn.Linear(config.n_embd, 2 * config.n_embd, bias=config.bias)
+        # output projection
+        self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+        # regularization
+        self.attn_dropout = nn.Dropout(config.dropout)
+        self.resid_dropout = nn.Dropout(config.dropout)
+        self.n_head = config.n_head
+        self.n_embd = config.n_embd
+        self.dropout = config.dropout
+        # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
+        self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
+        if not self.flash:
+            print("WARNING: using slow attention. Flash Attention requires PyTorch >= 2.0")
+            # causal mask to ensure that attention is only applied to the left in the input sequence
+            self.register_buffer("bias", torch.tril(torch.ones(config.sequence_length, config.sequence_length))
+                                        .view(1, 1, config.sequence_length, config.sequence_length))
+
+    def forward(self, x):
+        B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
+
+        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
+        q ,v  = self.c_attn(x).split(self.n_embd, dim=2)
+        k = F.normalize(q, p=2, dim=-1).type(torch.bfloat16)
+        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+
+        # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
+        if self.flash:
+            # efficient attention using Flash Attention CUDA kernels
+            y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout, is_causal=True)
+        else:
+            # manual implementation of attention
+            att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+            att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
+            att = F.softmax(att, dim=-1)
+            att = self.attn_dropout(att)
+            y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
+        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+
+        # output projection
+        y = self.resid_dropout(self.c_proj(y))
+        return y
+
+
+class MLP(nn.Module):
+
+    def __init__(self, config):
+        super().__init__()
+        self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
+        self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
+        self.dropout = nn.Dropout(config.dropout)
+        self.activation = nn.GELU()
+
+    def forward(self, x):
+        x = self.c_fc(x)
+        x = self.activation(x)
+        x = self.c_proj(x)
+        x = self.dropout(x)
+        return x
+
+
+class Block(nn.Module):
+
+    def __init__(self, config):
+        super().__init__()
+        self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
+        self.attn = CausalSelfAttention(config)
+        self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
+        self.mlp = MLP(config)
+
+    def forward(self, x):
+        x = x + self.attn(self.ln_1(x))
+        x = x + self.mlp(self.ln_2(x))
+        return x
+    
+
+class GPTBase(nn.Module):
+
+    def __init__(self, config):
+        super().__init__()
+        assert config.vocab_size is not None
+        assert config.sequence_length is not None
+        self.config = config
+        self.tokenizer = tiktoken.get_encoding("gpt2")
+
+        self.transformer = nn.ModuleDict(dict(
+            wte = nn.Embedding(config.vocab_size, config.n_embd),
+            wpe = nn.Embedding(config.sequence_length, config.n_embd),
+            drop = nn.Dropout(config.dropout),
+            h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
+            ln_f = LayerNorm(config.n_embd, bias=config.bias),
+        ))
+
+        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        # with weight tying when using torch.compile() some warnings get generated:
+        # "UserWarning: functional_call was passed multiple values for tied weights.
+        # This behavior is deprecated and will be an error in future versions"
+        # not 100% sure what this is, so far seems to be harmless. TODO investigate
+        self.transformer.wte.weight = self.lm_head.weight # https://paperswithcode.com/method/weight-tying
+
+        # init all weights
+        self.apply(self._init_weights)
+        # apply special scaled init to the residual projections, per GPT-2 paper
+        for pn, p in self.named_parameters():
+            if pn.endswith('c_proj.weight'):
+                torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
+
+        # report number of parameters
+        print("number of parameters: %.2fM" % (self.get_num_params()/1e6,))
+
+    def get_num_params(self, non_embedding=True):
+        """
+        Return the number of parameters in the model.
+        For non-embedding count (default), the position embeddings get subtracted.
+        The token embeddings would too, except due to the parameter sharing these
+        params are actually used as weights in the final layer, so we include them.
+        """
+        n_params = sum(p.numel() for p in self.parameters())
+        if non_embedding:
+            n_params -= self.transformer.wpe.weight.numel()
+        return n_params
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    def forward(self, idx, targets=None, get_logits=False):
+        device = idx.device
+        b, t = idx.size()
+        assert t <= self.config.sequence_length, f"Cannot forward sequence of length {t}, block size is only {self.config.sequence_length}"
+        pos = torch.arange(0, t, dtype=torch.long, device=device).unsqueeze(0) # shape (1, t)
+
+        # forward the GPT model itself
+        tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
+        pos_emb = self.transformer.wpe(pos) # position embeddings of shape (1, t, n_embd)
+        x = self.transformer.drop(tok_emb + pos_emb)
+        for block in self.transformer.h:
+            x = block(x)
+        x = self.transformer.ln_f(x)
+
+        if targets is not None:
+            # if we are given some desired targets also calculate the loss
+            logits = self.lm_head(x)
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
+        else:
+            # inference-time mini-optimization: only forward the lm_head on the very last position
+            logits = self.lm_head(x[:, [-1], :]) # note: using list [-1] to preserve the time dim
+            loss = None
+        logits = logits if get_logits else None
+        return {'logits': logits, 'loss': loss}
+
+    def crop_sequence_length(self, sequence_length):
+        # model surgery to decrease the block size if necessary
+        # e.g. we may load the GPT2 pretrained model checkpoint (block size 1024)
+        # but want to use a smaller block size for some smaller, simpler model
+        assert sequence_length <= self.config.sequence_length
+        self.config.sequence_length = sequence_length
+        self.transformer.wpe.weight = nn.Parameter(self.transformer.wpe.weight[:sequence_length])
+        for block in self.transformer.h:
+            block.attn.bias = block.attn.bias[:,:,:sequence_length,:sequence_length]
+
+    @classmethod
+    def from_pretrained(cls, model_type, override_args=None):
+        # TODO
+        pass
+
+    def get_parameter_group_specs(self):
+        """
+        This long function is unfortunately doing something very simple and is being very defensive:
+        We are separating out all parameters of the model into two buckets: those that will experience
+        weight decay for regularization and those that won't (biases, and layernorm/embedding weights).
+        We are then returning the PyTorch optimizer object.
+        """
+
+        # separate out all parameters to those that will and won't experience regularizing weight decay
+        decay = set()
+        no_decay = set()
+        whitelist_weight_modules = (torch.nn.Linear, )
+        blacklist_weight_modules = (torch.nn.LayerNorm, LayerNorm, torch.nn.Embedding)
+        for mn, m in self.named_modules():
+            for pn, p in m.named_parameters():
+                fpn = '%s.%s' % (mn, pn) if mn else pn # full param name
+                # random note: because named_modules and named_parameters are recursive
+                # we will see the same tensors p many many times. but doing it this way
+                # allows us to know which parent module any tensor p belongs to...
+                if pn.endswith('bias'):
+                    # all biases will not be decayed
+                    no_decay.add(fpn)
+                elif pn.endswith('weight') and isinstance(m, whitelist_weight_modules):
+                    # weights of whitelist modules will be weight decayed
+                    decay.add(fpn)
+                elif pn.endswith('weight') and isinstance(m, blacklist_weight_modules):
+                    # weights of blacklist modules will NOT be weight decayed
+                    no_decay.add(fpn)
+
+        # subtle: 'transformer.wte.weight' and 'lm_head.weight' are tied, so they
+        # will appear in the no_decay and decay sets respectively after the above.
+        # In addition, because named_parameters() doesn't return duplicates, it
+        # will only return the first occurence, key'd by 'transformer.wte.weight', below.
+        # so let's manually remove 'lm_head.weight' from decay set. This will include
+        # this tensor into optimization via transformer.wte.weight only, and not decayed.
+        decay.remove('lm_head.weight')
+
+        # validate that we considered every parameter
+        param_dict = {pn: p for pn, p in self.named_parameters()}
+        inter_params = decay & no_decay
+        union_params = decay | no_decay
+        assert len(inter_params) == 0, "parameters %s made it into both decay/no_decay sets!" % (str(inter_params), )
+        assert len(param_dict.keys() - union_params) == 0, "parameters %s were not separated into either decay/no_decay set!" \
+                                                    % (str(param_dict.keys() - union_params), )
+
+        # create the pytorch optimizer object
+        return [
+            {"params": sorted(list(decay))},
+            {"params": sorted(list(no_decay)), "weight_decay": 0.0},
+        ]
+
+    @torch.no_grad()
+    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
+        """
+        Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete
+        the sequence max_new_tokens times, feeding the predictions back into the model each time.
+        Most likely you'll want to make sure to be in model.eval() mode of operation for this.
+        """
+        for _ in range(max_new_tokens):
+            # if the sequence context is growing too long we must crop it at sequence_length
+            idx_cond = idx if idx.size(1) <= self.config.sequence_length else idx[:, -self.config.sequence_length:]
+            # forward the model to get the logits for the index in the sequence
+            logits = self(idx_cond, get_logits=True)['logits']
+            # pluck the logits at the final step and scale by desired temperature
+            logits = logits[:, -1, :] / temperature
+            # optionally crop the logits to only the top k options
+            if top_k is not None:
+                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                logits[logits < v[:, [-1]]] = -float('Inf')
+            # apply softmax to convert logits to (normalized) probabilities
+            probs = F.softmax(logits, dim=-1)
+            # sample from the distribution
+            idx_next = torch.multinomial(probs, num_samples=1)
+            # append sampled index to the running sequence and continue
+            idx = torch.cat((idx, idx_next), dim=1)
+
+        return idx
+    
+    @torch.no_grad()
+    def generate_from_string(self, in_str, max_new_tokens, temperature=1.0, top_k=None):
+        idx = torch.tensor(self.tokenizer.encode(in_str, allowed_special={"<|endoftext|>"})).view(1,-1).to(self.lm_head.weight.device)
+        out_idx = self.generate(idx, max_new_tokens, temperature, top_k).view(-1).to('cpu').numpy()
+        return self.tokenizer.decode(out_idx)
+
+File Path: openwebtext2-experiments/src/models/dropformer.py
+Content:
+"""
+Full definition of a GPT Language Model, all of it in this single file.
+References:
+1) the official GPT-2 TensorFlow implementation released by OpenAI:
+https://github.com/openai/gpt-2/blob/master/src/model.py
+2) huggingface/transformers PyTorch implementation:
+https://github.com/huggingface/transformers/blob/main/src/transformers/models/gpt2/modeling_gpt2.py
+"""
+
+import math
+import inspect
+
+import tiktoken
+import torch
+import torch.nn as nn
+from torch.nn import functional as F
+
+from .qksparse_attn import attention_fn
+
+
+class LayerNorm(nn.Module):
+    """ LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False """
+
+    def __init__(self, ndim, bias):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(ndim))
+        self.bias = nn.Parameter(torch.zeros(ndim)) if bias else None
+
+    def forward(self, input):
+        return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
+
+
+class CausalSelfAttention(nn.Module):
+
+    def __init__(self, config):
+        super().__init__()
+        assert config.n_embd % config.n_head == 0
+        # key, query, value projections for all heads, but in a batch
+        self.c_attn = nn.Linear(config.n_embd, 2 * config.n_embd, bias=config.bias)
+        self.sparsity = config.sparsity
+        # output projection
+        self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+        # regularization
+        self.dropout = config.dropout
+        self.resid_dropout = nn.Dropout(config.dropout)
+        self.n_head = config.n_head
+        self.n_embd = config.n_embd
+        self.dropout = config.dropout
+        # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
+        self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
+        if not self.flash:
+            print("WARNING: using slow attention. Flash Attention requires PyTorch >= 2.0")
+            # causal mask to ensure that attention is only applied to the left in the input sequence
+            self.register_buffer("bias", torch.tril(torch.ones(config.sequence_length, config.sequence_length))
+                                        .view(1, 1, config.sequence_length, config.sequence_length))
+        
+
+    def forward(self, x, sparsity=None):
+        B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
+
+        # calculate query, values for all heads in batch and move head forward to be the batch dim
+        q ,v  = self.c_attn(x).split(self.n_embd, dim=2)
+
+        q = q.view(B, T, self.n_head, -1)
+        v = v.view(B, T, self.n_head, -1)
+
+        y = attention_fn(q ,q ,v ,sparsity=self.sparsity if sparsity is None else sparsity).view(B, T, C)
+
+        # output projection
+        y = self.resid_dropout(self.c_proj(y))
+        return y
+
+
+class MLP(nn.Module):
+
+    def __init__(self, config):
+        super().__init__()
+        self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
+        self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
+        self.dropout = nn.Dropout(config.dropout)
+        self.activation = nn.GELU()
+
+    def forward(self, x):
+        x = self.c_fc(x)
+        x = self.activation(x)
+        x = self.c_proj(x)
+        x = self.dropout(x)
+        return x
+
+
+class Block(nn.Module):
+
+    def __init__(self, config):
+        super().__init__()
+        self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
+        self.attn = CausalSelfAttention(config)
+        self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
+        self.mlp = MLP(config)
+
+    def forward(self, x, sparsity=None):
+        x = x + self.attn(self.ln_1(x), sparsity=sparsity)
+        x = x + self.mlp(self.ln_2(x))
+        return x
+    
+
+class Dropformer(nn.Module):
+
+    def __init__(self, config):
+        super().__init__()
+        assert config.vocab_size is not None
+        assert config.sequence_length is not None
+        self.config = config
+        self.tokenizer = tiktoken.get_encoding("gpt2")
+
+        self.transformer = nn.ModuleDict(dict(
+            wte = nn.Embedding(config.vocab_size, config.n_embd),
+            wpe = nn.Embedding(config.sequence_length, config.n_embd),
+            drop = nn.Dropout(config.dropout),
+            h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
+            ln_f = LayerNorm(config.n_embd, bias=config.bias),
+        ))
+
+        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        # with weight tying when using torch.compile() some warnings get generated:
+        # "UserWarning: functional_call was passed multiple values for tied weights.
+        # This behavior is deprecated and will be an error in future versions"
+        # not 100% sure what this is, so far seems to be harmless. TODO investigate
+        self.transformer.wte.weight = self.lm_head.weight # https://paperswithcode.com/method/weight-tying
+
+        # init all weights
+        self.apply(self._init_weights)
+        # apply special scaled init to the residual projections, per GPT-2 paper
+        for pn, p in self.named_parameters():
+            if pn.endswith('c_proj.weight'):
+                torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
+
+        # report number of parameters
+        print("number of parameters: %.2fM" % (self.get_num_params()/1e6,))
+
+    def get_num_params(self, non_embedding=True):
+        """
+        Return the number of parameters in the model.
+        For non-embedding count (default), the position embeddings get subtracted.
+        The token embeddings would too, except due to the parameter sharing these
+        params are actually used as weights in the final layer, so we include them.
+        """
+        n_params = sum(p.numel() for p in self.parameters())
+        if non_embedding:
+            n_params -= self.transformer.wpe.weight.numel()
+        return n_params
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    def forward(self, idx, targets=None, get_logits=False, sparsity=None):
+        device = idx.device
+        b, t = idx.size()
+        assert t <= self.config.sequence_length, f"Cannot forward sequence of length {t}, block size is only {self.config.sequence_length}"
+        pos = torch.arange(0, t, dtype=torch.long, device=device).unsqueeze(0) # shape (1, t)
+
+        # forward the GPT model itself
+        tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
+        pos_emb = self.transformer.wpe(pos) # position embeddings of shape (1, t, n_embd)
+        x = self.transformer.drop(tok_emb + pos_emb)
+        for block in self.transformer.h:
+            x = block(x, sparsity=sparsity)
+        x = self.transformer.ln_f(x)
+
+        if targets is not None:
+            # if we are given some desired targets also calculate the loss
+            logits = self.lm_head(x)
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
+        else:
+            # inference-time mini-optimization: only forward the lm_head on the very last position
+            logits = self.lm_head(x[:, [-1], :]) # note: using list [-1] to preserve the time dim
+            loss = None
+        logits = logits if get_logits else None
+        return {'logits': logits, 'loss': loss}
+
+    def crop_sequence_length(self, sequence_length):
+        # model surgery to decrease the block size if necessary
+        # e.g. we may load the GPT2 pretrained model checkpoint (block size 1024)
+        # but want to use a smaller block size for some smaller, simpler model
+        assert sequence_length <= self.config.sequence_length
+        self.config.sequence_length = sequence_length
+        self.transformer.wpe.weight = nn.Parameter(self.transformer.wpe.weight[:sequence_length])
+        for block in self.transformer.h:
+            block.attn.bias = block.attn.bias[:,:,:sequence_length,:sequence_length]
+
+    @classmethod
+    def from_pretrained(cls, model_type, override_args=None):
+        # TODO
+        pass
+
+    def get_parameter_group_specs(self):
+        """
+        This long function is unfortunately doing something very simple and is being very defensive:
+        We are separating out all parameters of the model into two buckets: those that will experience
+        weight decay for regularization and those that won't (biases, and layernorm/embedding weights).
+        We are then returning the PyTorch optimizer object.
+        """
+
+        # separate out all parameters to those that will and won't experience regularizing weight decay
+        decay = set()
+        no_decay = set()
+        whitelist_weight_modules = (torch.nn.Linear, )
+        blacklist_weight_modules = (torch.nn.LayerNorm, LayerNorm, torch.nn.Embedding)
+        for mn, m in self.named_modules():
+            for pn, p in m.named_parameters():
+                fpn = '%s.%s' % (mn, pn) if mn else pn # full param name
+                # random note: because named_modules and named_parameters are recursive
+                # we will see the same tensors p many many times. but doing it this way
+                # allows us to know which parent module any tensor p belongs to...
+                if pn.endswith('bias'):
+                    # all biases will not be decayed
+                    no_decay.add(fpn)
+                elif pn.endswith('weight') and isinstance(m, whitelist_weight_modules):
+                    # weights of whitelist modules will be weight decayed
+                    decay.add(fpn)
+                elif pn.endswith('weight') and isinstance(m, blacklist_weight_modules):
+                    # weights of blacklist modules will NOT be weight decayed
+                    no_decay.add(fpn)
+
+        # subtle: 'transformer.wte.weight' and 'lm_head.weight' are tied, so they
+        # will appear in the no_decay and decay sets respectively after the above.
+        # In addition, because named_parameters() doesn't return duplicates, it
+        # will only return the first occurence, key'd by 'transformer.wte.weight', below.
+        # so let's manually remove 'lm_head.weight' from decay set. This will include
+        # this tensor into optimization via transformer.wte.weight only, and not decayed.
+        decay.remove('lm_head.weight')
+
+        # validate that we considered every parameter
+        param_dict = {pn: p for pn, p in self.named_parameters()}
+        inter_params = decay & no_decay
+        union_params = decay | no_decay
+        assert len(inter_params) == 0, "parameters %s made it into both decay/no_decay sets!" % (str(inter_params), )
+        assert len(param_dict.keys() - union_params) == 0, "parameters %s were not separated into either decay/no_decay set!" \
+                                                    % (str(param_dict.keys() - union_params), )
+
+        # create the pytorch optimizer object
+        return [
+            {"params": sorted(list(decay))},
+            {"params": sorted(list(no_decay)), "weight_decay": 0.0},
+        ]
+
+    @torch.no_grad()
+    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
+        """
+        Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete
+        the sequence max_new_tokens times, feeding the predictions back into the model each time.
+        Most likely you'll want to make sure to be in model.eval() mode of operation for this.
+        """
+        for _ in range(max_new_tokens):
+            # if the sequence context is growing too long we must crop it at sequence_length
+            idx_cond = idx if idx.size(1) <= self.config.sequence_length else idx[:, -self.config.sequence_length:]
+            # forward the model to get the logits for the index in the sequence
+            logits = self(idx_cond, get_logits=True)['logits']
+            # pluck the logits at the final step and scale by desired temperature
+            logits = logits[:, -1, :] / temperature
+            # optionally crop the logits to only the top k options
+            if top_k is not None:
+                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                logits[logits < v[:, [-1]]] = -float('Inf')
+            # apply softmax to convert logits to (normalized) probabilities
+            probs = F.softmax(logits, dim=-1)
+            # sample from the distribution
+            idx_next = torch.multinomial(probs, num_samples=1)
+            # append sampled index to the running sequence and continue
+            idx = torch.cat((idx, idx_next), dim=1)
+
+        return idx
+    
+    @torch.no_grad()
+    def generate_from_string(self, in_str, max_new_tokens, temperature=1.0, top_k=None):
+        idx = torch.tensor(self.tokenizer.encode(in_str, allowed_special={"<|endoftext|>"})).view(1,-1).to(self.lm_head.weight.device)
+        out_idx = self.generate(idx, max_new_tokens, temperature, top_k).view(-1).to('cpu').numpy()
+        return self.tokenizer.decode(out_idx)
+
+File Path: openwebtext2-experiments/src/models/hashformer.py
+Content:
+"""
+Full definition of a GPT Language Model, all of it in this single file.
+References:
+1) the official GPT-2 TensorFlow implementation released by OpenAI:
+https://github.com/openai/gpt-2/blob/master/src/model.py
+2) huggingface/transformers PyTorch implementation:
+https://github.com/huggingface/transformers/blob/main/src/transformers/models/gpt2/modeling_gpt2.py
+"""
+
+import math
+import inspect
+
+import tiktoken
+import torch
+import torch.nn as nn
+from torch.nn import functional as F
+
+from .hsparse_attn import attention_fn
+
+
+class LayerNorm(nn.Module):
+    """ LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False """
+
+    def __init__(self, ndim, bias):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(ndim))
+        self.bias = nn.Parameter(torch.zeros(ndim)) if bias else None
+
+    def forward(self, input):
+        return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
+
+
+class CausalSelfAttention(nn.Module):
+
+    def __init__(self, config):
+        super().__init__()
+        assert config.n_embd % config.n_head == 0
+        # key, query, value projections for all heads, but in a batch
+        self.c_attn = nn.Linear(config.n_embd, 2 * config.n_embd, bias=config.bias)
+        self.hashes_per_head = config.hashes_per_head
+        self.nb_hash = config.nb_hash
+        # output projection
+        self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+        # regularization
+        self.dropout = config.dropout
+        self.resid_dropout = nn.Dropout(config.dropout)
+        self.n_head = config.n_head
+        self.n_embd = config.n_embd
+        self.dropout = config.dropout
+        # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
+        self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
+        if not self.flash:
+            print("WARNING: using slow attention. Flash Attention requires PyTorch >= 2.0")
+            # causal mask to ensure that attention is only applied to the left in the input sequence
+            self.register_buffer("bias", torch.tril(torch.ones(config.sequence_length, config.sequence_length))
+                                        .view(1, 1, config.sequence_length, config.sequence_length))
+
+    def forward(self, x):
+        B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
+
+        # calculate query, values for all heads in batch and move head forward to be the batch dim
+        q ,v  = self.c_attn(x).split(self.n_embd, dim=2)
+
+        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2).contiguous() # (B, nh, T, hs)
+        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2).contiguous() # (B, nh, T, hs)
+
+        k = F.normalize(q, p=2, dim=-1).type(torch.bfloat16)
+        #print(q.dtype, k.dtype, v.dtype)
+        y = attention_fn(q ,k ,v ,nb_hash=self.nb_hash, hashes_per_head=True, attention_dropout=self.dropout)
+        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+
+        # output projection
+        y = self.resid_dropout(self.c_proj(y))
+        return y
+
+
+class MLP(nn.Module):
+
+    def __init__(self, config):
+        super().__init__()
+        self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
+        self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
+        self.dropout = nn.Dropout(config.dropout)
+        self.activation = nn.GELU()
+
+    def forward(self, x):
+        x = self.c_fc(x)
+        x = self.activation(x)
+        x = self.c_proj(x)
+        x = self.dropout(x)
+        return x
+
+
+class Block(nn.Module):
+
+    def __init__(self, config):
+        super().__init__()
+        self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
+        self.attn = CausalSelfAttention(config)
+        self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
+        self.mlp = MLP(config)
+
+    def forward(self, x):
+        x = x + self.attn(self.ln_1(x))
+        x = x + self.mlp(self.ln_2(x))
+        return x
+    
+
+class Hashformer(nn.Module):
+
+    def __init__(self, config):
+        super().__init__()
+        assert config.vocab_size is not None
+        assert config.sequence_length is not None
+        self.config = config
+        self.tokenizer = tiktoken.get_encoding("gpt2")
+
+        self.transformer = nn.ModuleDict(dict(
+            wte = nn.Embedding(config.vocab_size, config.n_embd),
+            wpe = nn.Embedding(config.sequence_length, config.n_embd),
+            drop = nn.Dropout(config.dropout),
+            h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
+            ln_f = LayerNorm(config.n_embd, bias=config.bias),
+        ))
+
+        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        # with weight tying when using torch.compile() some warnings get generated:
+        # "UserWarning: functional_call was passed multiple values for tied weights.
+        # This behavior is deprecated and will be an error in future versions"
+        # not 100% sure what this is, so far seems to be harmless. TODO investigate
+        self.transformer.wte.weight = self.lm_head.weight # https://paperswithcode.com/method/weight-tying
+
+        # init all weights
+        self.apply(self._init_weights)
+        # apply special scaled init to the residual projections, per GPT-2 paper
+        for pn, p in self.named_parameters():
+            if pn.endswith('c_proj.weight'):
+                torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
+
+        # report number of parameters
+        print("number of parameters: %.2fM" % (self.get_num_params()/1e6,))
+
+    def get_num_params(self, non_embedding=True):
+        """
+        Return the number of parameters in the model.
+        For non-embedding count (default), the position embeddings get subtracted.
+        The token embeddings would too, except due to the parameter sharing these
+        params are actually used as weights in the final layer, so we include them.
+        """
+        n_params = sum(p.numel() for p in self.parameters())
+        if non_embedding:
+            n_params -= self.transformer.wpe.weight.numel()
+        return n_params
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    def forward(self, idx, targets=None, get_logits=False):
+        device = idx.device
+        b, t = idx.size()
+        assert t <= self.config.sequence_length, f"Cannot forward sequence of length {t}, block size is only {self.config.sequence_length}"
+        pos = torch.arange(0, t, dtype=torch.long, device=device).unsqueeze(0) # shape (1, t)
+
+        # forward the GPT model itself
+        tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
+        pos_emb = self.transformer.wpe(pos) # position embeddings of shape (1, t, n_embd)
+        x = self.transformer.drop(tok_emb + pos_emb)
+        for block in self.transformer.h:
+            x = block(x)
+        x = self.transformer.ln_f(x)
+
+        if targets is not None:
+            # if we are given some desired targets also calculate the loss
+            logits = self.lm_head(x)
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
+        else:
+            # inference-time mini-optimization: only forward the lm_head on the very last position
+            logits = self.lm_head(x[:, [-1], :]) # note: using list [-1] to preserve the time dim
+            loss = None
+        logits = logits if get_logits else None
+        return {'logits': logits, 'loss': loss}
+
+    def crop_sequence_length(self, sequence_length):
+        # model surgery to decrease the block size if necessary
+        # e.g. we may load the GPT2 pretrained model checkpoint (block size 1024)
+        # but want to use a smaller block size for some smaller, simpler model
+        assert sequence_length <= self.config.sequence_length
+        self.config.sequence_length = sequence_length
+        self.transformer.wpe.weight = nn.Parameter(self.transformer.wpe.weight[:sequence_length])
+        for block in self.transformer.h:
+            block.attn.bias = block.attn.bias[:,:,:sequence_length,:sequence_length]
+
+    @classmethod
+    def from_pretrained(cls, model_type, override_args=None):
+        # TODO
+        pass
+
+    def get_parameter_group_specs(self):
+        """
+        This long function is unfortunately doing something very simple and is being very defensive:
+        We are separating out all parameters of the model into two buckets: those that will experience
+        weight decay for regularization and those that won't (biases, and layernorm/embedding weights).
+        We are then returning the PyTorch optimizer object.
+        """
+
+        # separate out all parameters to those that will and won't experience regularizing weight decay
+        decay = set()
+        no_decay = set()
+        whitelist_weight_modules = (torch.nn.Linear, )
+        blacklist_weight_modules = (torch.nn.LayerNorm, LayerNorm, torch.nn.Embedding)
+        for mn, m in self.named_modules():
+            for pn, p in m.named_parameters():
+                fpn = '%s.%s' % (mn, pn) if mn else pn # full param name
+                # random note: because named_modules and named_parameters are recursive
+                # we will see the same tensors p many many times. but doing it this way
+                # allows us to know which parent module any tensor p belongs to...
+                if pn.endswith('bias'):
+                    # all biases will not be decayed
+                    no_decay.add(fpn)
+                elif pn.endswith('weight') and isinstance(m, whitelist_weight_modules):
+                    # weights of whitelist modules will be weight decayed
+                    decay.add(fpn)
+                elif pn.endswith('weight') and isinstance(m, blacklist_weight_modules):
+                    # weights of blacklist modules will NOT be weight decayed
+                    no_decay.add(fpn)
+
+        # subtle: 'transformer.wte.weight' and 'lm_head.weight' are tied, so they
+        # will appear in the no_decay and decay sets respectively after the above.
+        # In addition, because named_parameters() doesn't return duplicates, it
+        # will only return the first occurence, key'd by 'transformer.wte.weight', below.
+        # so let's manually remove 'lm_head.weight' from decay set. This will include
+        # this tensor into optimization via transformer.wte.weight only, and not decayed.
+        decay.remove('lm_head.weight')
+
+        # validate that we considered every parameter
+        param_dict = {pn: p for pn, p in self.named_parameters()}
+        inter_params = decay & no_decay
+        union_params = decay | no_decay
+        assert len(inter_params) == 0, "parameters %s made it into both decay/no_decay sets!" % (str(inter_params), )
+        assert len(param_dict.keys() - union_params) == 0, "parameters %s were not separated into either decay/no_decay set!" \
+                                                    % (str(param_dict.keys() - union_params), )
+
+        # create the pytorch optimizer object
+        return [
+            {"params": sorted(list(decay))},
+            {"params": sorted(list(no_decay)), "weight_decay": 0.0},
+        ]
+
+    @torch.no_grad()
+    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
+        """
+        Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete
+        the sequence max_new_tokens times, feeding the predictions back into the model each time.
+        Most likely you'll want to make sure to be in model.eval() mode of operation for this.
+        """
+        for _ in range(max_new_tokens):
+            # if the sequence context is growing too long we must crop it at sequence_length
+            idx_cond = idx if idx.size(1) <= self.config.sequence_length else idx[:, -self.config.sequence_length:]
+            # forward the model to get the logits for the index in the sequence
+            logits = self(idx_cond, get_logits=True)['logits']
+            # pluck the logits at the final step and scale by desired temperature
+            logits = logits[:, -1, :] / temperature
+            # optionally crop the logits to only the top k options
+            if top_k is not None:
+                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                logits[logits < v[:, [-1]]] = -float('Inf')
+            # apply softmax to convert logits to (normalized) probabilities
+            probs = F.softmax(logits, dim=-1)
+            # sample from the distribution
+            idx_next = torch.multinomial(probs, num_samples=1)
+            # append sampled index to the running sequence and continue
+            idx = torch.cat((idx, idx_next), dim=1)
+
+        return idx
+    
+    @torch.no_grad()
+    def generate_from_string(self, in_str, max_new_tokens, temperature=1.0, top_k=None):
+        idx = torch.tensor(self.tokenizer.encode(in_str, allowed_special={"<|endoftext|>"})).view(1,-1).to(self.lm_head.weight.device)
+        out_idx = self.generate(idx, max_new_tokens, temperature, top_k).view(-1).to('cpu').numpy()
+        return self.tokenizer.decode(out_idx)
+
+File Path: openwebtext2-experiments/src/models/hsparse_attn.py
+Content:
+import torch
+import torch.nn.functional as F
+
+import triton
+import triton.language as tl
+
+import math
+
+
+@triton.jit
+def _fwd_kernel(
+    Q, K, V, sm_scale, 
+    Out,
+    sqz, sqh, sqm, sqd, # shape = (Z,H,N_CTX_Q,D)
+    skz, skh, skn, skd, # shape = (Z,H,N_CTX_KV,D)
+    svz, svh, svn, svd, # shape = (Z,H,N_CTX_KV,D)
+    soz, soh, som, sod, # shape = (Z,H,N_CTX_Q,D)
+    Q_idx, K_idx, 
+    sqiz, sqih, sqim,  # shape = (Z,H,N_CTX_Q)
+    skiz, skih, skin,  # shape = (Z,H,N_CTX_KV)
+    Q_hash, K_hash, 
+    sqhz, sqhh, sqhm,  # shape = (Z,H,N_CTX_Q)
+    skhz, skhh, skhn,  # shape = (Z,H,N_CTX_KV)
+    L, M,
+    Z, H, N_CTX_Q, N_CTX_KV, 
+    BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, # will load BLOCK_M queries, and compute self attention by blocks of BLOCK_N keys
+    BLOCK_DMODEL: tl.constexpr # dimensionality of heads: D
+):
+    start_m = tl.program_id(0) # idx of sequence length chunk of size 128 (BLOCK_N)
+    off_hz = tl.program_id(1) # idx of head_batch (unique idx for each head in each batch)
+
+    # initialize offsets
+    offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M) # indices of queries we want to process
+    offs_n = tl.arange(0, BLOCK_N) # indices of keys we want to process, we start from [0, BLOCK_N-1] and update in the loop
+    offs_d = tl.arange(0, BLOCK_DMODEL) # we want to process all the dimensions of a given head
+
+    offs_q = off_hz * sqh + offs_m[:, None] * sqm + offs_d[None, :] * sqd # Q.view(Z*H,N_CTX_Q,D)[off_hz, start_m*BLOCK_M:(start_m+1)*BLOCK_M, :].squeeze() that's a BLOCK_M*D matrix
+    offs_qi = off_hz * sqih + offs_m * sqim # Q_idx.view(Z*H,N_CTX_Q)[off_hz, start_m*BLOCK_M:(start_m+1)*BLOCK_M] a vector of BLOCK_M indices 
+    offs_qh = off_hz * sqhh + offs_m * sqhm  
+    offs_kh = off_hz * skhh + offs_n * skhn 
+
+    # pointers to m and l
+    m_prev = tl.zeros([BLOCK_M], dtype=tl.float32) - float("inf") 
+    l_prev = tl.zeros([BLOCK_M], dtype=tl.float32)
+    acc = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
+
+    # Load values
+    qi_vals = tl.load(Q_idx + offs_qi, mask=offs_m < N_CTX_Q, other=-1)
+    q_vals = tl.load(Q + offs_q, mask=qi_vals[:, None] >= 0) 
+    qh_vals = tl.load(Q_hash + offs_qh, mask=offs_m < N_CTX_Q, other=1e9) #, other=-1)
+    min_q_hash = tl.min(qh_vals, axis=0)
+    qh_vals = tl.where(offs_m < N_CTX_Q, qh_vals, -1)
+    max_q_hash = tl.max(qh_vals, axis=0)
+
+    end_n = 0
+    start_n = 0
+
+    # Increment the start and end to find start and end blocks 
+    for _ in range(0, N_CTX_KV, BLOCK_N):
+        kh_vals = tl.load(K_hash + offs_kh, mask=offs_n < N_CTX_KV, other=+1e9)
+        min_kh = tl.min(kh_vals, axis=0)
+        if min_kh <= max_q_hash and min_kh != 1e9:
+            end_n += 1
+        kh_vals = tl.where(offs_n < N_CTX_KV, kh_vals, -1e9)
+        max_kh = tl.max(kh_vals, axis=0)
+        if max_kh < min_q_hash and max_kh != -1e9:
+            start_n += 1
+        offs_n += BLOCK_N
+        offs_kh += BLOCK_N * skhn
+
+    # remove unecessary trailing blocks based on causal structure
+    causal_end_n = end_n
+    offs_n = BLOCK_N * start_n + tl.arange(0, BLOCK_N)
+    offs_ki = off_hz * skih + offs_n * skin
+    max_qi = tl.max(qi_vals, axis=0) # largest query index in block
+    for i in range(start_n, end_n):
+        ki_vals = tl.load(K_idx + offs_ki, mask=offs_n < N_CTX_KV, other=1e9)
+        min_ki = tl.min(ki_vals, axis=0)
+        if min_ki <= max_qi and min_ki != 1e9:
+            causal_end_n = i + 1
+        offs_ki += BLOCK_N * skin
+        offs_n += BLOCK_N
+
+    # re-initialize offsets
+    offs_n = BLOCK_N * start_n + tl.arange(0, BLOCK_N) # indices of keys we want to process, we start from [0, BLOCK_N-1] and update in the loop
+    offs_k = off_hz * skh + offs_n[None, :] * skn + offs_d[:, None] * skd # K.view(Z*H,N_CTX_KV,D)[off_hz, 0:BLOCK_N, :].transpose(1,2).squeeze() that's a D*BLOCK_N matrix
+    offs_v = off_hz * svh + offs_n[:, None] * svn + offs_d[None, :] * svd # V.view(Z*H,N_CTX_KV,D)[off_hz, 0:BLOCK_N, :].squeeze() that's a BLOCK_N*D matrix
+    offs_ki = off_hz * skih + offs_n * skin # K_idx.view(Z*H,N_CTX_KV)[off_hz, 0:BLOCK_N] a vector of BLOCK_N indices
+    offs_kh = off_hz * skhh + offs_n * skhn 
+
+    for _ in range(start_n, causal_end_n):
+        
+        # Load values for K and K_idx
+        ki_vals = tl.load(K_idx + offs_ki, mask=offs_n < N_CTX_KV, other=1e9)
+        kh_vals = tl.load(K_hash + offs_kh, mask=offs_n < N_CTX_KV, other=-1e9)
+        k_vals = tl.load(K + offs_k, mask=ki_vals[None, :] < 1e9)
+
+        # compute qk
+        qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.bfloat16)
+        qk += tl.dot(q_vals, k_vals)
+        qk *= sm_scale
+
+        # causal masking
+        qk = tl.where((qi_vals[:,None] > ki_vals[None,:]) & (qh_vals[:,None] == kh_vals[None,:]), qk, float("-inf"))
+
+        # compute attention weights
+        m_curr = tl.maximum(tl.max(qk, 1), m_prev) # compute new m
+        m_curr_ = tl.where(m_curr != float('-inf'), m_curr, float(0.0))
+        l_prev *= tl.exp(m_prev - m_curr_) # correct old l
+        p = tl.exp(qk - m_curr_[:, None])
+        l_curr = tl.sum(p, 1) + l_prev 
+        l_rcp = 1. / l_curr # rescale operands of matmuls
+        l_rcp = tl.where((l_rcp == float('inf')), 0, l_rcp)
+        p *= l_rcp[:, None]
+        acc *= (l_prev * l_rcp)[:, None] # weight for each value vector
+
+        # update acc
+        p = p.to(Q.dtype.element_ty)
+        v_vals = tl.load(V + offs_v, mask=ki_vals[:, None] < 1e9, other=0)
+        acc += tl.dot(p, v_vals)
+
+        # update m_i and l_i
+        l_prev = l_curr
+        m_prev = m_curr
+
+        # update offsets
+        offs_n += BLOCK_N
+        offs_k += BLOCK_N * skn
+        offs_v += BLOCK_N * svn
+        offs_ki += BLOCK_N * skin
+        offs_kh += BLOCK_N * skhn
+
+    # store L and M
+    offs_L = off_hz * N_CTX_Q + offs_m # L is of shape (Z*H, N_CTX_Q), here we point to L[off_hz, start_m*Block_M:(start_m+1)*Block_M]
+    offs_M = off_hz * N_CTX_Q + offs_m
+    tl.store(L + offs_L, l_prev, mask=offs_m < N_CTX_Q)
+    tl.store(M + offs_M, m_prev, mask=offs_m < N_CTX_Q)
+    # store results to output
+    offs_o = off_hz * soh + offs_m[:, None] * som + offs_d[None, :] * sod
+    tl.store(Out + offs_o, acc, mask=offs_m[:, None] < N_CTX_Q)
+
+
+@triton.jit
+def _bwd_preprocess(
+    Out, soz, soh, som, sod,
+    DO, L, slzh, slm,
+    NewDO, Delta, N_CTX_Q,
+    BLOCK_M: tl.constexpr, D_HEAD: tl.constexpr,
+):
+    start_m = tl.program_id(0)
+    off_hz = tl.program_id(1)
+
+    off_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    off_d = tl.arange(0, D_HEAD)
+    # load
+    off_o = off_hz * soh + off_m[:, None] * som + off_d[None, :] * sod
+    off_l = off_hz * slzh + off_m * slm
+    o = tl.load(Out + off_o, mask=off_m[:, None] < N_CTX_Q, other=0.0).to(tl.float32)
+    do = tl.load(DO + off_o, mask=off_m[:, None] < N_CTX_Q, other=0.0).to(tl.float32)
+    denom = tl.load(L + off_l, mask=off_m < N_CTX_Q, other=1.0).to(tl.float32)
+    denom = tl.where(denom == 0, 1.0, denom)
+    # compute
+    do = do / denom[:, None]
+    delta = tl.sum(o * do, axis=1)
+    # write-back
+    tl.store(NewDO + off_o, do, mask=off_m[:, None] < N_CTX_Q)
+    tl.store(Delta + off_l, delta, mask=off_m < N_CTX_Q)
+
+
+@triton.jit
+def _bwd_kernel(
+    Q, K, V, sm_scale, Out, DO,
+    DQ, DK, DV,
+    Q_idx, K_idx,
+    sqiz, sqih, sqim,  # shape = (Z,H,N_CTX_Q)
+    skiz, skih, skin,  # shape = (Z,H,N_CTX_KV)
+    Q_hash, K_hash,
+    sqhz, sqhh, sqhm,  # shape = (Z,H,N_CTX_Q)
+    skhz, skhh, skhn,  # shape = (Z,H,N_CTX_KV)
+    L, M,
+    D,
+    sqz, sqh, sqm, sqd,
+    skz, skh, skn, skd,
+    svz, svh, svn, svd,
+    Z, H, N_CTX_Q, N_CTX_KV,
+    num_block_q, num_block_kv,
+    BLOCK_M: tl.constexpr, BLOCK_DMODEL: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+):
+    
+    off_hz = tl.program_id(0)
+    off_z = off_hz // H
+    off_h = off_hz % H
+
+    # offset pointers for batch/head
+    Q += off_z * sqz + off_h * sqh
+    K += off_z * skz + off_h * skh
+    V += off_z * svz + off_h * svh
+    DO += off_z * sqz + off_h * sqh
+    DQ += off_z * sqz + off_h * sqh
+    DK += off_z * skz + off_h * skh
+    DV += off_z * svz + off_h * svh
+
+    offs_d = tl.arange(0, BLOCK_DMODEL)
+    
+    # pointer to row-wise quantities in value-like data
+    D_ptrs = D + off_hz * N_CTX_Q # pointer to D.view(Z*H,N_CTX_Q)[off_hz]
+    m_ptrs = M + off_hz * N_CTX_Q # pointer to m.view(Z*H,N_CTX_Q)[off_hz]
+
+    for block_id_n in range(0, num_block_kv):
+
+        start_n = block_id_n * BLOCK_N
+        offs_n = start_n + tl.arange(0, BLOCK_N)
+
+        offs_ki = off_hz * skih + offs_n * skin
+        ki_vals = tl.load(K_idx + offs_ki, mask=offs_n < N_CTX_KV, other=1e9)
+        min_ki = tl.min(ki_vals, axis=0)
+        ki_vals = tl.where(offs_n < N_CTX_KV, ki_vals, -1)
+        
+        # pointers for keys and values
+        k_ptrs = K + (offs_n[:, None] * skn + offs_d[None, :] * skd)
+        v_ptrs = V + (offs_n[:, None] * svn + offs_d[None, :] * svd)
+
+        # initialize dv amd dk
+        dv = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
+        dk = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
+
+        # Find start and end block for those keys 
+        offs_kh = off_hz * skhh + offs_n * skhn
+        kh_vals = tl.load(K_hash + offs_kh, mask=offs_n < N_CTX_KV, other=1e9)
+        
+        min_k_hash = tl.min(kh_vals, axis=0)
+        kh_vals = tl.where(offs_n < N_CTX_KV, kh_vals, -1)
+        max_k_hash = tl.max(kh_vals, axis=0)
+
+        start_blockidx_m = 0
+        end_blockidx_m = 0
+
+        # Increment the start and end to find start and end blocks 
+        offs_m = tl.arange(0, BLOCK_M)
+        offs_qh = off_hz * sqhh + offs_m * sqhm 
+        for _ in range(0, N_CTX_Q, BLOCK_M):
+            qh_vals = tl.load(Q_hash + offs_qh, mask=offs_m < N_CTX_Q, other=+1e9)
+            min_qh = tl.min(qh_vals, axis=0)
+            if min_qh <= max_k_hash and min_qh != 1e9:
+                end_blockidx_m += 1
+            qh_vals = tl.where(offs_m < N_CTX_Q, qh_vals, -1e9)
+            max_qh = tl.max(qh_vals, axis=0)
+            if max_qh < min_k_hash and max_qh != -1e9:
+                start_blockidx_m += 1
+            offs_m += BLOCK_M
+            offs_qh += BLOCK_M * sqhm
+
+        # remove unecessary trailing blocks based on causal structure
+        causal_start_n = start_blockidx_m
+        offs_m = BLOCK_M * start_blockidx_m + tl.arange(0, BLOCK_M)
+        offs_qi = off_hz * sqih + offs_m * sqim
+        for i in range(start_blockidx_m, end_blockidx_m):
+            qi_vals = tl.load(Q_idx + offs_qi, mask=offs_m < N_CTX_Q, other=-1)
+            max_qi = tl.max(qi_vals, axis=0)
+            if max_qi < min_ki and max_qi != -1:
+                causal_start_n = i + 1
+            offs_qi += BLOCK_N * skin
+            offs_m += BLOCK_N
+
+        k = tl.load(k_ptrs, mask=offs_n[:, None] < N_CTX_KV)  
+        v = tl.load(v_ptrs, mask=offs_n[:, None] < N_CTX_KV)  
+
+        for start_m in range(causal_start_n * BLOCK_M, end_blockidx_m * BLOCK_M, BLOCK_M):
+            offs_m = (start_m + tl.arange(0, BLOCK_M))
+
+            q_ptrs = Q + (offs_m[:, None] * sqm + offs_d[None, :] * sqd)
+            do_ptrs = DO + (offs_m[:, None] * sqm + offs_d[None, :] * sqd)
+            dq_ptrs = DQ + (offs_m[:, None] * sqm + offs_d[None, :] * sqd)
+            qi_ptrs = Q_idx + (off_hz * sqih + offs_m * sqim)
+            qh_ptrs = Q_hash + (off_hz * sqhh  + offs_m * sqhm)
+            
+            qi = tl.load(qi_ptrs, mask=offs_m < N_CTX_Q, other=1e9)
+            qh = tl.load(qh_ptrs, mask=offs_m < N_CTX_Q, other=1e9)
+            q = tl.load(q_ptrs, mask=offs_m[:,None] < N_CTX_Q)  
+            qk = tl.dot(q, tl.trans(k))
+            qk = tl.where((qi[:,None] > ki_vals[None,:]) & (qh[:,None] == kh_vals[None,:]), qk, float("-inf"))
+
+            m = tl.load(m_ptrs + offs_m, mask=offs_m < N_CTX_Q)
+            m_ = tl.where(m != float('-inf'), m, 0.0)
+            p = tl.exp(qk * sm_scale - m_[:, None])
+
+            do = tl.load(do_ptrs, mask=offs_m[:,None] < N_CTX_Q)  
+            # compute dv
+            dv += tl.dot(tl.trans(p.to(Q.dtype.element_ty)), do)
+
+            Di = tl.load(D_ptrs + offs_m, mask=offs_m < N_CTX_Q)
+            # compute dp = dot(v, do)
+            dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32) - Di[:, None]
+            dp += tl.dot(do, tl.trans(v))
+            # compute ds = p * (dp - delta[:, None])
+            ds = p * dp * sm_scale
+            # compute dk = dot(ds.T, q)
+            dk += tl.dot(tl.trans(ds.to(Q.dtype.element_ty)), q)
+
+            dq = tl.load(dq_ptrs)
+            # compute dq
+            dq += tl.dot(ds.to(Q.dtype.element_ty), k)
+            tl.store(dq_ptrs, dq, mask=offs_m[:, None] < N_CTX_Q)
+
+        # write-back
+        dv_ptrs = DV + (offs_n[:, None] * svn + offs_d[None, :] * svd)
+        dk_ptrs = DK + (offs_n[:, None] * skn + offs_d[None, :] * skd)
+        tl.store(dv_ptrs, dv, mask=offs_n[:, None] < N_CTX_KV)
+        tl.store(dk_ptrs, dk, mask=offs_n[:, None] < N_CTX_KV)
+
+
+class _attention(torch.autograd.Function):
+
+    @staticmethod
+    def forward(ctx, q, k, v, q_idx, k_idx, q_hash, k_hash, sm_scale):
+        # only support for Ampere now
+        capability = torch.cuda.get_device_capability()
+        if capability[0] < 8:
+            raise RuntimeError("Flash attention currently only supported for compute capability >= 80")
+        BLOCK = 128
+        # shape constraints
+        Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
+        assert Lq == Lk and Lk == Lv
+        # assert Lk in {16, 32, 64, 128}
+        assert Lk in {64}  # TODO: fix other cases
+        o = torch.empty_like(q)
+        grid = (triton.cdiv(q.shape[2], BLOCK), q.shape[0] * q.shape[1], 1)
+        L = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
+        m = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
+        num_warps = 4 if Lk <= 64 else 8
+
+        _fwd_kernel[grid](
+            q, k, v, sm_scale,
+            o,
+            q.stride(0), q.stride(1), q.stride(2), q.stride(3),
+            k.stride(0), k.stride(1), k.stride(2), k.stride(3),
+            v.stride(0), v.stride(1), v.stride(2), v.stride(3),
+            o.stride(0), o.stride(1), o.stride(2), o.stride(3),
+            q_idx, k_idx, 
+            q_idx.stride(0), q_idx.stride(1), q_idx.stride(2), 
+            k_idx.stride(0), k_idx.stride(1), k_idx.stride(2),
+            q_hash, k_hash, 
+            q_hash.stride(0), q_hash.stride(1), q_hash.stride(2), 
+            k_hash.stride(0), k_hash.stride(1), k_hash.stride(2),
+            L, m,
+            q.shape[0], q.shape[1], N_CTX_Q=q.shape[2], N_CTX_KV=k.shape[2],
+            BLOCK_M=BLOCK, BLOCK_N=BLOCK, BLOCK_DMODEL=Lk,
+            num_warps=num_warps, num_stages=2
+        )
+
+        ctx.save_for_backward(q, k, v, o, L, m, q_idx, k_idx, q_hash, k_hash)
+        ctx.grid = grid
+        ctx.sm_scale = sm_scale
+        ctx.BLOCK_DMODEL = Lk
+        return o
+
+
+    @staticmethod
+    def backward(ctx, do):
+        BLOCK = 128
+        q, k, v, o, l, m, q_idx, k_idx, q_hash, k_hash = ctx.saved_tensors
+
+        do = do.contiguous()
+        dq = torch.zeros_like(q, dtype=torch.float32)
+        dk = torch.empty_like(k)
+        dv = torch.empty_like(v)
+        do_scaled = torch.empty_like(do)
+        delta = torch.empty_like(l)
+        _bwd_preprocess[(ctx.grid[0], ctx.grid[1])](
+            o, o.stride(0), o.stride(1), o.stride(2), o.stride(3), do, l, l.stride(0), l.stride(1),
+            do_scaled, delta, q.shape[2],
+            BLOCK_M=BLOCK, D_HEAD=ctx.BLOCK_DMODEL,
+        )
+
+        num_block_q = ctx.grid[0]
+        num_block_kv = math.ceil(k.shape[2] / BLOCK)
+
+        _bwd_kernel[(ctx.grid[1],)](
+            q, k, v, ctx.sm_scale,
+            o, do_scaled,
+            dq, dk, dv,
+            q_idx, k_idx,
+            q_idx.stride(0), q_idx.stride(1), q_idx.stride(2), 
+            k_idx.stride(0), k_idx.stride(1), k_idx.stride(2),
+            q_hash, k_hash,
+            q_hash.stride(0), q_hash.stride(1), q_hash.stride(2), 
+            k_hash.stride(0), k_hash.stride(1), k_hash.stride(2),
+            l, m,
+            delta,
+            q.stride(0), q.stride(1), q.stride(2), q.stride(3),
+            k.stride(0), k.stride(1), k.stride(2), k.stride(3),
+            v.stride(0), v.stride(1), v.stride(2), v.stride(3),
+            q.shape[0], q.shape[1], q.shape[2], k.shape[2],
+            num_block_q, num_block_kv,
+            BLOCK_M=BLOCK, BLOCK_N=BLOCK,
+            BLOCK_DMODEL=ctx.BLOCK_DMODEL, num_warps=8,
+            num_stages=1,
+        )
+        return dq, dk, dv, None, None, None, None, None
+    
+
+attention = _attention.apply
+
+
+def attention_fn(
+    Q,
+    K,
+    V,
+    nb_hash=8,
+    hashes_per_head=False,
+    attention_dropout=None,
+):
+    batch_size, nb_heads, nb_Q, dim_K = Q.size()
+    _, _, nb_K, dim_V = V.size()
+
+    q_idx = (
+        torch.arange(0, nb_Q, dtype=torch.int32, device=Q.device)
+        .view(1, 1, -1)
+        .expand((batch_size, nb_heads, -1))
+    )
+    k_idx = (
+        torch.arange(0, nb_K, dtype=torch.int32, device=Q.device)
+        .view(1, 1, -1)
+        .expand((batch_size, nb_heads, -1))
+    )
+
+    # Compute the hashing
+    rand_matrix = torch.randn(
+        [1, nb_heads if hashes_per_head else 1, dim_K, nb_hash // 2],
+        device=Q.device,
+        dtype=Q.dtype,
+    ).expand(batch_size, nb_heads, -1, -1)
+    rand_matrix = rand_matrix / torch.norm(rand_matrix, p=2, dim=-2, keepdim=True)
+
+    matmul_Q = torch.einsum("bhid,bhdl->bhil", Q, rand_matrix)
+    matmul_K = torch.einsum("bhid,bhdl->bhil", K, rand_matrix)
+
+    hash_Q = torch.argmax(torch.cat([matmul_Q, -matmul_Q], dim=-1), dim=-1)
+    hash_K = torch.argmax(torch.cat([matmul_K, -matmul_K], dim=-1), dim=-1)
+
+    sorted_Q = hash_Q.sort(dim=-1, stable=True)
+    sorted_K = hash_K.sort(dim=-1, stable=True)
+
+    q_idx = torch.gather(q_idx, dim=-1, index=sorted_Q.indices).contiguous()
+    k_idx = torch.gather(k_idx, dim=-1, index=sorted_K.indices).contiguous()
+
+    q_hash = sorted_Q.values.contiguous()
+    k_hash = sorted_K.values.contiguous()
+
+    sm_scale = 1.0 / math.sqrt(Q.size(-1))
+
+    Q = torch.gather(
+        Q, dim=-2, index=sorted_Q.indices.unsqueeze(-1).expand_as(Q)
+    ).contiguous()
+    K = torch.gather(
+        K, dim=-2, index=sorted_K.indices.unsqueeze(-1).expand_as(K)
+    ).contiguous()
+    V = torch.gather(
+        V, dim=-2, index=sorted_K.indices.unsqueeze(-1).expand_as(V)
+    ).contiguous()
+
+    y = attention(Q, K, V, q_idx, k_idx, q_hash, k_hash, sm_scale)
+
+    # reoder y to original query order
+    y_reordered = y.new_zeros(
+        (batch_size, nb_heads, nb_Q, y.size(-1)),
+    ).scatter(
+        dim=-2,
+        index=q_idx.long().unsqueeze(-1).expand(-1, -1, -1, y.size(-1)),
+        src=y,
+    )
+
+    return y_reordered
+
+
+if __name__ == "__main__":
+    print("Basic check.")
+
+    batch_size, nb_heads = 10, 8
+    nb_Q, nb_K = 784, 784
+    dim_K, dim_V = 64, 64
+
+    Q = torch.randn(
+        (batch_size, nb_heads, nb_Q, dim_K),
+        dtype=torch.bfloat16,
+        device="cuda",
+        requires_grad=True,
+    )
+
+    V = torch.randn(
+        (batch_size, nb_heads, nb_K, dim_V),
+        dtype=torch.bfloat16,
+        device="cuda",
+        requires_grad=True,
+    )
+
+    # Q = K
+    K = F.normalize(Q, p=2, dim=-1)
+
+    for _ in range(6000):
+        Y = attention_fn(
+            Q,
+            K,
+            V,
+            nb_hash=14,
+        )
+
+        loss = Y.sum()
+        loss.backward(retain_graph=True)
+
+File Path: openwebtext2-experiments/src/models/qksparse_attn.py
+Content:
+import torch
+import torch.nn.functional as F
+
+import triton
+import triton.language as tl
+
+import math
+
+
+@triton.jit
+def _fwd_kernel(#debug, sdz, sdh, sdm, sdn,
+    Q, K, V, sm_scale, 
+    Out,
+    sqz, sqh, sqm, sqd, # shape = (Z,H,N_CTX_Q,D)
+    skz, skh, skn, skd, # shape = (Z,H,N_CTX_KV,D)
+    svz, svh, svn, svd, # shape = (Z,H,N_CTX_KV,D)
+    soz, soh, som, sod, # shape = (Z,H,N_CTX_Q,D)
+    Q_idx, K_idx, 
+    sqiz, sqih, sqim,  # shape = (Z,H,N_CTX_Q)
+    skiz, skih, skin,  # shape = (Z,H,N_CTX_KV)
+    L, M,
+    Z, H, N_CTX_Q, N_CTX_KV, 
+    BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, # will load BLOCK_M queries, and compute self attention by blocks of BLOCK_N keys
+    BLOCK_DMODEL: tl.constexpr # dimensionality of heads: D
+):
+    start_m = tl.program_id(0) # idx of sequence length chunk of size 128 (BLOCK_N)
+    off_hz = tl.program_id(1) # idx of head_batch (unique idx for each head in each batch)
+
+    # initialize offsets
+    offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M) # indices of queries we want to process
+    offs_n = tl.arange(0, BLOCK_N) # indices of keys we want to process, we start from [0, BLOCK_N-1] and update in the loop
+    offs_d = tl.arange(0, BLOCK_DMODEL) # we want to process all the dimensions of a given head
+
+    offs_q = off_hz * sqh + offs_m[:, None] * sqm + offs_d[None, :] * sqd # Q.view(Z*H,N_CTX_Q,D)[off_hz, start_m*BLOCK_M:(start_m+1)*BLOCK_M, :].squeeze() that's a BLOCK_M*D matrix
+    offs_k = off_hz * skh + offs_n[None, :] * skn + offs_d[:, None] * skd # K.view(Z*H,N_CTX_KV,D)[off_hz, 0:BLOCK_N, :].transpose(1,2).squeeze() that's a D*BLOCK_N matrix
+    offs_v = off_hz * svh + offs_n[:, None] * svn + offs_d[None, :] * svd # V.view(Z*H,N_CTX_KV,D)[off_hz, 0:BLOCK_N, :].squeeze() that's a BLOCK_N*D matrix
+    offs_qi = off_hz * sqih + offs_m * sqim # Q_idx.view(Z*H,N_CTX_Q)[off_hz, start_m*BLOCK_M:(start_m+1)*BLOCK_M] a vector of BLOCK_M indices 
+    offs_ki = off_hz * skih + offs_n * skin # K_idx.view(Z*H,N_CTX_KV)[off_hz, 0:BLOCK_N] a vector of BLOCK_N indices
+
+    # pointers to m and l
+    m_prev = tl.zeros([BLOCK_M], dtype=tl.float32) - float("inf")
+    l_prev = tl.zeros([BLOCK_M], dtype=tl.float32)
+    acc = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
+
+    # Load values
+    qi_vals = tl.load(Q_idx + offs_qi, mask=offs_m < N_CTX_Q, other=-1)
+    q_vals = tl.load(Q + offs_q, mask=offs_m[:, None] < N_CTX_Q, other=0) 
+    max_qi = tl.max(qi_vals, axis=0) # lagest query index in block
+
+    end_n = 0
+    for _ in range(0, N_CTX_KV, BLOCK_N):
+        ki_vals = tl.load(K_idx + offs_ki, mask=offs_n < N_CTX_KV, other=1e9)
+        min_ki = tl.min(ki_vals, axis=0)
+        if min_ki <= max_qi and min_ki != 1e9:
+            end_n += 1
+        offs_ki += BLOCK_N * skin
+        offs_n += BLOCK_N
+
+    offs_n = tl.arange(0, BLOCK_N)
+    offs_ki = off_hz * skih + offs_n * skin
+
+    for _ in range(0, end_n):
+        
+        # Load values for K and K_idx
+        ki_vals = tl.load(K_idx + offs_ki, mask=offs_n < N_CTX_KV, other=1e9)
+        k_vals = tl.load(K + offs_k, mask=offs_n[None, :] < N_CTX_KV, other=0)
+
+        # compute qk
+        qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.bfloat16)
+        qk += tl.dot(q_vals, k_vals)
+        qk *= sm_scale
+
+        # causal masking
+        qk = tl.where(qi_vals[:,None] >= ki_vals[None,:], qk, float("-inf"))
+
+        # compute attention weights
+        m_curr = tl.maximum(tl.max(qk, 1), m_prev) # compute new m
+        m_curr_ = tl.where(m_curr != float('-inf'), m_curr, float(0.0))
+        l_prev *= tl.exp(m_prev - m_curr_) # correct old l
+        p = tl.exp(qk - m_curr_[:, None])
+        l_curr = tl.sum(p, 1) + l_prev 
+        l_rcp = 1. / l_curr # rescale operands of matmuls
+        l_rcp = tl.where((l_rcp == float('inf')), 0, l_rcp)
+        p *= l_rcp[:, None]
+        acc *= (l_prev * l_rcp)[:, None] # weight for each value vector
+
+        # update acc
+        p = p.to(Q.dtype.element_ty)
+        v_vals = tl.load(V + offs_v, mask=offs_n[:, None] < N_CTX_KV, other=0)
+        acc += tl.dot(p, v_vals) 
+
+        # update m_i and l_i
+        l_prev = l_curr
+        m_prev = m_curr
+
+        # update offsets
+        offs_n += BLOCK_N
+        offs_k += BLOCK_N * skn
+        offs_v += BLOCK_N * svn
+        offs_ki += BLOCK_N * skin
+
+    # store L and M
+    offs_L = off_hz * N_CTX_Q + offs_m # L is of shape (Z*H, N_CTX_Q), here we point to L[off_hz, start_m*Block_M:(start_m+1)*Block_M]
+    offs_M = off_hz * N_CTX_Q + offs_m
+    tl.store(L + offs_L, l_prev, mask=offs_m < N_CTX_Q)
+    tl.store(M + offs_M, m_prev, mask=offs_m < N_CTX_Q)
+    # store results to output
+    offs_o = off_hz * soh + offs_m[:, None] * som + offs_d[None, :] * sod
+    tl.store(Out + offs_o, acc, mask=offs_m[:, None] < N_CTX_Q)
+
+
+@triton.jit
+def _bwd_preprocess(
+    Out, soz, soh, som, sod,
+    DO, L, slzh, slm,
+    NewDO, Delta, N_CTX_Q,
+    BLOCK_M: tl.constexpr, D_HEAD: tl.constexpr,
+):
+    start_m = tl.program_id(0)
+    off_hz = tl.program_id(1)
+
+    off_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    off_d = tl.arange(0, D_HEAD)
+    # load
+    off_o = off_hz * soh + off_m[:, None] * som + off_d[None, :] * sod
+    off_l = off_hz * slzh + off_m * slm
+    o = tl.load(Out + off_o, mask=off_m[:, None] < N_CTX_Q, other=0.0).to(tl.float32)
+    do = tl.load(DO + off_o, mask=off_m[:, None] < N_CTX_Q, other=0.0).to(tl.float32)
+    denom = tl.load(L + off_l, mask=off_m < N_CTX_Q, other=1.0).to(tl.float32)
+    denom = tl.where(denom == 0, 1.0, denom)
+    # compute
+    do = do / denom[:, None]
+    delta = tl.sum(o * do, axis=1)
+    # write-back
+    tl.store(NewDO + off_o, do, mask=off_m[:, None] < N_CTX_Q)
+    tl.store(Delta + off_l, delta, mask=off_m < N_CTX_Q)
+
+
+@triton.jit
+def _bwd_kernel(
+    Q, K, V, sm_scale, Out, DO,
+    DQ, DK, DV,
+    Q_idx, K_idx,
+    sqiz, sqih, sqim,  # shape = (Z,H,N_CTX_Q)
+    skiz, skih, skin,  # shape = (Z,H,N_CTX_KV)
+    L, M,
+    D,
+    sqz, sqh, sqm, sqd,
+    skz, skh, skn, skd,
+    svz, svh, svn, svd,
+    Z, H, N_CTX_Q, N_CTX_KV,
+    num_block_q, num_block_kv,
+    BLOCK_M: tl.constexpr, BLOCK_DMODEL: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+):
+    
+    off_hz = tl.program_id(0)
+    off_z = off_hz // H
+    off_h = off_hz % H
+
+    # offset pointers for batch/head
+    Q += off_z * sqz + off_h * sqh
+    K += off_z * skz + off_h * skh
+    V += off_z * svz + off_h * svh
+    DO += off_z * sqz + off_h * sqh
+    DQ += off_z * sqz + off_h * sqh
+    DK += off_z * skz + off_h * skh
+    DV += off_z * svz + off_h * svh
+
+    offs_d = tl.arange(0, BLOCK_DMODEL)
+    
+    # pointer to row-wise quantities in value-like data
+    D_ptrs = D + off_hz * N_CTX_Q # pointer to D.view(Z*H,N_CTX_Q)[off_hz]
+    m_ptrs = M + off_hz * N_CTX_Q # pointer to m.view(Z*H,N_CTX_Q)[off_hz]
+
+    for block_id_n in range(0, num_block_kv):
+
+        start_n = block_id_n * BLOCK_N
+        offs_n = start_n + tl.arange(0, BLOCK_N)
+
+        offs_ki = off_hz * skih + offs_n * skin
+        ki_vals = tl.load(K_idx + offs_ki, mask=offs_n < N_CTX_KV, other=1e9)
+        
+        # pointers for keys and values
+        k_ptrs = K + (offs_n[:, None] * skn + offs_d[None, :] * skd)
+        v_ptrs = V + (offs_n[:, None] * svn + offs_d[None, :] * svd)
+
+        # initialize dv amd dk
+        dv = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
+        dk = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
+
+        # Find start block for those keys 
+        min_ki = tl.min(ki_vals, axis=0) # lagest query index in block
+        offs_m = tl.arange(0, BLOCK_M)
+        offs_qi = off_hz * sqih + offs_m * sqim 
+
+        start_blockidx_m = 0
+        for _ in range(0, N_CTX_Q, BLOCK_M):
+            qi_vals = tl.load(Q_idx + offs_qi, mask=offs_m < N_CTX_Q, other=-1)
+            max_qi = tl.max(qi_vals, axis=0)
+            if max_qi < min_ki and max_qi != -1:
+                start_blockidx_m += 1
+            offs_qi += BLOCK_M * sqim
+            offs_m += BLOCK_M
+
+        k = tl.load(k_ptrs, mask=offs_n[:, None] < N_CTX_KV)
+        v = tl.load(v_ptrs, mask=offs_n[:, None] < N_CTX_KV)
+
+        for start_m in range(start_blockidx_m * BLOCK_M, N_CTX_Q, BLOCK_M):
+            offs_m = (start_m + tl.arange(0, BLOCK_M))
+
+            q_ptrs = Q + (offs_m[:, None] * sqm + offs_d[None, :] * sqd)
+            do_ptrs = DO + (offs_m[:, None] * sqm + offs_d[None, :] * sqd)
+            dq_ptrs = DQ + (offs_m[:, None] * sqm + offs_d[None, :] * sqd)
+            qi_ptrs = Q_idx + (off_hz * sqih + offs_m * sqim)
+            
+            qi = tl.load(qi_ptrs, mask=offs_m < N_CTX_Q, other=-1)
+            q = tl.load(q_ptrs, mask=offs_m[:,None] < N_CTX_Q)
+            qk = tl.dot(q, tl.trans(k))
+            qk = tl.where((qi[:,None] >= ki_vals[None,:]), qk, float("-inf"))
+
+            m = tl.load(m_ptrs + offs_m, mask=offs_m < N_CTX_Q)
+            m_ = tl.where(m != float('-inf'), m, 0.0)
+            p = tl.exp(qk * sm_scale - m_[:, None])
+
+            do = tl.load(do_ptrs, mask=offs_m[:,None] < N_CTX_Q)
+            # compute dv
+            dv += tl.dot(tl.trans(p.to(Q.dtype.element_ty)), do)
+
+            Di = tl.load(D_ptrs + offs_m, mask=offs_m < N_CTX_Q)
+            # compute dp = dot(v, do)
+            dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32) - Di[:, None]
+            dp += tl.dot(do, tl.trans(v))
+            # compute ds = p * (dp - delta[:, None])
+            ds = p * dp * sm_scale
+            # compute dk = dot(ds.T, q)
+            dk += tl.dot(tl.trans(ds.to(Q.dtype.element_ty)), q)
+
+            dq = tl.load(dq_ptrs, mask=offs_m[:,None] < N_CTX_Q)
+            # compute dq
+            dq += tl.dot(ds.to(Q.dtype.element_ty), k)
+            tl.store(dq_ptrs, dq, mask=offs_m[:, None] < N_CTX_Q)
+
+        # write-back
+        dv_ptrs = DV + (offs_n[:, None] * svn + offs_d[None, :] * svd)
+        dk_ptrs = DK + (offs_n[:, None] * skn + offs_d[None, :] * skd)
+        tl.store(dv_ptrs, dv, mask=offs_n[:, None] < N_CTX_KV)
+        tl.store(dk_ptrs, dk, mask=offs_n[:, None] < N_CTX_KV)
+
+
+class _attention(torch.autograd.Function):
+
+    @staticmethod
+    def forward(ctx, q, k, v, q_idx, k_idx, sm_scale):
+        # only support for Ampere now
+        capability = torch.cuda.get_device_capability()
+        if capability[0] < 8:
+            raise RuntimeError("Flash attention currently only supported for compute capability >= 80")
+        BLOCK = 128
+        # shape constraints
+        Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
+        assert Lq == Lk and Lk == Lv
+        # assert Lk in {16, 32, 64, 128}
+        assert Lk in {64}  # TODO: fix other cases
+        o = torch.empty_like(q)
+        grid = (triton.cdiv(q.shape[2], BLOCK), q.shape[0] * q.shape[1], 1)
+        L = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
+        m = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
+        num_warps = 4 if Lk <= 64 else 8
+
+        _fwd_kernel[grid](
+            q, k, v, sm_scale,
+            o,
+            q.stride(0), q.stride(1), q.stride(2), q.stride(3),
+            k.stride(0), k.stride(1), k.stride(2), k.stride(3),
+            v.stride(0), v.stride(1), v.stride(2), v.stride(3),
+            o.stride(0), o.stride(1), o.stride(2), o.stride(3),
+            q_idx, k_idx, 
+            q_idx.stride(0), q_idx.stride(1), q_idx.stride(2), 
+            k_idx.stride(0), k_idx.stride(1), k_idx.stride(2),
+            L, m,
+            q.shape[0], q.shape[1], q.shape[2], k.shape[2],
+            BLOCK_M=BLOCK, BLOCK_N=BLOCK, BLOCK_DMODEL=Lk,
+            num_warps=num_warps, num_stages=2
+        )
+
+        ctx.save_for_backward(q, k, v, o, L, m, q_idx, k_idx)
+        ctx.grid = grid
+        ctx.sm_scale = sm_scale
+        ctx.BLOCK_DMODEL = Lk
+        return o
+
+    @staticmethod
+    def backward(ctx, do):
+        BLOCK = 128
+        q, k, v, o, l, m, q_idx, k_idx = ctx.saved_tensors
+
+        do = do.contiguous()
+        dq = torch.zeros_like(q, dtype=torch.float32)
+        dk = torch.empty_like(k)
+        dv = torch.empty_like(v)
+        do_scaled = torch.empty_like(do)
+        delta = torch.empty_like(l)
+        _bwd_preprocess[(ctx.grid[0], ctx.grid[1])](
+            o, o.stride(0), o.stride(1), o.stride(2), o.stride(3), do, l, l.stride(0), l.stride(1),
+            do_scaled, delta, q.shape[2],
+            BLOCK_M=BLOCK, D_HEAD=ctx.BLOCK_DMODEL,
+        )
+        num_block_q = ctx.grid[0]
+        num_block_kv = math.ceil(k.shape[2] / BLOCK)
+        _bwd_kernel[(ctx.grid[1],)](
+            q, k, v, ctx.sm_scale,
+            o, do_scaled,
+            dq, dk, dv,
+            q_idx, k_idx,
+            q_idx.stride(0), q_idx.stride(1), q_idx.stride(2), 
+            k_idx.stride(0), k_idx.stride(1), k_idx.stride(2),
+            l, m,
+            delta,
+            q.stride(0), q.stride(1), q.stride(2), q.stride(3),
+            k.stride(0), k.stride(1), k.stride(2), k.stride(3),
+            v.stride(0), v.stride(1), v.stride(2), v.stride(3),
+            q.shape[0], q.shape[1], q.shape[2], k.shape[2],
+            num_block_q, num_block_kv,
+            BLOCK_M=BLOCK, BLOCK_N=BLOCK,
+            BLOCK_DMODEL=ctx.BLOCK_DMODEL, num_warps=8,
+            num_stages=1,
+        )
+        return dq, dk, dv, None, None, None
+
+
+attention = _attention.apply
+
+
+def compact(alphas_mask, v, index=None):
+  """ v.shape = B, N_CTX, H, dim_head 
+      alphas.shape = B, N_CTX, H
+  """
+  B, T, H, dim_head = v.shape
+  if index is None:
+    with torch.no_grad():
+        indices_per_head = alphas_mask.sum(dim=-2) 
+        buffer_size = indices_per_head.max().int() # first sum computes the num of non-killed elem per head, we take to max of that
+        # sorting: it is very important that the sorting is stable, else we cannot use causal masking
+        sorted = alphas_mask.sort(dim=-2, descending=True, stable=True) # sorted.indices.shape == (B x T x H) , now sorted over sequence T
+        index = sorted.indices[:,:buffer_size,:] # (B x buffer_size x H) expand indices to cover all the dimensions for each heads
+  else:
+    indices_per_head = None
+  compact_v = v.gather(dim=-3, index=index.unsqueeze(-1).expand(-1,-1,-1,dim_head)) # (B x buffer_size x H x dim_head) / expand indices to cover all the dimensions for each heads
+  return compact_v, index, indices_per_head
+
+
+@torch.no_grad()
+def pad_index(index, indices_per_head, pad_idx=-1):
+  """ index.shape = B, buffer_size, H  <- index given by `compact`, represents for each batch and timestep the head idx it's originating from
+      indices_per_head.shape = B, H  <- for each head, number of "active" timesteps
+  """
+  B, buffer_size, H = index.shape
+  index_copy = torch.clone(index).type(torch.int32)
+  mask = torch.arange(buffer_size, device=index.device).view(1,-1,1).expand(B,buffer_size,H) >= indices_per_head.view(B,1,-1)
+  index_copy[mask] = pad_idx
+  return index_copy
+
+
+
+def attention_fn(q, k, v, sparsity=0.5):
+
+    BATCH, N_CTX, H, D_HEAD = q.shape
+
+    sm_scale = 1.0 / math.sqrt(D_HEAD)
+
+    alphas_q = (torch.rand((BATCH, N_CTX, H), dtype=torch.bfloat16, device="cuda") > sparsity).float()
+    alphas_k = (torch.rand((BATCH, N_CTX, H), dtype=torch.bfloat16, device="cuda") > sparsity).float()
+
+    # Building compact representations
+    q_c, index_q, iph_q = compact(alphas_q, q)
+    k_c, index_k, iph_k = compact(alphas_k, k)
+    v_c, _, _ = compact(alphas_k, v, index=index_k)
+
+    index_q_padded = pad_index(index_q, iph_q, pad_idx=-1) # (B, compact_T_q, nh)
+    index_k_padded = pad_index(index_k, iph_k, pad_idx=1e9) # (B, compact_T_k, nh)
+
+    compact_N_CTX_KV = k_c.shape[1]
+    compact_N_CTX_Q = q_c.shape[1]
+
+    # We need to transpose everything
+    q_c = q_c.view(BATCH, compact_N_CTX_Q, H, D_HEAD).transpose(1, 2).contiguous() # (BATCH, H, compact_N_CTX_Q, D_HEAD)
+    k_c = k_c.view(BATCH, compact_N_CTX_KV, H, D_HEAD).transpose(1, 2).contiguous() # (BATCH, H, compact_N_CTX_KV, D_HEAD)
+    v_c = v_c.view(BATCH, compact_N_CTX_KV, H, D_HEAD).transpose(1, 2).contiguous() # (BATCH, H, compact_N_CTX_KV, D_HEAD)
+    k_c = F.normalize(k_c, p=2, dim=-1).type(torch.bfloat16)
+    index_q_padded = index_q_padded.transpose(1, 2).contiguous() # (BATCH, H, compact_N_CTX_Q)
+    index_k_padded = index_k_padded.transpose(1, 2).contiguous() # (BATCH, H, compact_N_CTX_KV)
+
+    y_c = attention(q_c, k_c, v_c, index_q_padded, index_k_padded, sm_scale).transpose(1,2)
+    y = torch.zeros((BATCH, N_CTX, H, D_HEAD), dtype=torch.bfloat16, device='cuda').scatter(dim=1, index=index_q.long().view(BATCH,-1,H,1).expand(BATCH, -1, H, D_HEAD), src=y_c)
+
+    return y
+
+
+
+File Path: openwebtext2-experiments/src/models/sparsehq.py
+Content:
+"""
+Full definition of a GPT Language Model, all of it in this single file.
+References:
+1) the official GPT-2 TensorFlow implementation released by OpenAI:
+https://github.com/openai/gpt-2/blob/master/src/model.py
+2) huggingface/transformers PyTorch implementation:
+https://github.com/huggingface/transformers/blob/main/src/transformers/models/gpt2/modeling_gpt2.py
+"""
+
+import math
+import inspect
+
+import tiktoken
+import torch
+import torch.nn as nn
+from torch.nn import functional as F
+
+
+class LayerNorm(nn.Module):
+    """ LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False """
+
+    def __init__(self, ndim, bias=False):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(ndim))
+        self.bias = nn.Parameter(torch.zeros(ndim)) if bias else None
+
+    def forward(self, input):
+        return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
+
+
+class CausalSelfAttention(nn.Module):
+
+    def __init__(self, config):
+        super().__init__()
+        assert config.n_embd % config.n_head == 0
+        # sparsity parameters
+        self.l1_lambda = config.lmbda
+        self.alphas_from = config.alphas_from # either 'x' or 'q'
+        self.n_dims_per_head = int(config.n_embd // config.n_head)
+        self.use_sigmoid = config.use_sigmoid
+        self.alphas_mlp = nn.Sequential(nn.Linear(config.n_embd, config.n_alpha_mlp), nn.ReLU(), nn.Linear(config.n_alpha_mlp, config.n_head))
+        if self.l1_lambda > 0.0: 
+            self.alphas_mlp[2].bias.data.fill_(1.0) # init bias to high value so that at first the "gates" are open
+        # key, query, value projections for all heads, but in a batch
+        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
+        # output projection
+        self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+        # regularization
+        self.attn_dropout = nn.Dropout(config.dropout)
+        self.resid_dropout = nn.Dropout(config.dropout)
+        self.n_head = config.n_head
+        self.n_embd = config.n_embd
+        self.dropout = config.dropout
+        # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
+        self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
+        if not self.flash:
+            print("WARNING: using slow attention. Flash Attention requires PyTorch >= 2.0")
+            # causal mask to ensure that attention is only applied to the left in the input sequence
+            self.register_buffer("bias", torch.tril(torch.ones(config.sequence_length, config.sequence_length))
+                                        .view(1, 1, config.sequence_length, config.sequence_length))
+
+    def forward(self, x, alpha_th=None, drop_k=None, get_alphas=False):
+        B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
+
+        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
+        q, k ,v  = self.c_attn(x).split(self.n_embd, dim=2)
+        # compute alphas
+        num_head_pruned, alphas = (0, 0), None
+        if self.l1_lambda > 0 or drop_k is not None:
+            q_ = q if self.alphas_from == 'q' else x
+            if self.use_sigmoid:
+                alphas = torch.sigmoid(self.alphas_mlp(q_))
+            else:
+                alphas = torch.max(torch.min(self.alphas_mlp(q_).abs(), torch.ones(1, device=x.device)), torch.zeros(1, device=x.device)) 
+            l1_penalty = alphas.view(B,-1).abs().sum(dim=-1) # l1 loss computed for each sequence 
+            if alpha_th is not None: # then we set the alphas under alpha_th to 0
+                mask = alphas <= alpha_th
+                num_head_pruned = (mask.sum().float().item(), float(mask.numel()))
+                alphas[mask] = 0.0
+            elif drop_k is not None:
+                if self.l1_lambda == 0 :
+                    alphas = torch.rand_like(alphas)
+                alphas = alphas.view(B,-1)
+                values, _ = torch.sort(alphas) # sorting the alphas for all heads
+                th = values[:, drop_k].view(B,1) # for each sequence in the batch, finding the threshold value s.t. drop_k alphas are lower
+                alphas[alphas < th] = 0.0 # set drop_k alphas to 0 for each sequence
+                if self.l1_lambda == 0 :
+                    alphas[alphas >= th] = 1.0
+                alphas = alphas.view(B, T, self.n_head)
+            alphas = alphas.unsqueeze(-1).expand(B, T, self.n_head, self.n_dims_per_head)
+            alphas = alphas.reshape(*x.shape)
+        else: 
+            l1_penalty = torch.zeros(1, device=x.device)
+        # reshape query, key, values
+        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+
+        # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
+        if self.flash:
+            # efficient attention using Flash Attention CUDA kernels
+            y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout, is_causal=True)
+        else:
+            # manual implementation of attention
+            att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+            att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
+            att = F.softmax(att, dim=-1)
+            att = self.attn_dropout(att)
+            y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
+        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+
+        # output projection
+        if self.l1_lambda > 0 or drop_k is not None:
+            y = self.resid_dropout(self.c_proj(alphas * y)) # multiply with the alpha values
+        else: 
+            y = self.resid_dropout(self.c_proj(y))
+        alphas = alphas if get_alphas else None
+        return y, l1_penalty, num_head_pruned, alphas
+
+
+class MLP(nn.Module):
+
+    def __init__(self, config):
+        super().__init__()
+        self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
+        self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
+        self.dropout = nn.Dropout(config.dropout)
+        self.activation = nn.GELU()
+
+    def forward(self, x):
+        x = self.c_fc(x)
+        x = self.activation(x)
+        x = self.c_proj(x)
+        x = self.dropout(x)
+        return x
+
+
+class Block(nn.Module):
+
+    def __init__(self, config):
+        super().__init__()
+        self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
+        self.attn = CausalSelfAttention(config)
+        self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
+        self.mlp = MLP(config)
+
+    def forward(self, x, alpha_th=None, drop_k=None, get_alphas=False):
+        att, l1_penalty, num_head_pruned, alphas = self.attn(self.ln_1(x), alpha_th=alpha_th, drop_k=drop_k, get_alphas=get_alphas)
+        x = x + att
+        x = x + self.mlp(self.ln_2(x))
+        return x, l1_penalty, num_head_pruned, alphas
+    
+
+class GPTSparseHeadsQ(nn.Module):
+
+    def __init__(self, config):
+        super().__init__()
+        assert config.vocab_size is not None
+        assert config.sequence_length is not None
+        self.config = config
+        self.tokenizer = tiktoken.get_encoding("gpt2")
+        # sparsity parameters
+        self.l1_lambda = config.lmbda
+
+        self.transformer = nn.ModuleDict(dict(
+            wte = nn.Embedding(config.vocab_size, config.n_embd),
+            wpe = nn.Embedding(config.sequence_length, config.n_embd),
+            drop = nn.Dropout(config.dropout),
+            h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
+            ln_f = LayerNorm(config.n_embd, bias=config.bias),
+        ))
+        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        # with weight tying when using torch.compile() some warnings get generated:
+        # "UserWarning: functional_call was passed multiple values for tied weights.
+        # This behavior is deprecated and will be an error in future versions"
+        # not 100% sure what this is, so far seems to be harmless. TODO investigate
+        self.transformer.wte.weight = self.lm_head.weight # https://paperswithcode.com/method/weight-tying
+
+        # init all weights
+        self.apply(self._init_weights)
+        # apply special scaled init to the residual projections, per GPT-2 paper
+        for pn, p in self.named_parameters():
+            if pn.endswith('c_proj.weight'):
+                torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
+
+        # report number of parameters
+        print("number of parameters: %.2fM" % (self.get_num_params()/1e6,))
+
+    def get_num_params(self, non_embedding=True):
+        """
+        Return the number of parameters in the model.
+        For non-embedding count (default), the position embeddings get subtracted.
+        The token embeddings would too, except due to the parameter sharing these
+        params are actually used as weights in the final layer, so we include them.
+        """
+        n_params = sum(p.numel() for p in self.parameters())
+        if non_embedding:
+            n_params -= self.transformer.wpe.weight.numel()
+        return n_params
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    def forward(self, idx, targets=None, alpha_th=None, drop_k=None, get_logits=False, get_alphas=False):
+        device = idx.device
+        b, t = idx.size()
+        assert t <= self.config.sequence_length, f"Cannot forward sequence of length {t}, block size is only {self.config.sequence_length}"
+        pos = torch.arange(0, t, dtype=torch.long, device=device).unsqueeze(0) # shape (1, t)
+
+        # forward the GPT model itself
+        tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
+        pos_emb = self.transformer.wpe(pos) # position embeddings of shape (1, t, n_embd)
+        x = self.transformer.drop(tok_emb + pos_emb)
+        l1_penalties, alphas_per_layer, num_head_pruned_per_layer, num_heads_per_layer = [], [], [], []
+        for block in self.transformer.h:
+            x, l1_penalty, (nhp, nh), alphas = block(x, alpha_th=alpha_th, drop_k=drop_k, get_alphas=get_alphas)
+            l1_penalties.append(l1_penalty)
+            #alphas_per_layer.append(alphas)
+            num_head_pruned_per_layer.append(nhp)
+            num_heads_per_layer.append(nh)
+        x = self.transformer.ln_f(x)
+
+        if targets is not None:
+            # if we are given some desired targets also calculate the loss
+            logits = self.lm_head(x)
+            l1_loss = torch.stack(l1_penalties).sum(dim=0).mean()
+            ce_loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
+            loss = ce_loss + self.l1_lambda * l1_loss
+        else:
+            # inference-time mini-optimization: only forward the lm_head on the very last position
+            logits = self.lm_head(x[:, [-1], :]) # note: using list [-1] to preserve the time dim
+            loss, ce_loss, l1_loss = None, torch.zeros(1), torch.zeros(1)
+
+        logits = logits if get_logits else None
+        alphas_per_layer = alphas_per_layer if get_alphas else None
+
+        return {'logits': logits, 'loss': loss, 'ce_loss': ce_loss.cpu().item(), 'l1_loss': l1_loss.cpu().item(), 
+                'alphas': alphas_per_layer, 'num_head_pruned_per_layer': num_head_pruned_per_layer, 
+                'num_heads_per_layer': num_heads_per_layer}
+
+    def crop_sequence_length(self, sequence_length):
+        # model surgery to decrease the block size if necessary
+        # e.g. we may load the GPT2 pretrained model checkpoint (block size 1024)
+        # but want to use a smaller block size for some smaller, simpler model
+        assert sequence_length <= self.config.sequence_length
+        self.config.sequence_length = sequence_length
+        self.transformer.wpe.weight = nn.Parameter(self.transformer.wpe.weight[:sequence_length])
+        for block in self.transformer.h:
+            block.attn.bias = block.attn.bias[:,:,:sequence_length,:sequence_length]
+
+    @classmethod
+    def from_pretrained(cls, model_type, override_args=None):
+        # TODO
+        pass
+
+    def get_parameter_group_specs(self):
+        """
+        This long function is unfortunately doing something very simple and is being very defensive:
+        We are separating out all parameters of the model into two buckets: those that will experience
+        weight decay for regularization and those that won't (biases, and layernorm/embedding weights).
+        We are then returning the PyTorch optimizer object.
+        """
+
+        # separate out all parameters to those that will and won't experience regularizing weight decay
+        decay = set()
+        no_decay = set()
+        whitelist_weight_modules = (torch.nn.Linear, )
+        blacklist_weight_modules = (torch.nn.LayerNorm, LayerNorm, torch.nn.Embedding)
+        for mn, m in self.named_modules():
+            for pn, p in m.named_parameters():
+                fpn = '%s.%s' % (mn, pn) if mn else pn # full param name
+                # random note: because named_modules and named_parameters are recursive
+                # we will see the same tensors p many many times. but doing it this way
+                # allows us to know which parent module any tensor p belongs to...
+                if pn.endswith('bias'):
+                    # all biases will not be decayed
+                    no_decay.add(fpn)
+                elif pn.endswith('weight') and isinstance(m, whitelist_weight_modules):
+                    # weights of whitelist modules will be weight decayed
+                    decay.add(fpn)
+                elif pn.endswith('weight') and isinstance(m, blacklist_weight_modules):
+                    # weights of blacklist modules will NOT be weight decayed
+                    no_decay.add(fpn)
+
+        # subtle: 'transformer.wte.weight' and 'lm_head.weight' are tied, so they
+        # will appear in the no_decay and decay sets respectively after the above.
+        # In addition, because named_parameters() doesn't return duplicates, it
+        # will only return the first occurence, key'd by 'transformer.wte.weight', below.
+        # so let's manually remove 'lm_head.weight' from decay set. This will include
+        # this tensor into optimization via transformer.wte.weight only, and not decayed.
+        decay.remove('lm_head.weight')
+
+        # validate that we considered every parameter
+        param_dict = {pn: p for pn, p in self.named_parameters()}
+        inter_params = decay & no_decay
+        union_params = decay | no_decay
+        assert len(inter_params) == 0, "parameters %s made it into both decay/no_decay sets!" % (str(inter_params), )
+        assert len(param_dict.keys() - union_params) == 0, "parameters %s were not separated into either decay/no_decay set!" \
+                                                    % (str(param_dict.keys() - union_params), )
+
+        # create the pytorch optimizer object
+        return [
+            {"params": sorted(list(decay))},
+            {"params": sorted(list(no_decay)), "weight_decay": 0.0},
+        ]
+
+    @torch.no_grad()
+    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None, alpha_th=None, drop_k=None):
+        """
+        Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete
+        the sequence max_new_tokens times, feeding the predictions back into the model each time.
+        Most likely you'll want to make sure to be in model.eval() mode of operation for this.
+        """
+        for _ in range(max_new_tokens):
+            # if the sequence context is growing too long we must crop it at sequence_length
+            idx_cond = idx if idx.size(1) <= self.config.sequence_length else idx[:, -self.config.sequence_length:]
+            # forward the model to get the logits for the index in the sequence
+            logits = self(idx_cond, alpha_th=alpha_th, drop_k=drop_k, get_logits=True)['logits']
+            # pluck the logits at the final step and scale by desired temperature
+            logits = logits[:, -1, :] / temperature
+            # optionally crop the logits to only the top k options
+            if top_k is not None:
+                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                logits[logits < v[:, [-1]]] = -float('Inf')
+            # apply softmax to convert logits to (normalized) probabilities
+            probs = F.softmax(logits, dim=-1)
+            # sample from the distribution
+            idx_next = torch.multinomial(probs, num_samples=1)
+            # append sampled index to the running sequence and continue
+            idx = torch.cat((idx, idx_next), dim=1)
+
+        return idx
+    
+    @torch.no_grad()
+    def generate_from_string(self, in_str, max_new_tokens, temperature=1.0, top_k=None, alpha_th=None, drop_k=None):
+        idx = torch.tensor(self.tokenizer.encode(in_str, allowed_special={"<|endoftext|>"})).view(1,-1).to(self.lm_head.weight.device)
+        out_idx = self.generate(idx, max_new_tokens, temperature, top_k, alpha_th=alpha_th, drop_k=drop_k).view(-1).to('cpu').numpy()
+        return self.tokenizer.decode(out_idx)
+
+File Path: openwebtext2-experiments/src/models/utils.py
+Content:
+from .base import GPTBase
+from .sparsehq import GPTSparseHeadsQ
+from .hashformer import Hashformer
+from .dropformer import Dropformer
+
+
+def get_model(args):
+    """ Return the right model """
+    if args.model == 'base':
+        model = GPTBase(args)
+        if args.use_pretrained != 'none':
+            raise NotImplementedError(f"Loading of pretrained models not yet implemented for model '{args.model}'.") 
+        return model
+    elif args.model == 'sparse-heads-q':
+        model = GPTSparseHeadsQ(args)
+        if args.use_pretrained != 'none':
+            raise NotImplementedError(f"Loading of pretrained models not yet implemented for model '{args.model}'.") 
+        return model
+    elif args.model == 'hashformer':
+        model = Hashformer(args)
+        if args.use_pretrained != 'none':
+            raise NotImplementedError(f"Loading of pretrained models not yet implemented for model '{args.model}'.") 
+        return model
+    elif args.model == 'dropformer':
+        model = Dropformer(args)
+        if args.use_pretrained != 'none':
+            raise NotImplementedError(f"Loading of pretrained models not yet implemented for model '{args.model}'.") 
+        return model
+    else:
+        raise KeyError(f"Unknown model '{args.model}'.")
+File Path: openwebtext2-experiments/src/optim/base.py
+Content:
+from contextlib import nullcontext
+
+import torch
+import torch.nn.functional as F
+import wandb
+import time 
+import copy
+
+from .utils import eval, get_batch, save_checkpoint
+
+
+def train_base(model, opt, data, scheduler, iterations, acc_steps, batch_size, sequence_length, eval_freq, ckpt_path, distributed_backend, extra_args):
+    device_type = 'cuda' if 'cuda' in str(extra_args.device) else 'cpu'
+    type_ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(
+        device_type=device_type, dtype=torch.bfloat16)  # extra_args.dtype)
+    itr, substep, best_val_loss, text_table = 0, 0, float('inf'), None # best_val_loss not used atm, early stopping not recommended but possible 
+
+    stats = {'train_loss': [], 'val_loss': [], 'val_pp': [], 'val_acc': []}
+
+    num_substeps_per_epoch = len(data['train']) // (batch_size * sequence_length)
+    
+    if not extra_args.no_compile:
+        print(f"Compiling model ...")
+        model = torch.compile(model) # requires pytorch 2.0+
+
+    model.train()
+
+    t0 = time.time()
+    while itr < iterations:
+        for microstep_idx in range(acc_steps):  # gradient accumulation
+            x, y = get_batch(data['train'], sequence_length, batch_size, device=extra_args.device)
+            with type_ctx:
+                with distributed_backend.get_context_for_microstep_forward(model=model, microstep_idx=microstep_idx, gradient_accumulation_steps=acc_steps):
+                    
+                    alpha = (iterations - itr)/iterations
+                    #sparsity = 0.8 * alpha + (1-alpha) * 0.2
+                    
+                    outputs = model(x, targets=y)#, sparsity=sparsity)
+
+            loss = outputs['loss'] / acc_steps
+            loss.backward()
+            substep += 1
+
+        if extra_args.grad_clip != 0.0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), extra_args.grad_clip)
+        opt.step()
+        scheduler.step()
+        opt.zero_grad(set_to_none=True)
+        itr += 1
+
+        if itr % eval_freq == 0 or itr == iterations: # from here it's only evaluation code, all the training is above
+            if distributed_backend.is_master_process():
+                t1 = time.time()
+                dt = t1 - t0
+                epoch = substep//num_substeps_per_epoch
+
+                model.eval()
+                train_loss = loss.detach().cpu().item()
+                current_lr = scheduler.get_last_lr()[0] if scheduler is not None else extra_args.lr
+                val_acc, val_loss, val_perplexity = eval(model, data['val'], sequence_length, batch_size,
+                                                         extra_args.device, max_num_batches=24, ctx=type_ctx)
+
+                print_string = f"{epoch}/{itr} [train] loss={train_loss:.3f} [val] loss={val_loss:.3f}, pp={val_perplexity:.2f}, acc={val_acc:3f}"
+                print_string += f" [time per itr] {dt*1000/eval_freq:.2f}ms"
+                if scheduler is not None:
+                    print_string += f" [lr] {current_lr:.5f}"
+                print(print_string)
+
+                if extra_args.wandb:
+                    wandb.log({
+                        "iter": itr,
+                        "train/loss": train_loss,
+                        "val/loss": val_loss,
+                        "val/perplexity": val_perplexity,
+                        "val/acc": val_acc,
+                        "lr": current_lr,
+                    })
+
+                    # if extra_args.eval_seq_prefix != 'none' and (itr % (eval_freq * 5) == 0 or itr == iterations):
+                    #     if text_table is None:
+                    #         text_table = wandb.Table(columns=["itr", "val-pp", "text"])
+
+                    #     out_str = distributed_backend.get_raw_model(model).generate_from_string(
+                    #         extra_args.eval_seq_prefix, max_new_tokens=40, temperature=0.9, top_k=None)
+                    #     text_table.add_data(itr, val_perplexity, out_str)
+                    #     # why a copy? see github.com/wandb/wandb/issues/2981
+                    #     wandb.log({f"generated-text-{wandb.run.name}": copy.copy(text_table)})
+
+                model.train()
+                t0 = time.time()
+
+    if distributed_backend.is_master_process():
+        print(f"saving checkpoint to {ckpt_path}")
+        save_checkpoint(distributed_backend=distributed_backend,
+                        model=model,
+                        opt=opt,
+                        scheduler=scheduler,
+                        itr=itr,
+                        ckpt_path=ckpt_path)
+
+    return stats
+
+
+File Path: openwebtext2-experiments/src/optim/sparse.py
+Content:
+from contextlib import nullcontext
+import torch
+import torch.nn.functional as F
+import wandb
+import time 
+import copy
+
+from .utils import eval_sparse, get_batch, eval_sweep_dropk, save_checkpoint
+
+
+def train_sparse(model, opt, data, scheduler, iterations, acc_steps, batch_size, sequence_length, eval_freq, ckpt_path, distributed_backend, extra_args):
+    device_type = 'cuda' if 'cuda' in str(extra_args.device) else 'cpu'
+    type_ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(
+        device_type=device_type, dtype=torch.bfloat16)  # extra_args.dtype)
+    itr, substep, best_val_loss, text_table, sparsity_plot = 0, 0, float('inf'), None, None # best_val_loss not used atm, early stopping not recommended but possible 
+
+    stats = {'train_ce_loss': [], 'train_l1_loss': [], 'val_l1_loss': [], 'val_ce_loss': [], 'val_pp': [], 'val_acc': []}
+
+    num_substeps_per_epoch = len(data['train']) // (batch_size * sequence_length)
+    
+    if not extra_args.no_compile:
+        print(f"Compiling model ...")
+        model = torch.compile(model) # requires pytorch 2.0+
+
+    model.train()
+
+    t0 = time.time()
+    while itr < iterations:
+        for microstep_idx in range(acc_steps):  # gradient accumulation
+            x, y = get_batch(data['train'], sequence_length, batch_size, device=extra_args.device)
+            with type_ctx:
+                with distributed_backend.get_context_for_microstep_forward(model=model, microstep_idx=microstep_idx, gradient_accumulation_steps=acc_steps):
+                    outputs = model(x, targets=y)
+
+            loss = outputs['loss']
+            loss.backward()
+            substep += 1
+
+        opt.step()
+        scheduler.step()
+        opt.zero_grad(set_to_none=True)
+        itr += 1
+
+        if itr % eval_freq == 0 or itr == iterations: # eval: from here it's pretty much only evaluation, all the training is above 
+            if distributed_backend.is_master_process():
+                t1 = time.time()
+                dt = t1 - t0
+                epoch = substep//num_substeps_per_epoch
+
+                model.eval()
+                current_lr = scheduler.get_last_lr()[0] if scheduler is not None else extra_args.lr
+                val_acc, val_ce_loss, val_l1_loss, val_perplexity, sparcity_per_layer = eval_sparse(model, data['val'], sequence_length, batch_size,
+                                                                                                    extra_args.device, max_num_batches=24, ctx=type_ctx)
+
+                print_string = f"{epoch}/{itr} [train] ce-loss={outputs['ce_loss']:.3f}, l1-loss={outputs['l1_loss']:.3f}"
+                print_string += f" [val] ce-loss={val_ce_loss:.3f}, l1-loss={val_l1_loss:.3f}, pp={val_perplexity:.2f}, acc={val_acc:3f}"
+                print_string += f" [time per itr] {dt*1000/eval_freq:.2f}ms"
+                if scheduler is not None:
+                    print_string += f" [lr] {current_lr:.5f}"
+                print(print_string)
+
+                if extra_args.wandb:
+                    wandb.log({
+                        "iter": itr,
+                        "train/loss": outputs['ce_loss'],
+                        "val/loss": val_ce_loss,
+                        "train/l1-loss": outputs['l1_loss'],
+                        "val/l1-loss": val_l1_loss,
+                        "val/perplexity": val_perplexity,
+                        "val/acc": val_acc,
+                        "lr": current_lr,
+                    })
+
+                    if extra_args.eval_seq_prefix != 'none' and (itr % (eval_freq * 5) == 0 or itr == iterations):
+                        if text_table is None:
+                            text_table = wandb.Table(columns=["itr", "val-pp", "text"])
+
+                        out_str = distributed_backend.get_raw_model(model).generate_from_string(
+                            extra_args.eval_seq_prefix, max_new_tokens=40, temperature=0.9, top_k=None)
+                        text_table.add_data(itr, val_perplexity, out_str)
+                        # why a copy? see github.com/wandb/wandb/issues/2981
+                        wandb.log({f"generated-text-{wandb.run.name}": copy.copy(text_table)})
+
+                    if itr % (eval_freq * 5) == 0 or itr == iterations:
+                        if sparsity_plot is None:
+                            layer_idx, sparsity_plot, keys = list(range(1, extra_args.n_layer+1)), [], []
+                        sparsity_plot.append(list(sparcity_per_layer))
+                        keys.append(f"itr {itr}")
+                        wandb.log({f"val-stats/sparsity-{wandb.run.name}": wandb.plot.line_series(xs=layer_idx,
+                                  ys=sparsity_plot, keys=keys, title=f"sparsity-{wandb.run.name}")})
+
+                    if itr % (eval_freq * 50) == 0 or itr == iterations:
+                        x_axis, y_axis_acc, y_axis_pp, _ = eval_sweep_dropk(model, data['val'], sequence_length, batch_size, extra_args.n_head,
+                                                                            extra_args.device, max_num_batches=24, ctx=ctx)
+                        table_acc = wandb.Table(data=list(zip(x_axis, y_axis_acc)), columns=["n heads dropped", "acc"])
+                        wandb.log({f"val-stats/Acc-drop-k-itr={itr}": wandb.plot.line(table_acc,
+                                  "n heads dropped", "acc", title=f"Acc: drop-k-itr={itr}")})
+                        table_pp = wandb.Table(data=list(zip(x_axis, y_axis_pp)),
+                                               columns=["n heads dropped", "perplexity"])
+                        wandb.log({f"val-stats/PP-drop-k-itr={itr}": wandb.plot.line(table_pp,
+                                  "n heads dropped", "perplexity", title=f"Perplexity: drop-k-itr={itr}")})
+
+                        x_axis, y_axis_acc, y_axis_pp, _ = eval_sweep_dropk(model, data['val'], sequence_length, batch_size, extra_args.n_head,
+                                                                            extra_args.device, max_num_batches=24, ctx=ctx)
+                        table_acc = wandb.Table(data=list(zip(x_axis, y_axis_acc)), columns=["n heads dropped", "acc"])
+                        wandb.log({f"val-stats/Acc-alpha-th-sweep-itr={itr}": wandb.plot.line(table_acc,
+                                  "n heads dropped", "acc", title=f"Acc: alpha-th-sweep-itr={itr}")})
+                        table_pp = wandb.Table(data=list(zip(x_axis, y_axis_pp)),
+                                               columns=["n heads dropped", "perplexity"])
+                        wandb.log({f"val-stats/PP-alpha-th-sweep-itr={itr}": wandb.plot.line(table_pp,
+                                  "n heads dropped", "perplexity", title=f"Perplexity: alpha-th-sweep-itr={itr}")})
+
+                model.train()
+                t0 = time.time()
+
+    if distributed_backend.is_master_process():
+        print(f"saving checkpoint to {ckpt_path}")
+        save_checkpoint(distributed_backend=distributed_backend,
+                        model=model,
+                        opt=opt,
+                        scheduler=scheduler,
+                        itr=itr,
+                        ckpt_path=ckpt_path)
+
+    return stats
+
+
+File Path: openwebtext2-experiments/src/optim/utils.py
+Content:
+import numpy as np
+import torch
+import torch.nn.functional as F
+from contextlib import nullcontext, contextmanager, ExitStack
+
+
+def get_batch(data, seq_length, batch_size, device='cpu'):
+    ix = torch.randint(len(data) - seq_length, (batch_size,))
+    x = torch.stack([torch.from_numpy((data[i:i+seq_length]).astype(np.int64)) for i in ix])
+    y = torch.stack([torch.from_numpy((data[i+1:i+1+seq_length]).astype(np.int64)) for i in ix])
+    if "cuda" in torch.device(device).type:
+        # pin arrays x,y, which allows us to move them to GPU asynchronously (non_blocking=True)
+        x = x.pin_memory().to(device, non_blocking=True)
+        y = y.pin_memory().to(device, non_blocking=True)
+    return x, y
+
+
+@torch.no_grad()
+def eval(model, data_tensor, sequence_length, batch_size, device='cpu', max_num_batches=24, ctx=nullcontext()):
+    assert model.training == False
+
+    loss_list_val, acc_list = [], []
+
+    for _ in range(max_num_batches): 
+        x, y = get_batch(data_tensor, sequence_length, batch_size, device=device)
+        with ctx:
+            outputs = model(x, targets=y, get_logits=True)
+        val_loss = outputs['loss']
+        loss_list_val.append(val_loss)
+        acc_list.append((outputs['logits'].argmax(-1) == y).float().mean())
+
+    val_acc = torch.stack(acc_list).mean().item()
+    val_loss = torch.stack(loss_list_val).mean().item()
+    val_perplexity = 2.71828 ** val_loss
+
+    return val_acc, val_loss, val_perplexity
+
+
+@torch.no_grad()
+def eval_sparse(model, data_tensor, sequence_length, batch_size, device='cpu', max_num_batches=24, ctx=nullcontext(), alpha_th=None, drop_k=None):
+    assert model.training == False
+
+    ce_loss_list_val, l1_loss_list_val, acc_list, sparcity_per_layer = [], [], [], []
+
+    for _ in range(max_num_batches): 
+        x, y = get_batch(data_tensor, sequence_length, batch_size, device=device)
+        with ctx:
+            outputs = model(x, targets=y, alpha_th=alpha_th, drop_k=drop_k, get_logits=True, get_alphas=True)
+        ce_loss_list_val.append(outputs['ce_loss'])
+        l1_loss_list_val.append(outputs['l1_loss'])
+        acc_list.append((outputs['logits'].argmax(-1) == y).float().mean())
+        sparcity_per_layer.append([(alphas < 1e-8).sum().float().cpu().item() / alphas.numel() for alphas in outputs['alphas']])
+
+    val_acc = torch.stack(acc_list).mean().item()
+    val_ce_loss = np.mean(ce_loss_list_val)
+    val_l1_loss = np.mean(l1_loss_list_val)
+    val_perplexity = 2.71828 ** val_ce_loss
+    sparcity_per_layer = np.mean(np.array(sparcity_per_layer), axis=0)
+
+    return val_acc, val_ce_loss, val_l1_loss, val_perplexity, sparcity_per_layer
+
+
+@torch.no_grad()
+def eval_sweep_dropk(model, data_tensor, sequence_length, batch_size, n_heads, device='cpu', max_num_batches=24, ctx=nullcontext()):
+    assert model.training == False
+
+    x_axis, y_axis_pp, y_axis_acc, y_axis_loss = torch.linspace(0.0,0.95,15), [], [], []
+    loss_list_val, acc_list = [], []
+
+    for frac in x_axis:
+        drop_k = int(sequence_length * frac * n_heads)
+        for _ in range(max_num_batches): 
+            x, y = get_batch(data_tensor, sequence_length, batch_size, device=device)
+            with ctx:
+                outputs = model(x, targets=y, alpha_th=None, drop_k=drop_k, get_logits=True)
+            loss_list_val.append(outputs['ce_loss'])
+            acc_list.append((outputs['logits'].argmax(-1) == y).float().mean())
+
+        y_axis_acc.append(torch.stack(acc_list).mean().item())
+        y_axis_loss.append(np.mean(loss_list_val))
+        y_axis_pp.append(2.71828 ** y_axis_loss[-1])
+
+    return x_axis, y_axis_acc, y_axis_pp, y_axis_loss
+
+
+@torch.no_grad()
+def eval_sweep_alphath(model, data_tensor, sequence_length, batch_size, device='cpu', max_num_batches=24, ctx=nullcontext()):
+    assert model.training == False
+
+    alpha_ths, y_axis_pp, y_axis_acc, y_axis_loss = [0, 1e-4, 1e-3, 1e-2, 1e-1, 2e-1, 3e-1, 4e-1, 5e-1], [], [], []
+    loss_list_val, acc_list, x_axis = [], [], []
+
+    for alpha_th in alpha_ths:
+        frac_heads_pruned_list = []
+        for _ in range(max_num_batches): 
+            x, y = get_batch(data_tensor, sequence_length, batch_size, device=device)
+            with ctx:
+                outputs = model(x, targets=y, alpha_th=alpha_th, drop_k=None, get_logits=True)
+            nph, nh = outputs['num_head_pruned_per_layer'], outputs['num_heads_per_layer']
+            frac_heads_pruned = np.sum(nph) / np.sum(nh) # fractions of heads removed given alpha_th
+            frac_heads_pruned_list.append(frac_heads_pruned)
+            loss_list_val.append(outputs['ce_loss'])
+            acc_list.append((outputs['logits'].argmax(-1) == y).float().mean())
+
+        x_axis.append(np.mean(frac_heads_pruned_list))
+        y_axis_acc.append(torch.stack(acc_list).mean().item())
+        y_axis_loss.append(np.mean(loss_list_val))
+        y_axis_pp.append(2.71828 ** y_axis_loss[-1])
+
+    return x_axis, y_axis_acc, y_axis_pp, y_axis_loss
+
+
+def save_checkpoint(distributed_backend, model, opt, scheduler, itr, ckpt_path, **extra_args):
+
+    checkpoint = dict({
+        'model': distributed_backend.get_raw_model(model).state_dict(),
+        'optimizer': opt.state_dict(),
+        'scheduler': scheduler.state_dict(),
+        'itr': itr,
+    }, **extra_args)
+
+    torch.save(checkpoint, ckpt_path)
+
+Output:
+{
+    "experimental_code": "import torch\nimport torch.nn.functional as F\n\nimport triton\nimport triton.language as tl\n\nimport math\n\n\n@triton.jit\ndef _fwd_kernel(#debug, sdz, sdh, sdm, sdn,\n    Q, K, V, sm_scale, \n    Out,\n    sqz, sqh, sqm, sqd, # shape = (Z,H,N_CTX_Q,D)\n    skz, skh, skn, skd, # shape = (Z,H,N_CTX_KV,D)\n    svz, svh, svn, svd, # shape = (Z,H,N_CTX_KV,D)\n    soz, soh, som, sod, # shape = (Z,H,N_CTX_Q,D)\n    Q_idx, K_idx, \n    sqiz, sqih, sqim,  # shape = (Z,H,N_CTX_Q)\n    skiz, skih, skin,  # shape = (Z,H,N_CTX_KV)\n    L, M,\n    Z, H, N_CTX_Q, N_CTX_KV, \n    BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, # will load BLOCK_M queries, and compute self attention by blocks of BLOCK_N keys\n    BLOCK_DMODEL: tl.constexpr # dimensionality of heads: D\n):\n    start_m = tl.program_id(0) # idx of sequence length chunk of size 128 (BLOCK_N)\n    off_hz = tl.program_id(1) # idx of head_batch (unique idx for each head in each batch)\n\n    # initialize offsets\n    offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M) # indices of queries we want to process\n    offs_n = tl.arange(0, BLOCK_N) # indices of keys we want to process, we start from [0, BLOCK_N-1] and update in the loop\n    offs_d = tl.arange(0, BLOCK_DMODEL) # we want to process all the dimensions of a given head\n\n    offs_q = off_hz * sqh + offs_m[:, None] * sqm + offs_d[None, :] * sqd # Q.view(Z*H,N_CTX_Q,D)[off_hz, start_m*BLOCK_M:(start_m+1)*BLOCK_M, :].squeeze() that's a BLOCK_M*D matrix\n    offs_k = off_hz * skh + offs_n[None, :] * skn + offs_d[:, None] * skd # K.view(Z*H,N_CTX_KV,D)[off_hz, 0:BLOCK_N, :].transpose(1,2).squeeze() that's a D*BLOCK_N matrix\n    offs_v = off_hz * svh + offs_n[:, None] * svn + offs_d[None, :] * svd # V.view(Z*H,N_CTX_KV,D)[off_hz, 0:BLOCK_N, :].squeeze() that's a BLOCK_N*D matrix\n    offs_qi = off_hz * sqih + offs_m * sqim # Q_idx.view(Z*H,N_CTX_Q)[off_hz, start_m*BLOCK_M:(start_m+1)*BLOCK_M] a vector of BLOCK_M indices \n    offs_ki = off_hz * skih + offs_n * skin # K_idx.view(Z*H,N_CTX_KV)[off_hz, 0:BLOCK_N] a vector of BLOCK_N indices\n\n    # pointers to m and l\n    m_prev = tl.zeros([BLOCK_M], dtype=tl.float32) - float(\"inf\")\n    l_prev = tl.zeros([BLOCK_M], dtype=tl.float32)\n    acc = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)\n\n    # Load values\n    qi_vals = tl.load(Q_idx + offs_qi, mask=offs_m < N_CTX_Q, other=-1)\n    q_vals = tl.load(Q + offs_q, mask=offs_m[:, None] < N_CTX_Q, other=0) \n    max_qi = tl.max(qi_vals, axis=0) # lagest query index in block\n\n    end_n = 0\n    for _ in range(0, N_CTX_KV, BLOCK_N):\n        ki_vals = tl.load(K_idx + offs_ki, mask=offs_n < N_CTX_KV, other=1e9)\n        min_ki = tl.min(ki_vals, axis=0)\n        if min_ki <= max_qi and min_ki != 1e9:\n            end_n += 1\n        offs_ki += BLOCK_N * skin\n        offs_n += BLOCK_N\n\n    offs_n = tl.arange(0, BLOCK_N)\n    offs_ki = off_hz * skih + offs_n * skin\n\n    for _ in range(0, end_n):\n        \n        # Load values for K and K_idx\n        ki_vals = tl.load(K_idx + offs_ki, mask=offs_n < N_CTX_KV, other=1e9)\n        k_vals = tl.load(K + offs_k, mask=offs_n[None, :] < N_CTX_KV, other=0)\n\n        # compute qk\n        qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.bfloat16)\n        qk += tl.dot(q_vals, k_vals)\n        qk *= sm_scale\n\n        # causal masking\n        qk = tl.where(qi_vals[:,None] >= ki_vals[None,:], qk, float(\"-inf\"))\n\n        # compute attention weights\n        m_curr = tl.maximum(tl.max(qk, 1), m_prev) # compute new m\n        m_curr_ = tl.where(m_curr != float('-inf'), m_curr, float(0.0))\n        l_prev *= tl.exp(m_prev - m_curr_) # correct old l\n        p = tl.exp(qk - m_curr_[:, None])\n        l_curr = tl.sum(p, 1) + l_prev \n        l_rcp = 1. / l_curr # rescale operands of matmuls\n        l_rcp = tl.where((l_rcp == float('inf')), 0, l_rcp)\n        p *= l_rcp[:, None]\n        acc *= (l_prev * l_rcp)[:, None] # weight for each value vector\n\n        # update acc\n        p = p.to(Q.dtype.element_ty)\n        v_vals = tl.load(V + offs_v, mask=offs_n[:, None] < N_CTX_KV, other=0)\n        acc += tl.dot(p, v_vals) \n\n        # update m_i and l_i\n        l_prev = l_curr\n        m_prev = m_curr\n\n        # update offsets\n        offs_n += BLOCK_N\n        offs_k += BLOCK_N * skn\n        offs_v += BLOCK_N * svn\n        offs_ki += BLOCK_N * skin\n\n    # store L and M\n    offs_L = off_hz * N_CTX_Q + offs_m # L is of shape (Z*H, N_CTX_Q), here we point to L[off_hz, start_m*Block_M:(start_m+1)*Block_M]\n    offs_M = off_hz * N_CTX_Q + offs_m\n    tl.store(L + offs_L, l_prev, mask=offs_m < N_CTX_Q)\n    tl.store(M + offs_M, m_prev, mask=offs_m < N_CTX_Q)\n    # store results to output\n    offs_o = off_hz * soh + offs_m[:, None] * som + offs_d[None, :] * sod\n    tl.store(Out + offs_o, acc, mask=offs_m[:, None] < N_CTX_Q)\n\n\n@triton.jit\ndef _bwd_preprocess(\n    Out, soz, soh, som, sod,\n    DO, L, slzh, slm,\n    NewDO, Delta, N_CTX_Q,\n    BLOCK_M: tl.constexpr, D_HEAD: tl.constexpr,\n):\n    start_m = tl.program_id(0)\n    off_hz = tl.program_id(1)\n\n    off_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M)\n    off_d = tl.arange(0, D_HEAD)\n    # load\n    off_o = off_hz * soh + off_m[:, None] * som + off_d[None, :] * sod\n    off_l = off_hz * slzh + off_m * slm\n    o = tl.load(Out + off_o, mask=off_m[:, None] < N_CTX_Q, other=0.0).to(tl.float32)\n    do = tl.load(DO + off_o, mask=off_m[:, None] < N_CTX_Q, other=0.0).to(tl.float32)\n    denom = tl.load(L + off_l, mask=off_m < N_CTX_Q, other=1.0).to(tl.float32)\n    denom = tl.where(denom == 0, 1.0, denom)\n    # compute\n    do = do / denom[:, None]\n    delta = tl.sum(o * do, axis=1)\n    # write-back\n    tl.store(NewDO + off_o, do, mask=off_m[:, None] < N_CTX_Q)\n    tl.store(Delta + off_l, delta, mask=off_m < N_CTX_Q)\n\n\n@triton.jit\ndef _bwd_kernel(\n    Q, K, V, sm_scale, Out, DO,\n    DQ, DK, DV,\n    Q_idx, K_idx,\n    sqiz, sqih, sqim,  # shape = (Z,H,N_CTX_Q)\n    skiz, skih, skin,  # shape = (Z,H,N_CTX_KV)\n    L, M,\n    D,\n    sqz, sqh, sqm, sqd,\n    skz, skh, skn, skd,\n    svz, svh, svn, svd,\n    Z, H, N_CTX_Q, N_CTX_KV,\n    num_block_q, num_block_kv,\n    BLOCK_M: tl.constexpr, BLOCK_DMODEL: tl.constexpr,\n    BLOCK_N: tl.constexpr,\n):\n    \n    off_hz = tl.program_id(0)\n    off_z = off_hz // H\n    off_h = off_hz % H\n\n    # offset pointers for batch/head\n    Q += off_z * sqz + off_h * sqh\n    K += off_z * skz + off_h * skh\n    V += off_z * svz + off_h * svh\n    DO += off_z * sqz + off_h * sqh\n    DQ += off_z * sqz + off_h * sqh\n    DK += off_z * skz + off_h * skh\n    DV += off_z * svz + off_h * svh\n\n    offs_d = tl.arange(0, BLOCK_DMODEL)\n    \n    # pointer to row-wise quantities in value-like data\n    D_ptrs = D + off_hz * N_CTX_Q # pointer to D.view(Z*H,N_CTX_Q)[off_hz]\n    m_ptrs = M + off_hz * N_CTX_Q # pointer to m.view(Z*H,N_CTX_Q)[off_hz]\n\n    for block_id_n in range(0, num_block_kv):\n\n        start_n = block_id_n * BLOCK_N\n        offs_n = start_n + tl.arange(0, BLOCK_N)\n\n        offs_ki = off_hz * skih + offs_n * skin\n        ki_vals = tl.load(K_idx + offs_ki, mask=offs_n < N_CTX_KV, other=1e9)\n        \n        # pointers for keys and values\n        k_ptrs = K + (offs_n[:, None] * skn + offs_d[None, :] * skd)\n        v_ptrs = V + (offs_n[:, None] * svn + offs_d[None, :] * svd)\n\n        # initialize dv amd dk\n        dv = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)\n        dk = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)\n\n        # Find start block for those keys \n        min_ki = tl.min(ki_vals, axis=0) # lagest query index in block\n        offs_m = tl.arange(0, BLOCK_M)\n        offs_qi = off_hz * sqih + offs_m * sqim \n\n        start_blockidx_m = 0\n        for _ in range(0, N_CTX_Q, BLOCK_M):\n            qi_vals = tl.load(Q_idx + offs_qi, mask=offs_m < N_CTX_Q, other=-1)\n            max_qi = tl.max(qi_vals, axis=0)\n            if max_qi < min_ki and max_qi != -1:\n                start_blockidx_m += 1\n            offs_qi += BLOCK_M * sqim\n            offs_m += BLOCK_M\n\n        k = tl.load(k_ptrs, mask=offs_n[:, None] < N_CTX_KV)\n        v = tl.load(v_ptrs, mask=offs_n[:, None] < N_CTX_KV)\n\n        for start_m in range(start_blockidx_m * BLOCK_M, N_CTX_Q, BLOCK_M):\n            offs_m = (start_m + tl.arange(0, BLOCK_M))\n\n            q_ptrs = Q + (offs_m[:, None] * sqm + offs_d[None, :] * sqd)\n            do_ptrs = DO + (offs_m[:, None] * sqm + offs_d[None, :] * sqd)\n            dq_ptrs = DQ + (offs_m[:, None] * sqm + offs_d[None, :] * sqd)\n            qi_ptrs = Q_idx + (off_hz * sqih + offs_m * sqim)\n            \n            qi = tl.load(qi_ptrs, mask=offs_m < N_CTX_Q, other=-1)\n            q = tl.load(q_ptrs, mask=offs_m[:,None] < N_CTX_Q)\n            qk = tl.dot(q, tl.trans(k))\n            qk = tl.where((qi[:,None] >= ki_vals[None,:]), qk, float(\"-inf\"))\n\n            m = tl.load(m_ptrs + offs_m, mask=offs_m < N_CTX_Q)\n            m_ = tl.where(m != float('-inf'), m, 0.0)\n            p = tl.exp(qk * sm_scale - m_[:, None])\n\n            do = tl.load(do_ptrs, mask=offs_m[:,None] < N_CTX_Q)\n            # compute dv\n            dv += tl.dot(tl.trans(p.to(Q.dtype.element_ty)), do)\n\n            Di = tl.load(D_ptrs + offs_m, mask=offs_m < N_CTX_Q)\n            # compute dp = dot(v, do)\n            dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32) - Di[:, None]\n            dp += tl.dot(do, tl.trans(v))\n            # compute ds = p * (dp - delta[:, None])\n            ds = p * dp * sm_scale\n            # compute dk = dot(ds.T, q)\n            dk += tl.dot(tl.trans(ds.to(Q.dtype.element_ty)), q)\n\n            dq = tl.load(dq_ptrs, mask=offs_m[:,None] < N_CTX_Q)\n            # compute dq\n            dq += tl.dot(ds.to(Q.dtype.element_ty), k)\n            tl.store(dq_ptrs, dq, mask=offs_m[:, None] < N_CTX_Q)\n\n        # write-back\n        dv_ptrs = DV + (offs_n[:, None] * svn + offs_d[None, :] * svd)\n        dk_ptrs = DK + (offs_n[:, None] * skn + offs_d[None, :] * skd)\n        tl.store(dv_ptrs, dv, mask=offs_n[:, None] < N_CTX_KV)\n        tl.store(dk_ptrs, dk, mask=offs_n[:, None] < N_CTX_KV)\n\n\nclass _attention(torch.autograd.Function):\n\n    @staticmethod\n    def forward(ctx, q, k, v, q_idx, k_idx, sm_scale):\n        # only support for Ampere now\n        capability = torch.cuda.get_device_capability()\n        if capability[0] < 8:\n            raise RuntimeError(\"Flash attention currently only supported for compute capability >= 80\")\n        BLOCK = 128\n        # shape constraints\n        Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]\n        assert Lq == Lk and Lk == Lv\n        # assert Lk in {16, 32, 64, 128}\n        assert Lk in {64}  # TODO: fix other cases\n        o = torch.empty_like(q)\n        grid = (triton.cdiv(q.shape[2], BLOCK), q.shape[0] * q.shape[1], 1)\n        L = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)\n        m = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)\n        num_warps = 4 if Lk <= 64 else 8\n\n        _fwd_kernel[grid](\n            q, k, v, sm_scale,\n            o,\n            q.stride(0), q.stride(1), q.stride(2), q.stride(3),\n            k.stride(0), k.stride(1), k.stride(2), k.stride(3),\n            v.stride(0), v.stride(1), v.stride(2), v.stride(3),\n            o.stride(0), o.stride(1), o.stride(2), o.stride(3),\n            q_idx, k_idx, \n            q_idx.stride(0), q_idx.stride(1), q_idx.stride(2), \n            k_idx.stride(0), k_idx.stride(1), k_idx.stride(2),\n            L, m,\n            q.shape[0], q.shape[1], q.shape[2], k.shape[2],\n            BLOCK_M=BLOCK, BLOCK_N=BLOCK, BLOCK_DMODEL=Lk,\n            num_warps=num_warps, num_stages=2\n        )\n\n        ctx.save_for_backward(q, k, v, o, L, m, q_idx, k_idx)\n        ctx.grid = grid\n        ctx.sm_scale = sm_scale\n        ctx.BLOCK_DMODEL = Lk\n        return o\n\n    @staticmethod\n    def backward(ctx, do):\n        BLOCK = 128\n        q, k, v, o, l, m, q_idx, k_idx = ctx.saved_tensors\n\n        do = do.contiguous()\n        dq = torch.zeros_like(q, dtype=torch.float32)\n        dk = torch.empty_like(k)\n        dv = torch.empty_like(v)\n        do_scaled = torch.empty_like(do)\n        delta = torch.empty_like(l)\n        _bwd_preprocess[(ctx.grid[0], ctx.grid[1])](\n            o, o.stride(0), o.stride(1), o.stride(2), o.stride(3), do, l, l.stride(0), l.stride(1),\n            do_scaled, delta, q.shape[2],\n            BLOCK_M=BLOCK, D_HEAD=ctx.BLOCK_DMODEL,\n        )\n        num_block_q = ctx.grid[0]\n        num_block_kv = math.ceil(k.shape[2] / BLOCK)\n        _bwd_kernel[(ctx.grid[1],)](\n            q, k, v, ctx.sm_scale,\n            o, do_scaled,\n            dq, dk, dv,\n            q_idx, k_idx,\n            q_idx.stride(0), q_idx.stride(1), q_idx.stride(2), \n            k_idx.stride(0), k_idx.stride(1), k_idx.stride(2),\n            l, m,\n            delta,\n            q.stride(0), q.stride(1), q.stride(2), q.stride(3),\n            k.stride(0), k.stride(1), k.stride(2), k.stride(3),\n            v.stride(0), v.stride(1), v.stride(2), v.stride(3),\n            q.shape[0], q.shape[1], q.shape[2], k.shape[2],\n            num_block_q, num_block_kv,\n            BLOCK_M=BLOCK, BLOCK_N=BLOCK,\n            BLOCK_DMODEL=ctx.BLOCK_DMODEL, num_warps=8,\n            num_stages=1,\n        )\n        return dq, dk, dv, None, None, None\n\n\nattention = _attention.apply\n\n\ndef compact(alphas_mask, v, index=None):\n  \"\"\" v.shape = B, N_CTX, H, dim_head \n      alphas.shape = B, N_CTX, H\n  \"\"\"\n  B, T, H, dim_head = v.shape\n  if index is None:\n    with torch.no_grad():\n        indices_per_head = alphas_mask.sum(dim=-2) \n        buffer_size = indices_per_head.max().int() # first sum computes the num of non-killed elem per head, we take to max of that\n        # sorting: it is very important that the sorting is stable, else we cannot use causal masking\n        sorted = alphas_mask.sort(dim=-2, descending=True, stable=True) # sorted.indices.shape == (B x T x H) , now sorted over sequence T\n        index = sorted.indices[:,:buffer_size,:] # (B x buffer_size x H) expand indices to cover all the dimensions for each heads\n  else:\n    indices_per_head = None\n  compact_v = v.gather(dim=-3, index=index.unsqueeze(-1).expand(-1,-1,-1,dim_head)) # (B x buffer_size x H x dim_head) / expand indices to cover all the dimensions for each heads\n  return compact_v, index, indices_per_head\n\n\n@torch.no_grad()\ndef pad_index(index, indices_per_head, pad_idx=-1):\n  \"\"\" index.shape = B, buffer_size, H  <- index given by `compact`, represents for each batch and timestep the head idx it's originating from\n      indices_per_head.shape = B, H  <- for each head, number of \"active\" timesteps\n  \"\"\"\n  B, buffer_size, H = index.shape\n  index_copy = torch.clone(index).type(torch.int32)\n  mask = torch.arange(buffer_size, device=index.device).view(1,-1,1).expand(B,buffer_size,H) >= indices_per_head.view(B,1,-1)\n  index_copy[mask] = pad_idx\n  return index_copy\n\n\ndef attention_fn(q, k, v, sparsity=0.5):\n\n    BATCH, N_CTX, H, D_HEAD = q.shape\n\n    sm_scale = 1.0 / math.sqrt(D_HEAD)\n\n    alphas_q = (torch.rand((BATCH, N_CTX, H), dtype=torch.bfloat16, device=\"cuda\") > sparsity).float()\n    alphas_k = (torch.rand((BATCH, N_CTX, H), dtype=torch.bfloat16, device=\"cuda\") > sparsity).float()\n\n    # Building compact representations\n    q_c, index_q, iph_q = compact(alphas_q, q)\n    k_c, index_k, iph_k = compact(alphas_k, k)\n    v_c, _, _ = compact(alphas_k, v, index=index_k)\n\n    index_q_padded = pad_index(index_q, iph_q, pad_idx=-1) # (B, compact_T_q, nh)\n    index_k_padded = pad_index(index_k, iph_k, pad_idx=1e9) # (B, compact_T_k, nh)\n\n    compact_N_CTX_KV = k_c.shape[1]\n    compact_N_CTX_Q = q_c.shape[1]\n\n    # We need to transpose everything\n    q_c = q_c.view(BATCH, compact_N_CTX_Q, H, D_HEAD).transpose(1, 2).contiguous() # (BATCH, H, compact_N_CTX_Q, D_HEAD)\n    k_c = k_c.view(BATCH, compact_N_CTX_KV, H, D_HEAD).transpose(1, 2).contiguous() # (BATCH, H, compact_N_CTX_KV, D_HEAD)\n    v_c = v_c.view(BATCH, compact_N_CTX_KV, H, D_HEAD).transpose(1, 2).contiguous() # (BATCH, H, compact_N_CTX_KV, D_HEAD)\n    k_c = F.normalize(k_c, p=2, dim=-1).type(torch.bfloat16)\n    index_q_padded = index_q_padded.transpose(1, 2).contiguous() # (BATCH, H, compact_N_CTX_Q)\n    index_k_padded = index_k_padded.transpose(1, 2).contiguous() # (BATCH, H, compact_N_CTX_KV)\n\n    y_c = attention(q_c, k_c, v_c, index_q_padded, index_k_padded, sm_scale).transpose(1,2)\n    y = torch.zeros((BATCH, N_CTX, H, D_HEAD), dtype=torch.bfloat16, device='cuda').scatter(dim=1, index=index_q.long().view(BATCH,-1,H,1).expand(BATCH, -1, H, D_HEAD), src=y_c)\n\n    return y\n",
+    "experimental_info": "QK-Sparse Attention (Dropformer) Experimental Settings:\n\nGeneral Training Parameters:\n- Batch Size: 50\n- Accumulation Steps: 4\n- Seed: 0\n- Device: cuda:0\n- Iterations: 15000\n- Learning Rate (lr): 2e-3\n- Warmup Percentage: 0.02\n- Weight Decay: 1e-3\n- Beta1 for AdamW: 0.9\n- Beta2 for AdamW: 0.95\n- Scheduler: 'cos' (cosine annealing)\n- Optimizer: 'adamw'\n- Evaluation Frequency: 200 iterations\n- Results Base Folder: ./exps\n- Gradient Clip: 0.0 (no clipping by default)\n\nDataset Parameters:\n- Dataset: 'wikitext' (choices: 'wikitext', \"shakespeare-char\", 'arxiv', \"arxiv2000\", \"arxiv+wiki\", 'openwebtext2')\n- Vocab Size: 50304\n- Data in RAM: False (by default)\n\nModel Parameters (Dropformer specific):\n- Model Type: 'dropformer'\n- Sparsity: 0.5 (dynamically drops keys/queries based on this threshold in the attention mechanism)\n- Dropout: 0.2\n- Number of Heads (n_head): 12\n- Number of Layers (n_layer): 24\n- Embedding Dimension (n_embd): 768\n- Sequence Length: 512\n- Data Type (dtype): torch.bfloat16\n- Bias: False\n- Model Compilation: Enabled by default (requires PyTorch >= 2.0)\n\nLogging Parameters (WandB):\n- WandB Enabled: False (by default)\n- WandB Project: my-project\n- WandB Run Prefix: none\n- Evaluation Sequence Prefix: \"The history of Switzerland \"\n\nDistributed Training:\n- Distributed Backend: None (single node by default)\n\nTraining Process Details:\n- Uses mixed precision training (`torch.amp.autocast`) with `bfloat16` on CUDA.\n- Gradient accumulation is performed over `acc_steps`.\n- Optimizer (`AdamW` or `SGD`) is initialized with specified learning rate, betas, and weight decay.\n- Learning rate is adjusted by a `OneCycleLR` scheduler.\n- Evaluation includes calculating validation loss, perplexity, and accuracy.\n- Sparsity-specific evaluation functions (`eval_sparse`, `eval_sweep_dropk`, `eval_sweep_alphath` from `optim/utils.py`) are available for sparse models analysis, although for Dropformer, the `main.py` script routes it to `train_base` which uses basic `eval` for logging, implying these advanced evaluations might be for separate analysis or other sparse models."
+}
