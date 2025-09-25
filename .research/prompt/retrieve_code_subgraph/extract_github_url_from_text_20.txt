@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The core methodology re-frames the GNN sampling problem as an adversary bandit problem. Instead of computing the intractable optimal sampling distribution, the proposed algorithms learn a sampler (policy) iteratively. Rewards are defined as the negative derivative of the effective sampling variance. Two main algorithms are introduced: 1) GNN-BS (Graph Neural Networks with Bandit Sampler): Operates under the adversary Multi-Armed Bandit (MAB) setting. It selects 1-element subsets of neighbors (arms) k times for each vertex, collects rewards (negative derivative of effective variance), and updates the alternative sampling distribution (q_t^i) using the EXP3 algorithm. 2) GNN-BS.M (Graph Neural Networks with Multiple Plays Bandit Sampler): Operates under the adversary MAB with multiple plays setting. It uses an efficient k-combination sampler (DepRound) to select a k-element subset of neighbors once. Rewards are derived from the negative derivative of an approximated effective variance (using Jensen's inequality), and the sampling distribution is updated using EXP3.M. For attentive GNNs, where attention values (α_ij) are learned and cannot be evaluated with only sampled neighborhoods, an adjusted feedback attention value (α'_ij) is defined to approximate the true attention values. The overall framework involves: using a bandit sampler to sample k neighbors, establishing an unbiased estimator, performing feedforward and backpropagation, calculating rewards, and updating the sampler with the bandit algorithms.
+
+# GitHub URLs List
+['https://github.com/matenure/FastGCN', 'https://github.com/huangwb/AS-GCN', 'https://github.com/xavierzw/ogb-geniepath-bs']
+Output:
+{
+    "index": 2
+}
