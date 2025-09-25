@@ -1,0 +1,153 @@
+
+Input:
+Convert research paper sections to clean, semantic HTML for GitHub Pages publication.
+
+## Input Data:
+
+**title:**
+FLASH-TTA: One-Pass Hyper-Network Test-Time Adaptation Under a Strict Latency Budget
+
+
+**abstract:**
+We study fully test-time adaptation (TTA) for vision models that must keep pace with high-frame-rate sensors and energy-constrained hardware. Existing gradient-free statistics-modulation methods still require two forward passes per image, whereas gradient-based alternatives such as Tent \cite{wang-2020-tent} additionally incur a backward pass; either choice violates sub-frame latency budgets and hampers edge deployment. We introduce FLASH-TTA, a streaming hyper-network that (i) piggy-backs the computation of first- and second-order channel statistics plus a 16-dimensional Hadamard sketch of the covariance on the ordinary forward pass, (ii) feeds these statistics to an int8 causal GRU that outputs per-layer affine deltas, and (iii) applies the deltas in-place so that prediction and adaptation share exactly one pass. A cross-layer KL regulariser and a Dirichlet-based safeguard prevent over-confident collapse, while the entire controller adds only 220 kB on ResNet-50 and is quantisation-ready. Reproducing the CIFAR-10-C benchmark on an NVIDIA A100 confirmed the desired <5 % latency overhead (3.1 ms absolute) and 240 MB peak-memory increase, but accuracy remained at chance level (10.3 %) because a ten-way classifier head was unintentionally left un-trained. We dissect this failure, relate it to assumptions made by prior TTA literature, and outline the steps required for conclusive robustness evaluation.
+
+
+**introduction:**
+Deep models perform impressively when test data resemble the source distribution, yet real-world deployments seldom enjoy such stability. Weather, lens ageing, on-device quantisation, and user behaviour all shift input statistics, degrading accuracy. Test-time adaptation (TTA) tackles this challenge by updating a small subset of parameters online without labels. Early work relied on heavy self-supervised optimisation \cite{sun-2019-test}; Tent later demonstrated that entropy minimisation of batch-norm scales and biases yields large robustness gains with lower cost \cite{wang-2020-tent}. However, even Tent necessitates (i) a statistics-gathering forward pass, (ii) a backward pass, and (iii) a second forward pass using updated parameters—unacceptable when a 256 fps camera leaves <4 ms per frame.
+
+Edge deployment further constrains compute, energy, and memory. Modern backbones mix batch-norm, group-norm, layer-norm, and multi-branch attention; purely channel-wise moments ignore cross-channel correlations that become important in such settings. Hyper-networks meta-trained solely on Fourier corruptions over-fit and deliver limited benefit on realistic shifts such as fog or blur \cite{yoo-2023-what}. The community therefore requires a latency-first, correlation-aware, and widely deployable TTA solution.
+
+We answer this need with FLASH-TTA, a Fast, Latency-Aware, Streaming Hyper-network that treats activation tensors themselves as the side-channel for adaptation. By fusing a handful of arithmetic instructions into existing kernels, we render the additional work invisible to the wall-clock timer, while a tiny causal GRU maintains temporal context with negligible footprint.
+
+Contributions
+• We introduce the first one-pass statistics-modulation scheme: gathering, adaptation, and prediction share a single forward pass, eliminating both the extra forward of STAMP and the backward pass of Tent.
+• We enrich per-channel moments with a low-rank Hadamard sketch that captures inter-channel drift at O(C log C) cost.
+• Our controller is entirely int8 except for two fp16 heads, adding only 220 kB to a ResNet-50.
+• A gradient-free safeguard, inspired by PeTTA \cite{hoang-2023-persistent}, halts updates when the recurrent state leaves a learned envelope, preventing collapse.
+• We publish code and an honest reproducibility study that reveals a hidden assumption made by most TTA work—the presence of an accurate source classifier—and articulate how future experiments must be designed to draw meaningful conclusions.
+
+The remainder of the paper reviews related work, introduces the necessary background, details the method, documents the experimental set-up, presents results, and concludes with lessons and next steps.
+
+
+**related_work:**
+TTA methods divide into gradient-based and gradient-free approaches. Gradient-based families, typified by Tent \cite{wang-2020-tent}, optimise prediction entropy online. Subsequent work adds batch renormalisation and class re-weighting (DELTA \cite{zhao-2023-delta}), energy-based objectives (TEA \cite{yuan-2023-tea}), or theoretically derived losses (conjugate pseudo-labels \cite{goyal-2022-test}). These techniques improve robustness but require back-propagation, double memory traffic, and at least two passes per image.
+
+Gradient-free lines predict affine deltas directly from activation statistics. STAMP pioneered this idea yet computes statistics in a separate pass, doubling latency. FLASH-TTA removes this duplication and augments the statistics with low-rank covariance sketches, bridging the gap between channel-wise and full second-order information.
+
+Stability under long streams is an active topic. SAR employs sharpness-aware regularisation to avert collapse \cite{niu-2023-towards}; RoTTA uses robust statistics and memory banks for temporally correlated inputs \cite{yuan-2023-robust}; PeTTA senses divergence in recurring domains and freezes adaptation \cite{hoang-2023-persistent}. Our safeguard operates on the recurrent hidden state, maintaining gradient-free operation.
+
+Edge devices motivate memory-efficient variants. EcoTTA inserts tiny meta-networks and self-distilled regularisation \cite{song-2023-ecotta}; FLASH-TTA instead quantises the controller and fuses kernels, trading logic for memory and energy. Active TTA (ATTA) injects sporadic labels to guide adaptation \cite{gui-2024-active}, a complementary direction to our fully unsupervised setting.
+
+Finally, ITTA highlights the importance of carefully chosen auxiliary tasks for test-time training \cite{chen-2023-improved}. FLASH-TTA sidesteps heavy auxiliary losses by learning to exploit natural distribution shifts during meta-training.
+
+
+**background:**
+Problem setting   Let f_θ be a classifier trained on source distribution p_s(x,y). At deployment we observe an unlabeled stream {x_t} from a non-stationary target distribution p_t(x,y). The goal is to update fast parameters φ_t online such that the adapted model f_{θ,φ_t} minimises instantaneous error while respecting a tight latency budget and avoiding back-propagation.
+
+Statistics-modulation   Gradient-free TTA derives additive deltas Δγ, Δβ for each normalisation layer from activation statistics s(x). The descriptive power of s(x) is therefore key. Per-channel means μ and standard deviations σ have low cost but miss cross-channel correlations.
+
+Low-rank covariance sketch   Full covariance Σ∈ℝ^{C×C} is impractical. We sample a Rademacher Hadamard matrix H∈{−1,1}^{C×d}/√C and compute Φ=HᵀΣH with d=16, implemented via fast Walsh–Hadamard transform, yielding O(C log C) complexity. Flattening Φ augments  to form s(x).
+
+Temporal aggregation   Shifts in video are gradual; aggregating evidence stabilises adaptation. A gated recurrent unit with 256 hidden units updates h_t = GRU(s_t,h_{t−1}). We deploy int8 weights and activations, retaining fp16 for the two projection heads.
+
+Divergence safeguard   Prolonged online updates can drift \cite{hoang-2023-persistent}. We maintain a running Gaussian over h_t and freeze updates for eight frames when the Mahalanobis distance exceeds δ=5.0.
+
+
+**method:**
+Inference pipeline   For each of the K tapped normalisation layers L_k the fused kernel executes:
+1. Compute spatial mean μ_k and standard deviation σ_k.
+2. Apply HadamardSketch((x−μ_k)/σ_k) to obtain ĥ_k∈ℝ^{16}.
+3. Append  to the statistics buffer.
+Concatenation over layers yields s_t∈ℝ^{∑_k(2C_k+16)}.
+
+Streaming controller   The int8 GRU updates h_t which two fp16 heads transform into (i) per-layer affine deltas Δγ_k,Δβ_k and (ii) a temperature offset τ_t.
+
+In-place modulation   Before activations exit L_k we overwrite parameters: γ_k←γ_k+Δγ_k, β_k←β_k+Δβ_k. Because the write occurs inside the normalisation kernel, no extra memory traffic arises.
+
+Regularisation signal   During meta-training we apply the adapted and frozen networks to a secondary crop x′ and minimise KL(p_adapt(x′)‖p_frozen(x′)) weighted by exp(−τ_t), encouraging low-entropy yet conservative updates. No gradient is computed at test time.
+
+Quantisation   All statistics and GRU computations use symmetric int8 with learned scales; fp16 accumulation avoids overflow; adapting heads remain fp16 for precision. The fused kernel reads int8 activations, converts to fp16, applies Δ, and writes back fp16, matching common INT8 deployment flows.
+
+
+**experimental_setup:**
+Objective   We reproduced the single-frame CIFAR-10-C benchmark (planned Experiment 1) to validate latency claims.
+
+Dataset   CIFAR-10-C provides 75 000 images obtained by corrupting the CIFAR-10 test set with 15 corruption types at five severities. Images were resized to 32×32 and normalised with mean  and std .
+
+Model   Backbone: timm resnet50.a1_in1k pre-trained on ImageNet-1k. The 1000-way classifier was replaced by a random ten-way layer and, critically, not fine-tuned. FLASH-TTA parameters: d=16, GRU = 256, safeguard δ=5.0.
+
+Hardware & software   NVIDIA A100-80 GB, CUDA 11.8, PyTorch 2.1, fp16 inference. Cudagraphs disabled to expose first-iteration compilation.
+
+Protocol   Batch = 256, five warm-up iterations, evaluation on the full 75 k images. Metrics: top-1 accuracy, 15-bin Expected Calibration Error (ECE), Brier score, mean latency via CUDA events, peak GPU memory via pynvml. Seed 0 fixes data order.
+
+Implementation notes   The Triton-based fused statistics kernel is JIT-compiled at first use; compilation time is included in latency unless otherwise stated. No baselines were executed in this reproduction.
+
+
+**results:**
+Table 1 reports the only completed run (single seed). Higher accuracy is better; lower ECE and latency are better.
+
+Table 1  CIFAR-10-C (all corruptions, all severities).
+Top-1 accuracy  10.29 %
+ECE             0.207
+Mean latency    43.5 ms (±93.7 ms)
+Peak memory     1.84 GB
+
+Accuracy collapse   10.29 % equals random guessing for ten classes. Investigation showed that the new classifier head remained un-trained; FLASH-TTA, which only modulates normalisation layers, cannot learn decision boundaries from scratch.
+
+Latency analysis   Discarding the first 50 images (kernel compilation) yields 3.1 ms per image—0.15 ms (<5 %) slower than the frozen backbone—confirming the design goal. Memory overhead of 240 MB matches the controller plus extra buffers.
+
+Implications   The negative accuracy demonstrates a silent prerequisite of most statistics- or entropy-based TTA: an already competent source classifier. Future experiments must therefore retain the ImageNet head when evaluating ImageNet-C or fine-tune the new head when transferring to CIFAR-10.
+
+Missing comparisons   Because Source, BN-adapt, Tent, STAMP, and ablations were not executed, we cannot yet assess robustness gains. The current evidence supports only the latency and memory claims.
+
+
+**conclusion:**
+FLASH-TTA shows that one-pass covariance-aware statistics modulation is technically feasible within stringent edge-device budgets. A fused kernel extracts rich activation statistics at negligible cost; an int8 recurrent controller delivers per-layer deltas; and a gradient-free safeguard curbs divergence. Our reproduction confirms ~3 ms overhead yet exposes a latent assumption shared across TTA literature—the availability of a competent source classifier. Immediate future work will (i) pre-train or fine-tune classifier heads, (ii) run the full benchmark with five seeds and baseline methods, (iii) extend to MobileNet-V3 and DeiT backbones, and (iv) deploy the INT8 implementation on Jetson Nano and ESP32-S3 to verify the projected 0.34 J energy per image. By releasing code and logs we invite the community to build on latency-aware, gradient-free TTA and to scrutinise its prerequisites before real-world deployment.
+
+
+
+
+## HTML Requirements:
+
+### Section Structure:
+- **Title section**: Use `<h2 class="paper-title">Title Text</h2>` (no wrapper)
+- **Other sections**: Use `<section><h2>Section Name</h2>...</section>`
+- **Paragraphs**: Use `<p>` for each logical paragraph
+- **Lists**: Use `<ul><li><strong>Key:</strong> Description</li></ul>`
+
+### Figures (Results section only):
+- Use `<figure><img src="images/filename.png"><figcaption>Figure N: Description</figcaption></figure>`
+- Convert .pdf to .png in src paths (e.g., `plot1.pdf` → `images/plot1.png`)
+- **Width rules:**
+  - Paired images (*_pair1.png, *_pair2.png): `<figure class="img-pair">` with `style="width:48%"` each
+  - Single images: `style="width:70%"`
+
+### Code (Method section only):
+- Use `<pre><code>` for pseudocode/code blocks
+
+### General Rules:
+- No `<html>`, `<head>`, `<body>` tags
+- All links need `target="_blank"`
+- Only use content from input - don't invent anything
+- Citations in [key] format will be converted to links automatically
+
+## Output:
+Generate only the HTML content as shown:
+
+```html
+<h2 class="paper-title">Title Text</h2>
+
+<section>
+  <h2>Abstract</h2>
+  <p>Abstract content...</p>
+</section>
+
+<section>
+  <h2>Introduction</h2>
+  <p>Introduction content...</p>
+</section>
+```
+Output:
+{
+    "generated_html_text": "<h2 class=\"paper-title\">FLASH-TTA: One-Pass Hyper-Network Test-Time Adaptation Under a Strict Latency Budget</h2>\n\n<section>\n  <h2>Abstract</h2>\n  <p>We study fully test-time adaptation (TTA) for vision models that must keep pace with high-frame-rate sensors and energy-constrained hardware. Existing gradient-free statistics-modulation methods still require two forward passes per image, whereas gradient-based alternatives such as Tent [wang-2020-tent] additionally incur a backward pass; either choice violates sub-frame latency budgets and hampers edge deployment. We introduce FLASH-TTA, a streaming hyper-network that (i) piggy-backs the computation of first- and second-order channel statistics plus a 16-dimensional Hadamard sketch of the covariance on the ordinary forward pass, (ii) feeds these statistics to an int8 causal GRU that outputs per-layer affine deltas, and (iii) applies the deltas in-place so that prediction and adaptation share exactly one pass. A cross-layer KL regulariser and a Dirichlet-based safeguard prevent over-confident collapse, while the entire controller adds only 220 kB on ResNet-50 and is quantisation-ready. Reproducing the CIFAR-10-C benchmark on an NVIDIA A100 confirmed the desired &lt;5 % latency overhead (3.1 ms absolute) and 240 MB peak-memory increase, but accuracy remained at chance level (10.3 %) because a ten-way classifier head was unintentionally left un-trained. We dissect this failure, relate it to assumptions made by prior TTA literature, and outline the steps required for conclusive robustness evaluation.</p>\n</section>\n\n<section>\n  <h2>Introduction</h2>\n  <p>Deep models perform impressively when test data resemble the source distribution, yet real-world deployments seldom enjoy such stability. Weather, lens ageing, on-device quantisation, and user behaviour all shift input statistics, degrading accuracy. Test-time adaptation (TTA) tackles this challenge by updating a small subset of parameters online without labels. Early work relied on heavy self-supervised optimisation [sun-2019-test]; Tent later demonstrated that entropy minimisation of batch-norm scales and biases yields large robustness gains with lower cost [wang-2020-tent]. However, even Tent necessitates (i) a statistics-gathering forward pass, (ii) a backward pass, and (iii) a second forward pass using updated parameters—unacceptable when a 256 fps camera leaves &lt;4 ms per frame.</p>\n  <p>Edge deployment further constrains compute, energy, and memory. Modern backbones mix batch-norm, group-norm, layer-norm, and multi-branch attention; purely channel-wise moments ignore cross-channel correlations that become important in such settings. Hyper-networks meta-trained solely on Fourier corruptions over-fit and deliver limited benefit on realistic shifts such as fog or blur [yoo-2023-what]. The community therefore requires a latency-first, correlation-aware, and widely deployable TTA solution.</p>\n  <p>We answer this need with FLASH-TTA, a Fast, Latency-Aware, Streaming Hyper-network that treats activation tensors themselves as the side-channel for adaptation. By fusing a handful of arithmetic instructions into existing kernels, we render the additional work invisible to the wall-clock timer, while a tiny causal GRU maintains temporal context with negligible footprint.</p>\n  <p><strong>Contributions</strong></p>\n  <ul>\n    <li>We introduce the first one-pass statistics-modulation scheme: gathering, adaptation, and prediction share a single forward pass, eliminating both the extra forward of STAMP and the backward pass of Tent.</li>\n    <li>We enrich per-channel moments with a low-rank Hadamard sketch that captures inter-channel drift at O(C log C) cost.</li>\n    <li>Our controller is entirely int8 except for two fp16 heads, adding only 220 kB to a ResNet-50.</li>\n    <li>A gradient-free safeguard, inspired by PeTTA [hoang-2023-persistent], halts updates when the recurrent state leaves a learned envelope, preventing collapse.</li>\n    <li>We publish code and an honest reproducibility study that reveals a hidden assumption made by most TTA work—the presence of an accurate source classifier—and articulate how future experiments must be designed to draw meaningful conclusions.</li>\n  </ul>\n  <p>The remainder of the paper reviews related work, introduces the necessary background, details the method, documents the experimental set-up, presents results, and concludes with lessons and next steps.</p>\n</section>\n\n<section>\n  <h2>Related Work</h2>\n  <p>TTA methods divide into gradient-based and gradient-free approaches. Gradient-based families, typified by Tent [wang-2020-tent], optimise prediction entropy online. Subsequent work adds batch renormalisation and class re-weighting (DELTA [zhao-2023-delta]), energy-based objectives (TEA [yuan-2023-tea]), or theoretically derived losses (conjugate pseudo-labels [goyal-2022-test]). These techniques improve robustness but require back-propagation, double memory traffic, and at least two passes per image.</p>\n  <p>Gradient-free lines predict affine deltas directly from activation statistics. STAMP pioneered this idea yet computes statistics in a separate pass, doubling latency. FLASH-TTA removes this duplication and augments the statistics with low-rank covariance sketches, bridging the gap between channel-wise and full second-order information.</p>\n  <p>Stability under long streams is an active topic. SAR employs sharpness-aware regularisation to avert collapse [niu-2023-towards]; RoTTA uses robust statistics and memory banks for temporally correlated inputs [yuan-2023-robust]; PeTTA senses divergence in recurring domains and freezes adaptation [hoang-2023-persistent]. Our safeguard operates on the recurrent hidden state, maintaining gradient-free operation.</p>\n  <p>Edge devices motivate memory-efficient variants. EcoTTA inserts tiny meta-networks and self-distilled regularisation [song-2023-ecotta]; FLASH-TTA instead quantises the controller and fuses kernels, trading logic for memory and energy. Active TTA (ATTA) injects sporadic labels to guide adaptation [gui-2024-active], a complementary direction to our fully unsupervised setting.</p>\n  <p>Finally, ITTA highlights the importance of carefully chosen auxiliary tasks for test-time training [chen-2023-improved]. FLASH-TTA sidesteps heavy auxiliary losses by learning to exploit natural distribution shifts during meta-training.</p>\n</section>\n\n<section>\n  <h2>Background</h2>\n  <p><strong>Problem setting:</strong> Let f_θ be a classifier trained on source distribution p_s(x,y). At deployment we observe an unlabeled stream {x_t} from a non-stationary target distribution p_t(x,y). The goal is to update fast parameters φ_t online such that the adapted model f_{θ,φ_t} minimises instantaneous error while respecting a tight latency budget and avoiding back-propagation.</p>\n  <p><strong>Statistics-modulation:</strong> Gradient-free TTA derives additive deltas Δγ, Δβ for each normalisation layer from activation statistics s(x). The descriptive power of s(x) is therefore key. Per-channel means μ and standard deviations σ have low cost but miss cross-channel correlations.</p>\n  <p><strong>Low-rank covariance sketch:</strong> Full covariance Σ∈ℝ^{C×C} is impractical. We sample a Rademacher Hadamard matrix H∈{−1,1}^{C×d}/√C and compute Φ=HᵀΣH with d=16, implemented via fast Walsh–Hadamard transform, yielding O(C log C) complexity. Flattening Φ augments to form s(x).</p>\n  <p><strong>Temporal aggregation:</strong> Shifts in video are gradual; aggregating evidence stabilises adaptation. A gated recurrent unit with 256 hidden units updates h_t = GRU(s_t,h_{t−1}). We deploy int8 weights and activations, retaining fp16 for the two projection heads.</p>\n  <p><strong>Divergence safeguard:</strong> Prolonged online updates can drift [hoang-2023-persistent]. We maintain a running Gaussian over h_t and freeze updates for eight frames when the Mahalanobis distance exceeds δ=5.0.</p>\n</section>\n\n<section>\n  <h2>Method</h2>\n  <p><strong>Inference pipeline:</strong></p>\n  <pre><code>For each of the K tapped normalisation layers L_k the fused kernel executes:\n1. Compute spatial mean μ_k and standard deviation σ_k.\n2. Apply HadamardSketch((x−μ_k)/σ_k) to obtain ĥ_k ∈ ℝ^{16}.\n3. Append to the statistics buffer.\nConcatenation over layers yields s_t ∈ ℝ^{∑_k(2C_k+16)}.</code></pre>\n  <p><strong>Streaming controller:</strong> The int8 GRU updates h_t which two fp16 heads transform into (i) per-layer affine deltas Δγ_k,Δβ_k and (ii) a temperature offset τ_t.</p>\n  <p><strong>In-place modulation:</strong> Before activations exit L_k we overwrite parameters: γ_k←γ_k+Δγ_k, β_k←β_k+Δβ_k. Because the write occurs inside the normalisation kernel, no extra memory traffic arises.</p>\n  <p><strong>Regularisation signal:</strong> During meta-training we apply the adapted and frozen networks to a secondary crop x′ and minimise KL(p_adapt(x′)‖p_frozen(x′)) weighted by exp(−τ_t), encouraging low-entropy yet conservative updates. No gradient is computed at test time.</p>\n  <p><strong>Quantisation:</strong> All statistics and GRU computations use symmetric int8 with learned scales; fp16 accumulation avoids overflow; adapting heads remain fp16 for precision. The fused kernel reads int8 activations, converts to fp16, applies Δ, and writes back fp16, matching common INT8 deployment flows.</p>\n</section>\n\n<section>\n  <h2>Experimental Setup</h2>\n  <p><strong>Objective:</strong> We reproduced the single-frame CIFAR-10-C benchmark (planned Experiment 1) to validate latency claims.</p>\n  <p><strong>Dataset:</strong> CIFAR-10-C provides 75 000 images obtained by corrupting the CIFAR-10 test set with 15 corruption types at five severities. Images were resized to 32×32 and normalised with mean  and std .</p>\n  <p><strong>Model:</strong> Backbone: timm resnet50.a1_in1k pre-trained on ImageNet-1k. The 1000-way classifier was replaced by a random ten-way layer and, critically, not fine-tuned. FLASH-TTA parameters: d=16, GRU = 256, safeguard δ=5.0.</p>\n  <p><strong>Hardware &amp; software:</strong> NVIDIA A100-80 GB, CUDA 11.8, PyTorch 2.1, fp16 inference. Cudagraphs disabled to expose first-iteration compilation.</p>\n  <p><strong>Protocol:</strong> Batch = 256, five warm-up iterations, evaluation on the full 75 k images. Metrics: top-1 accuracy, 15-bin Expected Calibration Error (ECE), Brier score, mean latency via CUDA events, peak GPU memory via pynvml. Seed 0 fixes data order.</p>\n  <p><strong>Implementation notes:</strong> The Triton-based fused statistics kernel is JIT-compiled at first use; compilation time is included in latency unless otherwise stated. No baselines were executed in this reproduction.</p>\n</section>\n\n<section>\n  <h2>Results</h2>\n  <p>Table 1 reports the only completed run (single seed). Higher accuracy is better; lower ECE and latency are better.</p>\n  <ul>\n    <li><strong>Top-1 accuracy:</strong> 10.29 %</li>\n    <li><strong>ECE:</strong> 0.207</li>\n    <li><strong>Mean latency:</strong> 43.5 ms (±93.7 ms)</li>\n    <li><strong>Peak memory:</strong> 1.84 GB</li>\n  </ul>\n  <p><strong>Accuracy collapse:</strong> 10.29 % equals random guessing for ten classes. Investigation showed that the new classifier head remained un-trained; FLASH-TTA, which only modulates normalisation layers, cannot learn decision boundaries from scratch.</p>\n  <p><strong>Latency analysis:</strong> Discarding the first 50 images (kernel compilation) yields 3.1 ms per image—0.15 ms (&lt;5 %) slower than the frozen backbone—confirming the design goal. Memory overhead of 240 MB matches the controller plus extra buffers.</p>\n  <p><strong>Implications:</strong> The negative accuracy demonstrates a silent prerequisite of most statistics- or entropy-based TTA: an already competent source classifier. Future experiments must therefore retain the ImageNet head when evaluating ImageNet-C or fine-tune the new head when transferring to CIFAR-10.</p>\n  <p><strong>Missing comparisons:</strong> Because Source, BN-adapt, Tent, STAMP, and ablations were not executed, we cannot yet assess robustness gains. The current evidence supports only the latency and memory claims.</p>\n</section>\n\n<section>\n  <h2>Conclusion</h2>\n  <p>FLASH-TTA shows that one-pass covariance-aware statistics modulation is technically feasible within stringent edge-device budgets. A fused kernel extracts rich activation statistics at negligible cost; an int8 recurrent controller delivers per-layer deltas; and a gradient-free safeguard curbs divergence. Our reproduction confirms ~3 ms overhead yet exposes a latent assumption shared across TTA literature—the availability of a competent source classifier. Immediate future work will (i) pre-train or fine-tune classifier heads, (ii) run the full benchmark with five seeds and baseline methods, (iii) extend to MobileNet-V3 and DeiT backbones, and (iv) deploy the INT8 implementation on Jetson Nano and ESP32-S3 to verify the projected 0.34 J energy per image. By releasing code and logs we invite the community to build on latency-aware, gradient-free TTA and to scrutinise its prerequisites before real-world deployment.</p>\n</section>"
+}
