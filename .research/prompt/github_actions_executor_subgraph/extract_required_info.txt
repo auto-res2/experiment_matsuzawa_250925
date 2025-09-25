@@ -1,0 +1,30 @@
+
+Input:
+The Python standard output and errors are provided below.
+Extract all information related to the experimental results from the standard output, and extract the Python error details from the errors, outputting them exactly as they are without any modifications.
+Do not extract unnecessary execution logs or information about Python package installations.
+
+# Standard Output
+=== [PHASE 2/2] Full experiment start Thu Sep 25 08:26:23 AM UTC 2025 ===
+
+=========================================================
+Experiment Name : reddit_comments_haqgat
+Dataset         : REDDIT_COMMENTS
+Model           : HAQGAT
+=========================================================
+
+  [2m2025-09-25T08:34:44.518541Z[0m [33m WARN[0m  [33mStatus Code: 504. Retrying..., [1;33mrequest_id[0m[33m: ""[0m
+    [2;3mat[0m /home/runner/work/xet-core/xet-core/cas_client/src/http_client.rs:227
+
+  [2m2025-09-25T08:34:44.518626Z[0m [33m WARN[0m  [33mRetry attempt #0. Sleeping 151.787998ms before the next attempt[0m
+    [2;3mat[0m /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/reqwest-retry-0.7.0/src/middleware.rs:171
+
+
+
+# Error
+
+Output:
+{
+    "extracted_output": "=== [PHASE 2/2] Full experiment start Thu Sep 25 08:26:23 AM UTC 2025 ===\n\n=========================================================\nExperiment Name : reddit_comments_haqgat\nDataset         : REDDIT_COMMENTS\nModel           : HAQGAT\n=========================================================\n",
+    "extracted_error": ""
+}
