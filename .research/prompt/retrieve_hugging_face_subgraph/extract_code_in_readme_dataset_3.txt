@@ -1,0 +1,46 @@
+
+Input:
+From the Hugging Face README provided in “# README,” extract and output only the Python code required for execution. Do not output any other information. In particular, if no implementation method is described, output an empty string.
+
+# README
+---
+license: unknown
+task_categories:
+- image-classification
+pretty_name: Caltech-UCSD Birds-200-2011
+size_categories:
+- 10K<n<100K
+---
+
+# Caltech-UCSD Birds-200-2011
+
+## Dataset Summary
+
+This is a repackaged version of the Caltech-UCSD Birds-200-2011 dataset for convenient use with PyTorch's `ImageFolder` class.
+
+**Note**: All credit goes to the original authors.
+
+This upload only provides the same data in a different structure.
+
+- Website: <https://www.vision.caltech.edu/datasets/cub_200_2011/>
+- Paper: <https://authors.library.caltech.edu/records/cvm3y-5hh21>
+
+200 categories dataset consists of 11,788 images (1.1GB).
+
+## Citation
+
+```bibtex
+@article{wah_branson_welinder_perona_belongie_2011,
+         title={The Caltech-UCSD Birds-200-2011 Dataset},
+         abstractNote={CUB-200-2011 is an extended version of CUB-200 [7], a challenging dataset of 200 bird species. The extended version roughly doubles the number of images per category and adds new part localization annotations. All images are annotated with bounding boxes, part locations, and attribute labels. Images and annotations were filtered by multiple users of Mechanical Turk. We introduce benchmarks and baseline experiments for multi-class categorization and part localization.},
+         publisher={California Institute of Technology},
+         author={Wah, Catherine and Branson, Steve and Welinder, Peter and Perona, Pietro and Belongie, Serge},
+         year={2011},
+         month={Jul},
+}
+```
+
+Output:
+{
+    "extracted_code": ""
+}
