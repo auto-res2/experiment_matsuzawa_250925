@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The proposed generative model samples prototypes from a latent prototype distribution, θ, which is itself sampled from a symmetric Dirichlet prior pα(θ) to encourage sparsity. The edit vector z is modeled using a von-Mises Fisher (vMF) distribution. The editor pγ(x|t,z) is an attentional LSTM sequence-to-sequence model that incorporates z to predict the initial decoder hidden state and concatenates it to the decoder input. Learning and inference are performed using amortized variational inference, optimizing an Evidence Lower Bound (ELBO). The prototype retriever qφt|x(t|x) is a categorical distribution parameterized by a neural network, and the inverse neural editor qφz|t,x(z|t,x) is a vMF distribution. The REINFORCE algorithm is used for gradients of the discrete prototype selection, and Stochastic Variational Inference (SVI) updates the Dirichlet parameter λ. For q(t|x), a pretrained BERT sentence encoder is used to derive a similarity score, and a diffing algorithm aligns sequences to create an edit representation for q(z|t,x), fed into a single-layer LSTM.
+
+# GitHub URLs List
+['https://github.com/jxhe/sparse-text-prototype']
+Output:
+{
+    "index": 0
+}
