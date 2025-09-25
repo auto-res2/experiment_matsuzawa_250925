@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The core methodology involves adapting standard image augmentation techniques to operate on frozen features extracted from pretrained vision transformers. First, the two-dimensional feature representations (f ∈ RN×C) are reshaped into a three-dimensional format (f∗ ∈ R√N×√N×C). Then, a deterministic feature-to-image mapping (tf→x) scales feature values from their native range (R) to a standard image range (e.g., [0,1] or [0,255]) using min-max normalization. An image augmentation (ax) is applied to these scaled features, and an inverse mapping (tf←x) transforms them back to the original feature value range. The study investigates eighteen reformulated augmentations, including geometric, crop & drop, stylistic, and other types. Three FroFA variations are explored: Default FroFA (single random value across the entire feature), Channel FroFA (cFroFA, independent random values per channel, global min/max scaling), and Channel2 FroFA (c2FroFA, independent random values per channel, per-channel min/max scaling). A lightweight Multi-Head Attention Pooling (MAP) head is trained on these augmented frozen features.
+
+# GitHub URLs List
+['https://github.com/google-research/big_vision', 'https://github.com/google-research/scenic']
+Output:
+{
+    "index": 0
+}
