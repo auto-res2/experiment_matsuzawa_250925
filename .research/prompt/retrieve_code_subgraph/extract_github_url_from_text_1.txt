@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+GACT abstracts forward propagation into loss and context functions, using an unbiased stochastic compressor Q(h) for context tensors. It proves convergence by linearizing the activation compressed (AC) gradient using a first-order Taylor expansion, showing the linearized gradient ˆg to be an unbiased stochastic gradient. An adaptive algorithm determines optimal per-tensor compression rates by minimizing compression variance under a bit budget. This involves numerically computing tensor sensitivity (cl) by leveraging compression idempotence and empirical variance from two gradient evaluations, with cl values updated periodically. GACT is implemented as a PyTorch library utilizing low-level hooks for tensor capture and compression, featuring efficient CUDA kernels. It operates at the tensor level, avoids redundant quantization for shared tensors using data pointer-based footprints, supports parallel swapping and prefetching of compressed tensors via CUDA streams, and is compatible with gradient checkpointing and memory-efficient self-attention mechanisms.
+
+# GitHub URLs List
+['https://github.com/LiuXiaoxuanPKU/GACT-ICML']
+Output:
+{
+    "index": 0
+}
