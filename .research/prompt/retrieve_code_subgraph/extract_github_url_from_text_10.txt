@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The methodology focuses on Quantization-Aware Training (QAT) to simulate quantization during training. DQ employs two main strategies: 1) Stochastic Protection from Quantization to Improve Weight Update Accuracy: This involves stochastically protecting nodes (especially those with high in-degree, which contribute most to gradient error) from quantization by performing message passing, aggregation, and update phases at full precision for masked nodes. A protective node mask is generated per layer using a Bernoulli distribution, with higher probabilities for nodes with larger in-degrees (pmin and pmax hyperparameters for interpolation based on ranking). 2) Percentile Tracking of Quantization Ranges: Instead of min-max or momentum-based tracking, DQ uses percentiles to determine quantization ranges, clipping the top and bottom 0.1% of values to make ranges more representative and reduce rounding error. The method applies uniform quantization to all network elements (weights and activations) and utilizes the Straight-Through Estimator for gradient computation.
+
+# GitHub URLs List
+['https://github.com/camlsys/degree-quant', 'https://github.com/camlsys/degree-quant']
+Output:
+{
+    "index": 0
+}
