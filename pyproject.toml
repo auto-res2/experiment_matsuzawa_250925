@@ -1,1 +1,16 @@
-# Please list the required python packages.
+[project]
+name = "flash-tta-experiments"
+version = "0.2.0"
+description = "Specialised experiment code for the FLASH-TTA paper"
+requires-python = ">=3.10"
+
+[project.dependencies]
+torch = "*"
+torchvision = "*"
+timm = "*"
+PyYAML = "*"
+matplotlib = "*"
+seaborn = "*"
+scikit-learn = "*"
+datasets = "*"
+Pillow = "*"

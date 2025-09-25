@@ -1,0 +1,39 @@
+description: |
+  FLASH-TTA – corruption robustness bench (CIFAR-10-C + ImageNet-C).
+  Uses pre-trained backbones and runs *no supervised training* (epochs: 0).
+
+seed: 0
+
+experiments:
+  - experiment_id: "cifar10c_resnet50_flash_tta"
+    dataset:
+      name: "CIFAR10C"
+      path: "hf://randall-lab/cifar10-c"   # HuggingFace repo; auto-download
+      num_classes: 10
+    model:
+      name: "resnet50.a1_in1k"
+      pretrained: true
+      num_classes: 10
+      method: "flash_tta"
+      proj_dim: 16
+      gru_hidden: 256
+    training: {epochs: 0, batch_size: 128, lr: 0.0003}
+    evaluation: {batch_size: 256}
+
+  - experiment_id: "imagenetc_mobilenetv3_flash_tta"
+    dataset:
+      name: "ImageNetC"
+      path: "hf://ang9867/ImageNet-C"      # Public HF mirror; ~1.3 GB download
+      num_classes: 1000
+    model:
+      name: "mobilenetv3_small_100.lamb_in1k"
+      pretrained: true
+      num_classes: 1000
+      method: "flash_tta"
+      proj_dim: 16
+      gru_hidden: 256
+    training: {epochs: 0, batch_size: 64, lr: 0.0001}
+    evaluation: {batch_size: 128}
+
+output_dir: "runs/full_experiment"
+figures_dir: "figures"
