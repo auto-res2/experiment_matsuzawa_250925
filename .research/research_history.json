@@ -1010,5 +1010,6 @@
     }
   ],
   "executed_flag": false,
+  "is_experiment_successful": false,
   "experiment_iteration": 1
 }
