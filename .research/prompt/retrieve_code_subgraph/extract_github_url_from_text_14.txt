@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+GBA is designed to keep the global batch size (actual gradient aggregation size) consistent when switching between synchronous and asynchronous training. It is implemented on a Parameter Server (PS) architecture using a token-control mechanism. This mechanism employs a data list for batches, a token list (containing global step indicators for each batch), and a gradient buffer. Workers pull parameters, a batch, and a token, compute gradients, and send the gradient with its token back to the PS. Fast workers continue processing without waiting. When the gradient buffer accumulates a predefined number (M) of gradients, they are aggregated and applied. A staleness decay strategy (f(τ(m,k),k)) is applied, where gradients with staleness exceeding a threshold (ι) are excluded from aggregation. The convergence analysis of GBA demonstrates comparable properties to synchronous training, particularly for sparse recommendation models where embedding parameters are less sensitive to staleness.
+
+# GitHub URLs List
+['https://github.com/alibaba/DeepRec']
+Output:
+{
+    "index": 0
+}
