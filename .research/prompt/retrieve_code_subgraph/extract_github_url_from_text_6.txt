@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+Tent minimizes the Shannon entropy of model predictions on target data (H(ˆy) = −∑ cp(ˆyc) logp(ˆyc)). To achieve this, it modulates features through two linear, low-dimensional, channel-wise steps: normalization and transformation. Normalization involves estimating batch normalization statistics (mean µ and standard deviation σ) from the target data during the forward pass. Transformation involves optimizing affine parameters (scale γ and shift β) for each normalization layer and channel during the backward pass, using the gradient of the prediction entropy. Only these affine parameters are updated, while other model parameters are fixed. This process is applied online on each batch of test data. The method repurposes existing batch normalization layers in the source model, discarding source statistics and estimating target-specific ones.
+
+# GitHub URLs List
+['https://github.com/DequanWang/tent']
+Output:
+{
+    "index": 0
+}
