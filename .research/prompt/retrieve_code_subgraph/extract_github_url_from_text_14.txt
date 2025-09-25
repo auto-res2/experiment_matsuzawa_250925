@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The core methodology involves modifying the attention mechanism to allow for exact zero outputs without generating outliers. The first method, Clipped Softmax, replaces the standard softmax function with a clipped variant: `clipped_softmax(x; ζ, γ) := clip ((ζ − γ) · softmax(x) + γ, 0, 1)`. This stretches the softmax output and clips it back to [0, 1], allowing for exact zeros (when γ < 0) or ones (when ζ > 1) with finite input ranges, and stopping gradient propagation for clipped values. The second method, Gated Attention, introduces an explicit conditional gating mechanism: `Gated_attention(x) := sigmoid (G(x)) ⊙ softmax (Q(x)K(x)T/√dhead) V(x)`. A lightweight neural network `G(x)`, typically a single linear layer per head, learns token-wise gating probabilities to selectively nullify or keep updates to hidden representations. Both modifications are applied during pre-training.
+
+# GitHub URLs List
+['https://github.com/rwightman/pytorch-image-models']
+Output:
+{
+    "index": null
+}
