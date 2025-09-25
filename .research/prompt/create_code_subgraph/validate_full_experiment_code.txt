@@ -243,7 +243,7 @@ All experiments can be reproduced with `python run.py --exp <name> --config conf
 
 
 # Generated Experiment Code Files
-{"evaluate_py": "# No experiment code to migrate.", "full_experiment_yaml": "# No configuration can be produced until the original experiment details are provided.", "main_py": "# No experiment code to migrate.", "preprocess_py": "# No experiment code to migrate.", "pyproject_toml": "[project]\nname = \"s3_gat_experiment\"\nversion = \"0.0.0\"\nrequires-python = \"\u003e=3.10\"\n\n# No dependencies can be listed until the original code is provided\n# because we don\u2019t know what external libraries it used.\n\ndependencies = []\n", "smoke_test_yaml": "# No configuration can be produced until the original experiment details are provided.", "train_py": "# No experiment code was provided in the prompt, so there is no logic that can be refactored.\n# If the original code becomes available, please supply it and I will split it into the\n# requested multi-file project structure."}
+{"evaluate_py": "# Cannot generate evaluate.py because the original experiment code was not provided.", "full_experiment_yaml": "# Cannot generate full_experiment.yaml because the original experiment code was not provided.", "main_py": "# Cannot generate main.py because the original experiment code was not provided.", "preprocess_py": "# Cannot generate preprocess.py because the original experiment code was not provided.", "pyproject_toml": "# Cannot generate pyproject.toml because the original experiment code was not provided.", "smoke_test_yaml": "# Cannot generate smoke_test.yaml because the original experiment code was not provided.", "train_py": "# Cannot generate train.py because the original experiment code was not provided."}
 
 # External Resources
 
@@ -264,5 +264,5 @@ Analyze the code thoroughly and provide your validation result.
 Output:
 {
     "is_full_experiment_ready": false,
-    "full_experiment_issue": "The submitted repository contains only stub files (main_py, train_py, evaluate_py, preprocess_py, smoke_test_yaml, full_experiment_yaml) with placeholder comments and no functional code. Therefore: 1) No real external datasets are loaded, 2) Dual-configuration system is absent, 3) Full-experiment mode and all training/evaluation logic are missing, 4) Command-line interface is not implemented, and 5) Placeholders/TODOs are present. The full experiment is not production-ready."
+    "full_experiment_issue": "No executable experiment code is present. All expected files (main.py, train.py, evaluate.py, preprocess.py, smoke_test.yaml, full_experiment.yaml, etc.) contain only placeholder comments indicating they could not be generated. Consequently: 1) no real datasets are loaded, 2) no dual-configuration system exists, 3) full-experiment mode is absent, 4) training/evaluation loops and metrics are missing, 5) CLI flags are not implemented, and 6) the code is entirely placeholders. The experiment is therefore not production-ready."
 }
