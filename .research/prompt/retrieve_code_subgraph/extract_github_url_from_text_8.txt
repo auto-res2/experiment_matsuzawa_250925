@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The proposed method, SPIN, is a graph attention network for multivariate time series imputation. It learns representations for discrete points in time and space by aggregating information from available observations at neighboring nodes, weighted by input-dependent attention coefficients. The core component is a novel sparse spatiotemporal attention layer that performs both inter-node spatiotemporal cross-attention (aggregating from neighbors) and intra-node temporal self-attention (aggregating from the node's own observed history). Representations are initialized using MLPs on spatiotemporal coordinates (and observations if available) and then updated through stacked attention layers. A two-phase propagation mechanism allows for initial information diffusion through masked connections, which are later unlocked. To mitigate computational complexity (O((Nmax + Emax)T^2)), two approaches are proposed: graph subsampling during training and a hierarchical attention mechanism (SPIN-H) that introduces dummy hub nodes to reduce complexity to O((Nmax + Emax)KT). Spatiotemporal positional encodings combine sine/cosine transforms for temporal features and learnable parameters for spatial features.
+
+# GitHub URLs List
+['https://github.com/TorchSpatiotemporal/tsl', 'https://github.com/Graph-Machine-Learning-Group/spin', 'https://github.com/Graph-Machine-Learning-Group/grin', 'https://github.com/TorchSpatiotemporal/tsl', 'https://github.com/WenjieDu/SAITS']
+Output:
+{
+    "index": 1
+}
