@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+GACT formalizes ACT by representing neural networks as computational graphs and abstracting forward propagation into loss and context functions. Its methodology is based on: 1) **General Convergence Theory**: Establishing convergence by linearizing the approximate AC gradient g(Q(h); θ) using a first-order Taylor expansion ˆg(Q(h); h,θ) = g(h; θ) + J(h,θ)∆h. This linearized gradient is shown to be unbiased, allowing standard SGD analytical tools to apply by analyzing its variance. 2) **Adaptive Compression Rate Algorithm**: A numerical algorithm is developed to automatically estimate the sensitivity (cl(h,θ)) of each context tensor. This involves computing the empirical variance of the gradient by performing two forward and backward passes, fixing random seeds for all compressors except the target tensor. 3) **Optimal Bit Allocation**: The algorithm approximately solves an integer programming problem to minimize gradient variance under a total bit budget, using a greedy O(L log2 L) approach. This relies on assumptions about the compressor, such as element-wise uncorrelated results and a structured compression error (e.g., from stochastic rounding quantizers). 4) **PyTorch Implementation**: GACT is built as a lightweight PyTorch library, utilizing low-level hooks to capture and compress context tensors from any operator, including custom ones. It intelligently filters to quantize only activations, avoiding parameters and training states, and uses tensor footprints to prevent redundant quantization. 5) **Memory Optimization Integrations**: GACT combines with parallel swapping (offloading compressed tensors to CPU with prefetching using separate CUDA streams), gradient checkpointing (quantizing segment inputs and recomputed activations), and memory-efficient self-attention techniques for quadratic space complexity reduction in transformers.
+
+# GitHub URLs List
+['https://github.com/LiuXiaoxuanPKU/GACT-ICML']
+Output:
+{
+    "index": 0
+}
