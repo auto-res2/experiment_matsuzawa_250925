@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The study proposes recurring TTA, a new diagnostic scenario extending practical TTA by allowing environments to recur over time. Theoretical insights into performance degradation are derived from a simulated ϵ-perturbed binary Gaussian Mixture Model Classifier (ϵ-GMMC), which mimics TTA failure modes. PeTTA operates on a mean teacher update framework, incorporating: (1) a divergence sensing mechanism that measures the Mahalanobis distance of feature embedding vectors from the source distribution's statistics (γy t), (2) adaptive regularization and model update rates (λt, αt) that are dynamically adjusted based on the sensed divergence (¯γt), and (3) an Anchor Loss (LAL) that minimizes KL divergence between current and source model predictions to prevent significant shifts. PeTTA also utilizes a category-balanced memory bank and robust batch normalization, adopted from prior work.
+
+# GitHub URLs List
+['https://github.com/oripress/CCC', 'https://github.com/DianCh/AdaContrast', 'https://github.com/BIT-DA/RoTTA', 'https://github.com/mariodoebler/test-time-adaptation', 'https://github.com/hendrycks/robustness']
+Output:
+{
+    "index": 2
+}
