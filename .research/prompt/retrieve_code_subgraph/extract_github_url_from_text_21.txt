@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+GraphSAINT constructs minibatches by first sampling a subgraph (Gs) from the training graph (G), then building a full GCN on Gs. This contrasts with layer sampling methods that sample nodes/edges within a GCN constructed on the full graph. To address bias from non-uniform node sampling probability, the method introduces two normalization techniques: aggregator normalization (αu,v = pu,v / pv) for feature propagation and loss normalization (λv = |V| * pv) for minibatch loss calculation, where pu,v and pv are estimated via pre-processing. For variance reduction, optimal edge sampling probabilities are derived (pe ∝ 1/deg(u) + 1/deg(v)) based on graph topology. Four light-weight samplers are integrated: Random Node Sampler, Random Edge Sampler, Random Walk Sampler, and Multi-dimensional Random Walk Sampler, all of which return the subgraph induced from the sampled components to preserve connectivity. GraphSAINT is designed to be compatible with advanced GCN architectures like Jumping Knowledge (JK-net) and Graph Attention Networks (GAT).
+
+# GitHub URLs List
+['https://github.com/GraphSAINT/GraphSAINT']
+Output:
+{
+    "index": 0
+}
