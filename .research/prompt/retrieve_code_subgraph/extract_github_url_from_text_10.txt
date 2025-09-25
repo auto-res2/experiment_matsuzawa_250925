@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The proposed method, Degree-Quant (DQ), is a quantization-aware training (QAT) approach designed for GNNs. It addresses two main sources of error: inaccurate weight updates and unrepresentative quantization ranges. For inaccurate weight updates, DQ employs a stochastic protection mechanism: at each layer, a topology-aware mask is generated (with higher probability for high in-degree nodes). Masked nodes undergo message passing, aggregation, and update phases at full precision (FP32), while weights are always quantized. This encourages more accurate gradients to flow back to the weights. For unrepresentative quantization ranges, DQ utilizes percentile tracking, clipping the top and bottom 0.1% of values to determine quantization ranges (qmin and qmax) instead of traditional min-max or momentum-based methods. This stabilizes the ranges, reducing rounding error, especially for GNNs with high variance in aggregation outputs. The method relies on uniform quantization for all network elements (inputs, weights, messages, aggregation inputs/outputs, update outputs) and supports INT8 and INT4 arithmetic. GCN, GAT, and GIN architectures are considered.
+
+# GitHub URLs List
+['https://github.com/camlsys/degree-quant', 'https://github.com/camlsys/degree-quant']
+Output:
+{
+    "index": 0
+}
