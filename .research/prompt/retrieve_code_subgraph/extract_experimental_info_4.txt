@@ -1,0 +1,2968 @@
+
+Input:
+You are a researcher with expertise in engineering in the field of machine learning.
+
+# Instructions
+- The content described in “Repository Content” corresponds to the GitHub repository of the method described in “Method.”
+- Please extract the following two pieces of information from “Repository Content”:
+    - experimental_code：Extract the implementation sections that are directly related to the method described in “Method.”
+    - experimental_info：Extract and output the experimental settings related to the method described in “Method.”
+
+# Method
+GCKNs are built upon the concept of graph feature maps, associating each node with a point in a Reproducing Kernel Hilbert Space (RKHS). A single-layer model uses a continuous relaxation of the path kernel, replacing hard matching with a Gaussian kernel for inexact matching of node attributes along paths. Scalability is achieved via the Nyström method, which approximates kernel embeddings by projecting path attributes onto a finite-dimensional subspace defined by prototype paths (filters). This allows GCKNs to be interpreted as a new type of GNN where filters can be learned unsupervised (e.g., K-means) or end-to-end with back-propagation. Multilayer extensions iterate this process, allowing for the capture of more complex structures like subtrees (e.g., GCKN-subtree with k2=0) or representing larger receptive fields with smaller path lengths. Practical variants include summing kernels for multi-scale representations, using homogeneous dot-product kernels, alternative pooling operations, and a recursive method for walk kernels. For model interpretation, a method inspired by GNN explainer is adapted to identify important subgraphs by finding subsets of paths that preserve prediction, regularized with an L1-norm mask.
+
+# Repository Content
+File Path: experiments/gckn_sup.py
+Content:
+# -*- coding: utf-8 -*-
+import numpy as np
+import os
+import copy
+import torch
+from torch import nn, optim
+from collections import defaultdict
+
+from gckn.data import GraphLoader, convert_dataset
+from gckn.models import GCKNet
+from gckn.loss import LOSS
+from torch_geometric import datasets
+
+import pandas as pd
+import argparse
+
+from timeit import default_timer as timer
+
+
+def load_args():
+    parser = argparse.ArgumentParser(
+        description='Supervised GCKN',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument('--seed', type=int, default=0,
+                        help='random seed')
+    parser.add_argument('--dataset', type=str, default="MUTAG",
+                        help='name of dataset')
+    parser.add_argument('--epochs', type=int, default=300,
+                        help='number of epochs')
+    parser.add_argument('--lr', type=float, default=0.01,
+                        help='initial learning rate')
+    parser.add_argument('--batch-size', type=int, default=32,
+                        help='batch size')
+    parser.add_argument('--path-size', type=int, nargs='+', default=[3],
+                        help='path sizes for layers')
+    parser.add_argument('--hidden-size', type=int, nargs='+', default=[32],
+                        help='number of filters for layers')
+    parser.add_argument('--pooling', type=str, default='sum',
+                        help='local path pooling for each node')
+    parser.add_argument('--global-pooling', type=str, default='sum',
+                        help='global node pooling for each graph')
+    parser.add_argument('--aggregation', action='store_true',
+                        help='aggregate all path features until path size')
+    parser.add_argument('--kernel-funcs', type=str, nargs='+', default=None,
+                        help='kernel functions')
+    parser.add_argument('--sigma', type=float, nargs='+', default=[0.5],
+                        help='sigma of expo (Gaussian) kernels for layers')
+    parser.add_argument('--sampling-paths', type=int, default=300000,
+                        help='number of paths to sample for unsup training')
+    parser.add_argument('--weight-decay', type=float, default=1e-04,
+                        help='weight decay for classifier')
+    parser.add_argument('--alternating', action='store_true',
+                        help='use alternating training')
+    parser.add_argument('--walk', action='store_true',
+                        help='use walk instead of path')
+    parser.add_argument('--use-cuda', action='store_true',
+                        help='use cuda or not')
+    parser.add_argument('--outdir', type=str, default='',
+                        help='output path')
+    parser.add_argument('--fold-idx', type=int, default=1,
+                        help='indices for the train/test datasets')
+    parser.add_argument('--test', action='store_true', help='train on full train+val dataset')
+    args = parser.parse_args()
+    if torch.cuda.is_available():
+        args.use_cuda = True
+
+    args.continuous = False
+    args.degree_as_tag = False
+
+    args.save_logs = False
+    if args.outdir != '':
+        args.save_logs = True
+        outdir = args.outdir
+        outdir = outdir + '/gckn_sup'
+        outdir = outdir + '/{}'.format(args.dataset)
+        if args.aggregation:
+            outdir = outdir + '/aggregation'
+        outdir = outdir + '/{}_{}_{}_{}_{}_{}_{}'.format(
+            args.path_size, args.hidden_size, args.pooling,
+            args.global_pooling, args.sigma, args.weight_decay,
+            args.lr)
+        outdir = outdir + '/fold-{}'.format(args.fold_idx)
+        os.makedirs(outdir, exist_ok=True)
+        args.outdir = outdir
+    return args
+
+
+def train_epoch(epoch, model, data_loader, criterion, optimizer,
+        lr_scheduler, alternating, use_cuda=False):
+
+    if alternating or epoch == 0:
+        model.eval()
+        model.unsup_train_classifier(data_loader, criterion,
+                                     use_cuda=use_cuda)
+    model.train()
+
+    running_loss = 0.0
+    running_acc = 0.0
+    tic = timer()
+    for data in data_loader.make_batch():
+        features = data['features']
+        paths_indices = data['paths']
+        n_paths = data['n_paths']
+        n_nodes = data['n_nodes']
+        labels = data['labels']
+        size = len(n_nodes)
+        if use_cuda:
+            features = features.cuda()
+            if isinstance(n_paths, list):
+                paths_indices = [p.cuda() for p in paths_indices]
+                n_paths = [p.cuda() for p in n_paths]
+            else:
+                paths_indices = paths_indices.cuda()
+                n_paths = n_paths.cuda()
+            n_nodes = n_nodes.cuda()
+            labels = labels.cuda()
+        optimizer.zero_grad()
+        output = model(
+            features, paths_indices, {'n_paths': n_paths, 'n_nodes': n_nodes})
+        loss = criterion(output, labels)
+        loss.backward()
+        optimizer.step()
+
+        pred = output.data.argmax(dim=1)
+        running_loss += loss.item() * size
+        running_acc += torch.sum(pred == labels).item()
+
+    toc = timer()
+    n_sample = data_loader.n
+    epoch_loss = running_loss / n_sample
+    epoch_acc = running_acc / n_sample
+
+    print('Train loss: {:.4f} Acc: {:.4f} time: {:.2f}s'.format(
+          epoch_loss, epoch_acc, toc - tic))
+    return epoch_acc, epoch_loss
+
+def eval_epoch(model, data_loader, criterion, use_cuda=False):
+    model.eval()
+
+    running_loss = 0.0
+    running_acc = 0.0
+
+    tic = timer()
+    with torch.no_grad():
+        for data in data_loader.make_batch(False):
+            features = data['features']
+            paths_indices = data['paths']
+            n_paths = data['n_paths']
+            n_nodes = data['n_nodes']
+            labels = data['labels']
+            size = len(n_nodes)
+            if use_cuda:
+                features = features.cuda()
+                if isinstance(n_paths, list):
+                    paths_indices = [p.cuda() for p in paths_indices]
+                    n_paths = [p.cuda() for p in n_paths]
+                else:
+                    paths_indices = paths_indices.cuda()
+                    n_paths = n_paths.cuda()
+                n_nodes = n_nodes.cuda()
+                labels = labels.cuda()
+
+            output = model(
+                features, paths_indices, {'n_paths': n_paths, 'n_nodes': n_nodes})
+            loss = criterion(output, labels)
+
+            pred = output.data.argmax(dim=-1)
+            running_acc += torch.sum(pred == labels).item()
+
+            running_loss += loss.item() * size
+    toc = timer()
+
+    n_sample = data_loader.n
+    epoch_loss = running_loss / n_sample
+    epoch_acc = running_acc / n_sample
+    print('Val loss: {:.4f} Acc: {:.4f} time: {:.2f}s'.format(
+          epoch_loss, epoch_acc, toc - tic))
+    return epoch_acc, epoch_loss
+
+
+def main():
+    global args
+    args = load_args()
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+    print(args)
+
+    data_path = '../datasets/TUDataset'
+
+    dset_name = args.dataset
+    if args.dataset == 'PTC':
+        dset_name = 'PTC_MR'
+
+    dset = datasets.TUDataset(data_path, dset_name)
+    nclass = dset.num_classes
+    n_tags = None
+
+    graphloader = GraphLoader(args.path_size, args.batch_size, args.dataset,
+                                args.walk)
+
+    inner_idx = 1
+    idx_path = '../datasets/fold-idx/{}/inner_folds/{}-{}-{}.txt'
+    test_idx_path = '../datasets/fold-idx/{}/test_idx-{}.txt'
+    train_fold_idx = torch.from_numpy(np.loadtxt(
+        idx_path.format(args.dataset, 'train_idx', args.fold_idx, inner_idx)).astype(int))
+    val_fold_idx = torch.from_numpy(np.loadtxt(
+        idx_path.format(args.dataset, 'val_idx', args.fold_idx, inner_idx)).astype(int))
+    test_fold_idx = torch.from_numpy(np.loadtxt(
+        test_idx_path.format(args.dataset, args.fold_idx)).astype(int))
+
+    if args.test:
+        train_fold_idx = torch.cat((train_fold_idx, val_fold_idx), 0)
+
+    train_dset = convert_dataset(dset[train_fold_idx], n_tags)
+    train_loader = graphloader.transform(train_dset)
+    input_size = train_loader.input_size
+
+    val_dset = convert_dataset(dset[val_fold_idx], n_tags)
+    val_loader = graphloader.transform(val_dset)
+
+    model = GCKNet(nclass, input_size, args.hidden_size, args.path_size,
+       kernel_funcs=args.kernel_funcs,
+       kernel_args_list=args.sigma,
+       pooling=args.pooling,
+       global_pooling=args.global_pooling,
+       aggregation=args.aggregation,
+       weight_decay=args.weight_decay)
+
+    model.unsup_train(train_loader, n_sampling_paths=args.sampling_paths)
+
+    if args.alternating:
+        optimizer = optim.SGD(model.features.parameters(), lr=args.lr, momentum=0.9)
+    else:
+        optimizer = optim.Adam([
+                {'params': model.features.parameters()},
+                {'params': model.classifier.parameters(), 'weight_decay': args.weight_decay}
+                ], lr=args.lr)
+    criterion = nn.CrossEntropyLoss()
+    lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.5)
+
+    test_dset = convert_dataset(dset[test_fold_idx], n_tags)
+    test_loader = graphloader.transform(test_dset)
+
+    if args.use_cuda:
+        model.cuda()
+
+
+    logs = defaultdict(list)
+    best_val_acc = 0
+    best_model = None
+    best_epoch = 0
+    start_time = timer()
+    print("Starting training....")
+    for epoch in range(args.epochs):
+        print('Epoch {}/{}, LR {:.6f}'.format(epoch + 1, args.epochs, optimizer.param_groups[0]['lr']))
+        train_acc, train_loss = train_epoch(epoch, model, train_loader, criterion, optimizer,
+                lr_scheduler, args.alternating, use_cuda=args.use_cuda)
+        val_acc, val_loss = eval_epoch(model, val_loader, criterion, args.use_cuda)
+        test_acc, test_loss = eval_epoch(model, test_loader, criterion, args.use_cuda)
+        lr_scheduler.step()
+
+        logs['train_loss'].append(train_loss)
+        logs['val_acc'].append(val_acc)
+        logs['val_loss'].append(val_loss)
+        logs['test_acc'].append(test_acc)
+        logs['test_loss'].append(test_loss)
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
+            best_epoch = epoch
+            best_weights = copy.deepcopy(model.state_dict())
+    
+    total_time = timer() - start_time
+    print("best epoch: {} best val acc: {:.4f}".format(best_epoch, best_val_acc))
+    model.load_state_dict(best_weights)
+
+    print()
+    print("Testing...")
+    test_acc, test_loss = eval_epoch(model, test_loader, criterion, args.use_cuda)
+
+    print("test Acc {:.4f}".format(test_acc))
+
+    if args.save_logs:
+        logs = pd.DataFrame.from_dict(logs)
+        logs_suffix = '_test' if args.test else ''
+        logs.to_csv(args.outdir + '/logs{}.csv'.format(logs_suffix))
+        results = {
+            'test_loss': test_loss,
+            'test_acc': test_acc,
+            'val_acc': best_val_acc,
+            'best_epoch': best_epoch,
+            'total_time': total_time,
+        }
+        results = pd.DataFrame.from_dict(results, orient='index')
+        results.to_csv(args.outdir + '/results{}.csv'.format(logs_suffix),
+                       header=['value'], index_label='name')
+        torch.save(
+            {'args': args,
+            'state_dict': best_weights},
+            args.outdir + '/model{}.pkl'.format(logs_suffix))
+
+
+if __name__ == "__main__":
+    main()
+
+File Path: experiments/gckn_unsup.py
+Content:
+# -*- coding: utf-8 -*-
+import numpy as np
+import os
+import copy
+import torch
+from collections import defaultdict
+
+from gckn.data import GraphLoader, convert_dataset
+from gckn.models import GCKNetFeature
+from torch_geometric import datasets
+import torch_geometric.transforms as T
+
+import pandas as pd
+import argparse
+
+from sklearn.model_selection import GridSearchCV, StratifiedKFold
+from sklearn.pipeline import make_pipeline, Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import LinearSVC
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.exceptions import ConvergenceWarning
+
+from timeit import default_timer as timer
+from warnings import simplefilter
+simplefilter('ignore', category=ConvergenceWarning)
+
+
+def load_args():
+    parser = argparse.ArgumentParser(
+        description='Unsupervised GCKN',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument('--seed', type=int, default=0,
+                        help='random seed')
+    parser.add_argument('--dataset', type=str, default="MUTAG",
+                        help='name of dataset')
+    parser.add_argument('--batch-size', type=int, default=16,
+                        help='batch size')
+    parser.add_argument('--path-size', type=int, nargs='+', default=[2],
+                        help='path sizes for layers')
+    parser.add_argument('--hidden-size', type=int, nargs='+', default=[64],
+                        help='number of filters for layers')
+    parser.add_argument('--pooling', type=str, default='sum',
+                        help='local path pooling for each node')
+    parser.add_argument('--global-pooling', type=str, default='sum',
+                        help='global node pooling for each graph')
+    parser.add_argument('--aggregation', action='store_true',
+                        help='aggregate all path features until path size')
+    parser.add_argument('--kernel-funcs', type=str, nargs='+', default=None,
+                        help='kernel functions')
+    parser.add_argument('--sigma', type=float, nargs='+', default=[0.5],
+                        help='sigma of exponential (Gaussian) kernels for layers')
+    parser.add_argument('--sampling-paths', type=int, default=300000,
+                        help='number of paths to sample for unsupervised training')
+    parser.add_argument('--walk', action='store_true',
+                        help='use walk instead of path')
+    parser.add_argument('--outdir', type=str, default='',
+                        help='output path')
+    args = parser.parse_args()
+
+    args.use_cuda = False
+    if torch.cuda.is_available():
+        args.use_cuda = True
+
+    args.continuous = False
+    if args.dataset in ['IMDBBINARY', 'IMDBMULTI', 'COLLAB']:
+        # social network
+        degree_as_tag = True
+    elif args.dataset in ['MUTAG', 'PROTEINS', 'PTC_MR', 'NCI1']:
+        # bioinformatics
+        degree_as_tag = False
+    elif args.dataset in ['BZR', 'COX2', 'ENZYMES', 'PROTEINS_full']:
+        degree_as_tag = False
+        args.continuous = True
+    else:
+        raise ValueError("Unrecognized dataset!")
+    args.degree_as_tag = degree_as_tag
+
+    args.save_logs = False
+    if args.outdir != '':
+        args.save_logs = True
+        outdir = args.outdir
+        outdir = outdir + '/gckn_unsup'
+        outdir = outdir + '/{}'.format(args.dataset)
+        if args.aggregation:
+            outdir = outdir + '/aggregation'
+        outdir = outdir + '/{}_{}_{}_{}_{}'.format(
+            args.path_size, args.hidden_size, args.pooling,
+            args.global_pooling, args.sigma)
+        os.makedirs(outdir, exist_ok=True)
+        args.outdir = outdir
+    return args
+
+
+def main():
+    global args
+    args = load_args()
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+    print(args)
+
+    data_path = '../datasets/TUDataset'
+
+    dset_name = args.dataset
+
+    dset = datasets.TUDataset(data_path, dset_name, use_node_attr=args.continuous,)
+    nclass = dset.num_classes
+    n_tags = None
+
+    if args.continuous:
+        node_features = dset.data.x.numpy()
+        sc = StandardScaler().fit(node_features)
+
+        def normalize_features(data):
+            x_trans = sc.transform(data.x.numpy())
+            x_trans /= np.linalg.norm(x_trans, axis=-1, keepdims=True).clip(min=1e-06)
+            data.x = torch.from_numpy(x_trans)
+            return data
+        dset.transform = normalize_features
+
+    graphloader = GraphLoader(args.path_size, args.batch_size, args.dataset, args.walk)
+
+    converted_dset = convert_dataset(dset, n_tags)
+    data_loader = graphloader.transform(converted_dset)
+    input_size = data_loader.input_size
+
+    model = GCKNetFeature(input_size, args.hidden_size, args.path_size,
+                          kernel_funcs=args.kernel_funcs, kernel_args_list=args.sigma,
+                          pooling=args.pooling, global_pooling=args.global_pooling,
+                          aggregation=args.aggregation)
+
+    model.unsup_train(data_loader, n_sampling_paths=args.sampling_paths)
+
+    if args.use_cuda:
+        model.cuda()
+
+    print('Encoding...')
+    tic = timer()
+    X, y = model.predict(data_loader)
+    toc = timer()
+
+    print("Embedding finished, time: {:.2f}s".format(toc - tic))
+    print(X)
+    print(X.shape)
+    print(y)
+
+    X = X.numpy().astype('double')
+    y = y.numpy().astype('double')
+
+    cv = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
+
+    C_list = np.logspace(-4, 4, 60)
+    lambda_list = 1. / (2. * X.shape[0] * C_list)
+    param_grid = {'clf__lambda_1': lambda_list}
+    param_grid = {
+        # 'clf__max_depth': [None],
+        'clf__min_samples_leaf': [1, 2],
+        'clf__min_samples_split': [2, 5, 10],
+        'clf__n_estimators': [25, 50, 100, 200]
+    }
+
+    scores = []
+
+    for train_idx, test_idx in cv.split(X, y):
+        X_train, X_test = X[train_idx], X[test_idx]
+        y_train, y_test = y[train_idx], y[test_idx]
+        rf = RandomForestClassifier(class_weight='balanced', random_state=args.seed)
+        # svc = LinearSVC(lambda_1=1.0, verbose=False, random_state=42)
+        clf = GridSearchCV(Pipeline(steps=[('scaler', StandardScaler()), ('clf', rf)]),
+                           param_grid,
+                           cv=5, scoring='accuracy',
+                           n_jobs=1, verbose=0, refit=True)
+    
+        clf.fit(X_train, y_train)
+
+        score = clf.score(X_test, y_test)
+        scores.append(score)
+        print("score: {:.6f}".format(score))
+
+    print("Acc: {:.2f} ± {:.2f}".format(np.mean(scores) * 100, np.std(scores) * 100))
+
+
+if __name__ == "__main__":
+    main()
+
+File Path: experiments/main_sup.py
+Content:
+# -*- coding: utf-8 -*-
+import os
+import torch
+from torch import nn, optim
+import numpy as np
+from gckn.data import load_data, PathLoader, separate_data
+from gckn.models import GCKNet
+from gckn.loss import LOSS
+
+import pandas as pd
+import argparse
+
+from timeit import default_timer as timer
+
+
+def load_args():
+    parser = argparse.ArgumentParser(
+        description='Supervised GCKN',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument('--seed', type=int, default=0,
+                        help='random seed')
+    parser.add_argument('--dataset', type=str, default="MUTAG",
+                        help='name of dataset')
+    parser.add_argument('--epochs', type=int, default=350,
+                        help='number of epochs')
+    parser.add_argument('--lr', type=float, default=0.01,
+                        help='initial learning rate')
+    parser.add_argument('--batch-size', type=int, default=32,
+                        help='batch size')
+    parser.add_argument('--path-size', type=int, nargs='+', default=[3],
+                        help='path sizes for layers')
+    parser.add_argument('--hidden-size', type=int, nargs='+', default=[32],
+                        help='number of filters for layers')
+    parser.add_argument('--pooling', type=str, default='sum',
+                        help='local path pooling for each node')
+    parser.add_argument('--global-pooling', type=str, default='sum',
+                        help='global node pooling for each graph')
+    parser.add_argument('--aggregation', action='store_true',
+                        help='aggregate all path features until path size')
+    parser.add_argument('--kernel-funcs', type=str, nargs='+', default=None,
+                        help='kernel functions')
+    parser.add_argument('--sigma', type=float, nargs='+', default=[0.5],
+                        help='sigma of exponential (Gaussian) kernels for layers')
+    parser.add_argument('--sampling-paths', type=int, default=300000,
+                        help='number of paths to sample for unsupervised training')
+    parser.add_argument('--weight-decay', type=float, default=1e-04,
+                        help='weight decay for classifier')
+    parser.add_argument('--fold-idx', type=int, default=0,
+                        help='the index of fold in 10-fold validation')
+    parser.add_argument('--alternating', action='store_true',
+                        help='use alternating training')
+    parser.add_argument('--walk', action='store_true',
+                        help='use walk instead of path')
+    parser.add_argument('--use-cuda', action='store_true',
+                        help='use cuda or not')
+    parser.add_argument('--outdir', type=str, default='',
+                        help='output path')
+    ### Model visualization arguments
+    parser.add_argument('--interpret', action='store_true',
+                        help='interpret model')
+    parser.add_argument('--graph-idx', type=int, default=-1,
+                        help='graph to interpret')
+    parser.add_argument('--mu', type=float, default=0.01,
+                        help='regularization parameter for extracting motifs')
+    args = parser.parse_args()
+    if torch.cuda.is_available():
+        args.use_cuda = True
+
+    args.continuous = False
+    degree_as_tag = False
+    if args.dataset in ['IMDBBINARY', 'IMDBMULTI', 'COLLAB']:
+        # social network
+        degree_as_tag = True
+    elif args.dataset in ['MUTAG', 'PROTEINS', 'PTC', 'NCI1']:
+        # bioinformatics
+        degree_as_tag = False
+    elif args.dataset in ['BZR', 'COX2', 'ENZYMES', 'PROTEINS_full']:
+        degree_as_tag = False
+        args.continuous = True
+    elif args.dataset in ['Mutagenicity']:
+        # model visualization
+        degree_as_tag = False
+    else:
+        raise ValueError("Unrecognized dataset!")
+    args.degree_as_tag = degree_as_tag
+
+    args.save_logs = False
+    if args.outdir != '':
+        args.save_logs = True
+        outdir = args.outdir
+        if not os.path.exists(outdir):
+            try:
+                os.makedirs(outdir)
+            except:
+                pass
+        outdir = outdir + '/sup'
+        if not os.path.exists(outdir):
+            try:
+                os.makedirs(outdir)
+            except:
+                pass
+        outdir = outdir + '/{}'.format(args.dataset)
+        if not os.path.exists(outdir):
+            try:
+                os.makedirs(outdir)
+            except:
+                pass
+        if args.aggregation:
+            outdir = outdir + '/aggregation'
+            if not os.path.exists(outdir):
+                try:
+                    os.makedirs(outdir)
+                except:
+                    pass
+        outdir = outdir + '/{}_{}_{}_{}_{}_{}'.format(
+            args.path_size, args.hidden_size, args.pooling,
+            args.global_pooling, args.sigma, args.weight_decay)
+        if not os.path.exists(outdir):
+            try:
+                os.makedirs(outdir)
+            except:
+                pass
+        outdir = outdir + '/cv{}'.format(args.fold_idx)
+        if not os.path.exists(outdir):
+            try:
+                os.makedirs(outdir)
+            except:
+                pass
+        args.outdir = outdir
+    return args
+
+def train(epoch, model, data_loader, criterion, optimizer,
+          lr_scheduler=None, alternating=False, use_cuda=False):
+    if alternating or epoch == 0:
+        model.eval()
+        model.unsup_train_classifier(data_loader['train'], criterion, use_cuda=use_cuda)
+
+    print('current LR: {}'.format(optimizer.param_groups[0]['lr']))
+    df = {}
+    for phase in ['train', 'val']:
+        if phase not in data_loader:
+            continue
+        if phase == 'train':
+            model.train()
+        else:
+            model.eval()
+
+        running_loss = 0.0
+        running_acc = 0.0
+        n = data_loader[phase].n
+
+        tic = timer()
+        for data in data_loader[phase].make_batch():
+            features = data['features']
+            paths_indices = data['paths']
+            n_paths = data['n_paths']
+            n_nodes = data['n_nodes']
+            labels = data['labels']
+            size = len(n_nodes)
+            if use_cuda:
+                features = features.cuda()
+                if isinstance(n_paths, list):
+                    paths_indices = [p.cuda() for p in paths_indices]
+                    n_paths = [p.cuda() for p in n_paths]
+                else:
+                    paths_indices = paths_indices.cuda()
+                    n_paths = n_paths.cuda()
+                n_nodes = n_nodes.cuda()
+                labels = labels.cuda()
+            if phase == 'train':
+                optimizer.zero_grad()
+                output = model(
+                    features, paths_indices, {'n_paths': n_paths, 'n_nodes': n_nodes})
+                loss = criterion(output, labels)
+                loss.backward()
+                optimizer.step()
+            else:
+                with torch.no_grad():
+                    output = model(
+                        features, paths_indices, {'n_paths': n_paths, 'n_nodes': n_nodes})
+                    loss = criterion(output, labels)
+
+            pred = output.data.argmax(dim=1)
+            running_loss += loss.item() * size
+            running_acc += torch.sum(pred == labels).item()
+
+        toc = timer()
+        epoch_loss = running_loss / n
+        epoch_acc = running_acc / n
+        df[phase + "_loss"] = epoch_loss
+        df[phase + "_acc"] = epoch_acc
+        print('{} loss: {:.4f} acc: {:.4f} time: {:.2f}s'.format(
+            phase, epoch_loss, epoch_acc, toc - tic))
+    print()
+    if lr_scheduler is not None:
+        lr_scheduler.step()
+    return df
+
+
+def main():
+    args = load_args()
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+    print(args)
+    if args.interpret:
+        args.use_cuda = False
+        main_motif(args)
+        return
+
+    graphs, nclass = load_data(args.dataset, '../dataset', degree_as_tag=args.degree_as_tag)
+    if args.continuous:
+        from sklearn.preprocessing import StandardScaler
+        print("Dataset with continuous node attributes")
+        node_features = np.concatenate([g.node_features for g in graphs], axis=0)
+        sc = StandardScaler()
+        sc.fit(node_features)
+        for g in graphs:
+            node_features = sc.transform(g.node_features)
+            g.node_features = node_features / np.linalg.norm(node_features, axis=-1, keepdims=True).clip(min=1e-06)
+
+    train_graphs, test_graphs = separate_data(graphs, args.seed, args.fold_idx)
+
+    train_loader = PathLoader(train_graphs, max(args.path_size), args.batch_size,
+                              True, dataset=args.dataset, walk=args.walk)
+    test_loader = PathLoader(test_graphs, max(args.path_size), args.batch_size,
+                             True, dataset=args.dataset, walk=args.walk)
+    train_loader.get_all_paths()
+    test_loader.get_all_paths()
+    input_size = train_loader.input_size
+
+    print('Unsupervised initialization...')
+    model = GCKNet(nclass, input_size, args.hidden_size, args.path_size,
+                   kernel_funcs=args.kernel_funcs, kernel_args_list=args.sigma,
+                   pooling=args.pooling,
+                   global_pooling=args.global_pooling, aggregation=args.aggregation,
+                   weight_decay=args.weight_decay)
+    model.unsup_train(train_loader, n_sampling_paths=args.sampling_paths)
+
+    data_loader = {'train': train_loader, 'val': test_loader}
+    if args.dataset == 'Mutagenicity':
+        criterion = nn.CrossEntropyLoss()
+    else:
+        criterion = LOSS['hinge'](nclass)
+
+    if args.alternating:
+        # optimizer = optim.Adam(model.features.parameters(), lr=args.lr)
+        optimizer = optim.SGD(model.features.parameters(), lr=args.lr, momentum=0.9)
+    else:
+        #optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+        optimizer = optim.Adam([
+            {'params': model.features.parameters()},
+            {'params': model.classifier.parameters(), 'weight_decay': args.weight_decay}
+            ], lr=args.lr)
+
+    lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.5)
+    print('Starting training...')
+    if args.use_cuda:
+        model.cuda()
+    from collections import defaultdict
+    table = defaultdict(list)
+    tic = timer()
+    for epoch in range(args.epochs):
+        print('Epoch {}/{}'.format(epoch + 1, args.epochs))
+        print('-' * 10)
+        df = train(epoch, model, data_loader, criterion, optimizer,
+                                  lr_scheduler, alternating=args.alternating,
+                                  use_cuda=args.use_cuda)
+        for name in df:
+            table[name].append(df[name])
+    toc = timer()
+    ts = toc - tic
+    if args.save_logs:
+        df['ts'] = ts
+        df = pd.DataFrame.from_dict(df, orient='index')
+        df.to_csv(args.outdir + '/results.csv',
+                  header=['value'], index_label='name')
+        table = pd.DataFrame.from_dict(table)
+        table.to_csv(args.outdir + '/epoch_results.csv', index=False)
+        args.nclass = nclass
+        args.input_size = input_size
+        torch.save({'args': args, 'weights': model.state_dict()}, args.outdir + '/model.pt')
+
+def load_model(datapath):
+    model = torch.load(datapath)
+    args = model['args']
+    weights = model['weights']
+    model = GCKNet(args.nclass, args.input_size, args.hidden_size, args.path_size,
+                   kernel_funcs=args.kernel_funcs, kernel_args_list=args.sigma,
+                   pooling=args.pooling,
+                   global_pooling=args.global_pooling, aggregation=args.aggregation,
+                   weight_decay=args.weight_decay)
+    model.load_state_dict(weights)
+    return model, args
+
+def train_motif(epoch, mask, model, data_loader, criterion, optimizer,
+                mu, use_cuda=False):
+    running_loss = 0.0
+    running_acc = 0.0
+
+    tic = timer()
+    # print(mask)
+    for data in data_loader.make_batch(False):
+        features = data['features']
+        paths_indices = data['paths']
+        n_paths = data['n_paths']
+        n_nodes = data['n_nodes']
+        labels = data['labels']
+        size = len(n_nodes)
+        if use_cuda:
+            features = features.cuda()
+            if isinstance(n_paths, list):
+                paths_indices = [p.cuda() for p in paths_indices]
+                n_paths = [p.cuda() for p in n_paths]
+            else:
+                paths_indices = paths_indices.cuda()
+                n_paths = n_paths.cuda()
+            n_nodes = n_nodes.cuda()
+            labels = labels.cuda()
+
+        def closure():
+            optimizer.zero_grad()
+            output = model(
+                features, paths_indices, {'n_paths': n_paths, 'n_nodes': n_nodes, 'mask': mask})
+            loss = criterion(output, labels)
+            for m in mask:
+                loss = loss + mu * m.abs().sum()
+            loss.backward()
+            return loss
+
+        optimizer.step(closure)
+        for m in mask:
+            m.data.clamp_(min=0, max=1)
+        output = model(
+            features, paths_indices, {'n_paths': n_paths, 'n_nodes': n_nodes, 'mask': mask})
+        loss = criterion(output, labels)
+        pred = output.data.argmax(dim=1)
+        running_loss += loss.item() * size
+        running_acc += torch.sum(pred == labels).item()
+
+    toc = timer()
+    epoch_loss = running_loss
+    epoch_acc = running_acc
+    print('loss: {:.4f} acc: {:.4f} time: {:.2f}s'.format(
+          epoch_loss, epoch_acc, toc - tic))
+    print()
+
+def evaluate(model, data_loader, use_cuda=False):
+    pred_labels = torch.zeros(data_loader.n, dtype=torch.long)
+    idx = 0
+    for data in data_loader.make_batch(False):
+        features = data['features']
+        paths_indices = data['paths']
+        n_paths = data['n_paths']
+        n_nodes = data['n_nodes']
+        labels = data['labels']
+        size = len(n_nodes)
+        if use_cuda:
+            features = features.cuda()
+            if isinstance(n_paths, list):
+                paths_indices = [p.cuda() for p in paths_indices]
+                n_paths = [p.cuda() for p in n_paths]
+            else:
+                paths_indices = paths_indices.cuda()
+                n_paths = n_paths.cuda()
+            n_nodes = n_nodes.cuda()
+            labels = labels.cuda()
+        output = model(
+                features, paths_indices, {'n_paths': n_paths, 'n_nodes': n_nodes})
+        # loss = criterion(output, labels)
+        pred = output.data.argmax(dim=1)#.item()
+        pred_labels[idx:idx+size] = pred
+        idx += size
+    return pred_labels
+
+def main_motif(args):
+    from gckn.data_io import get_motif, log_graph
+
+    graphs, nclass = load_data(args.dataset, '../dataset', degree_as_tag=args.degree_as_tag)
+    model, model_args = load_model(args.outdir + '/model.pt')
+    if args.use_cuda:
+        model.cuda()
+    if args.graph_idx == -1:
+        sizes = [len(g.neighbors) for g in graphs]
+        indices = np.argsort(sizes)[::-1]
+        indices = [i for i in indices if sizes[i] <= 100][:2]
+    else:
+        indices = [args.graph_idx]
+    for idx in indices:
+        torch.manual_seed(args.seed)
+        np.random.seed(args.seed)
+        args.graph_idx = idx
+
+        graph = [graphs[args.graph_idx]]
+        print(graph[0].label)
+
+        train_loader = PathLoader(graph, max(model_args.path_size), 1,
+                                  True, mask=True)
+        train_loader.get_all_paths()
+        label = evaluate(model, train_loader, args.use_cuda)
+        print(label)
+        if label.item() != 0 or graph[0].label != label.item():
+            continue
+        train_loader.labels = label
+
+        mask = train_loader.mask_vec[0]
+        if not isinstance(mask, list):
+            mask = [mask]
+        for i, m in enumerate(mask):
+            if args.use_cuda:
+                m = m.cuda()
+                mask[i] = m
+            m.fill_(1.)
+            m.requires_grad_()
+
+        model.eval()
+
+        optimizer = optim.LBFGS(mask, lr=args.lr)
+        criterion = nn.CrossEntropyLoss()
+
+        for epoch in range(args.epochs):
+            print('Epoch {}/{}'.format(epoch + 1, args.epochs))
+            print('-' * 10)
+            train_motif(epoch, mask, model, train_loader, criterion, optimizer, args.mu,
+                        use_cuda=args.use_cuda)
+
+        mask = [m.data for m in mask]
+        print(mask)
+        paths = train_loader.data['paths'][0]
+        print(paths)
+        motif_graph = get_motif(mask, paths, graph[0].g)
+        # print(motif)
+        outdir = args.outdir + '/motifs'
+        try:
+            os.makedirs(outdir)
+        except:
+            pass
+        outdir = outdir + '/{}'.format(args.graph_idx)
+        try:
+            os.makedirs(outdir)
+        except:
+            pass
+        log_graph(graph[0].g, outdir, 'origin{}.pdf'.format(args.graph_idx))
+        log_graph(motif_graph, outdir, 'motif{}_{}.pdf'.format(args.graph_idx, label.item()))
+
+
+if __name__ == "__main__":
+    main()
+
+File Path: experiments/main_unsup.py
+Content:
+# -*- coding: utf-8 -*-
+import os
+import torch
+import numpy as np
+from gckn.data import load_data, PathLoader
+from gckn.models import GCKNetFeature
+
+import pandas as pd
+import argparse
+from sklearn.model_selection import GridSearchCV
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+from cyanure import LinearSVC
+
+
+def load_args():
+    parser = argparse.ArgumentParser(
+        description='Unsupervised GCKN',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument('--seed', type=int, default=0,
+                        help='random seed')
+    parser.add_argument('--dataset', type=str, default="MUTAG",
+                        help='name of dataset')
+    parser.add_argument('--batch-size', type=int, default=16,
+                        help='batch size')
+    parser.add_argument('--path-size', type=int, nargs='+', default=[2],
+                        help='path sizes for layers')
+    parser.add_argument('--hidden-size', type=int, nargs='+', default=[64],
+                        help='number of filters for layers')
+    parser.add_argument('--pooling', type=str, default='sum',
+                        help='local path pooling for each node')
+    parser.add_argument('--global-pooling', type=str, default='sum',
+                        help='global node pooling for each graph')
+    parser.add_argument('--aggregation', action='store_true',
+                        help='aggregate all path features until path size')
+    parser.add_argument('--sigma', type=float, nargs='+', default=[0.5],
+                        help='sigma of exponential (Gaussian) kernels for layers')
+    parser.add_argument('--sampling-paths', type=int, default=300000,
+                        help='number of paths to sample for unsupervised training')
+    parser.add_argument('--walk', action='store_true',
+                        help='use walk instead of path')
+    parser.add_argument('--outdir', type=str, default='',
+                        help='output path')
+    args = parser.parse_args()
+    args.continuous = False
+    if args.dataset in ['IMDBBINARY', 'IMDBMULTI', 'COLLAB']:
+        # social network
+        degree_as_tag = True
+    elif args.dataset in ['MUTAG', 'PROTEINS', 'PTC', 'NCI1']:
+        # bioinformatics
+        degree_as_tag = False
+    elif args.dataset in ['BZR', 'COX2', 'ENZYMES', 'PROTEINS_full']:
+        degree_as_tag = False
+        args.continuous = True
+    else:
+        raise ValueError("Unrecognized dataset!")
+    args.degree_as_tag = degree_as_tag
+
+    args.save_logs = False
+    if args.outdir != '':
+        args.save_logs = True
+        outdir = args.outdir
+        if not os.path.exists(outdir):
+            try:
+                os.makedirs(outdir)
+            except:
+                pass
+        outdir = outdir + '/unsup'
+        if not os.path.exists(outdir):
+            try:
+                os.makedirs(outdir)
+            except:
+                pass
+        outdir = outdir + '/{}'.format(args.dataset)
+        if not os.path.exists(outdir):
+            try:
+                os.makedirs(outdir)
+            except:
+                pass
+        if args.aggregation:
+            outdir = outdir + '/aggregation'
+            if not os.path.exists(outdir):
+                try:
+                    os.makedirs(outdir)
+                except:
+                    pass
+        outdir = outdir + '/{}_{}_{}_{}_{}'.format(
+            args.path_size, args.hidden_size, args.pooling,
+            args.global_pooling, args.sigma)
+        if not os.path.exists(outdir):
+            try:
+                os.makedirs(outdir)
+            except:
+                pass
+        args.outdir = outdir
+    return args
+
+def main():
+    args = load_args()
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+    print(args)
+
+    graphs, n_class = load_data(args.dataset, '../dataset', degree_as_tag=args.degree_as_tag)
+    if args.continuous:
+        print("Dataset with continuous node attributes")
+        node_features = np.concatenate([g.node_features for g in graphs], axis=0)
+        sc = StandardScaler()
+        sc.fit(node_features)
+        for g in graphs:
+            node_features = sc.transform(g.node_features)
+            g.node_features = node_features / np.linalg.norm(node_features, axis=-1, keepdims=True).clip(min=1e-06)
+
+    data_loader = PathLoader(graphs, max(args.path_size), args.batch_size,
+                             True, dataset=args.dataset, walk=args.walk)
+    print('Computing paths...')
+    if args.dataset != 'COLLAB' or max(args.path_size) <= 2:
+        data_loader.get_all_paths()
+    input_size = data_loader.input_size
+
+    print('Unsupervised training...')
+    model = GCKNetFeature(input_size, args.hidden_size, args.path_size,
+                          kernel_args_list=args.sigma, pooling=args.pooling,
+                          global_pooling=args.global_pooling,
+                          aggregation=args.aggregation)
+    model.unsup_train(data_loader, n_sampling_paths=args.sampling_paths)
+
+    print('Encoding...')
+    features, labels = model.predict(data_loader)
+    print(features)
+    print(features.shape)
+    print(labels)
+
+    features = features.numpy()
+    labels = labels.numpy()
+
+    print('Cross validation')
+    train_fold_idx = [np.loadtxt('../dataset/{}/10fold_idx/train_idx-{}.txt'.format(
+        args.dataset, i)).astype(int) for i in range(1, 11)]
+    test_fold_idx = [np.loadtxt('../dataset/{}/10fold_idx/test_idx-{}.txt'.format(
+        args.dataset, i)).astype(int) for i in range(1, 11)]
+    cv_idx = zip(train_fold_idx, test_fold_idx)
+
+    C_list = np.logspace(-4, 4, 60)
+    svc = LinearSVC(C=1.0)
+    clf = GridSearchCV(make_pipeline(StandardScaler(), svc),
+                       {'linearsvc__C' : C_list},
+                       cv=cv_idx,
+                       n_jobs=-1, verbose=0, return_train_score=True)
+    
+    clf.fit(features, labels)
+    df = pd.DataFrame({'C': C_list, 
+                       'train': clf.cv_results_['mean_train_score'], 
+                       'test': clf.cv_results_['mean_test_score'],
+                       'test_std': clf.cv_results_['std_test_score']}, 
+                        columns=['C', 'train', 'test', 'test_std'])
+    print(df)
+
+    if args.save_logs:
+        df.to_csv(args.outdir + "/results.csv")
+
+
+if __name__ == "__main__":
+    main()
+
+File Path: gckn/__init__.py
+Content:
+
+File Path: gckn/data.py
+Content:
+# -*- coding: utf-8 -*-
+import networkx as nx
+import numpy as np
+import torch
+import torch_geometric.utils as utils
+from .graphs import get_paths, get_walks
+
+
+def get_adj_list(g):
+    neighbors = [[] for _ in range(g.num_nodes)]
+    for k in range(g.edge_index.shape[-1]):
+        i, j = g.edge_index[:, k]
+        neighbors[i.item()].append(j.item())
+    return neighbors
+
+def convert_dataset(dataset, n_tags=None):
+    """Convert a PyG dataset to GCKN dataset
+    """
+    if dataset is None:
+        return dataset
+    graph_list = []
+    for i, g in enumerate(dataset):
+        new_g = S2VGraph(g, g.y)
+        new_g.neighbors = get_adj_list(g)
+        if n_tags is not None:
+            new_g.node_features = F.one_hot(g.x.view(-1).long(), n_tags).numpy()
+        else:
+            new_g.node_features = g.x.numpy()
+        degree_list = utils.degree(g.edge_index[0], g.num_nodes).numpy()
+        new_g.max_neighbor = max(degree_list)
+        new_g.mean_neighbor = (sum(degree_list) + len(degree_list) - 1) // len(degree_list)
+        graph_list.append(new_g)
+    return graph_list
+
+
+class GraphLoader(object):
+    """
+    This class takes a list of graphs and transforms it into a
+    data_loader.
+    """
+    def __init__(self, path_size, batch_size, dataset, walk=False):
+        self.path_size = path_size
+        self.batch_size = batch_size
+        self.dataset = dataset
+        self.walk = walk
+
+    def transform(self, graphs):
+        data_loader = PathLoader(graphs, max(self.path_size), self.batch_size,
+                                 True, dataset=self.dataset, walk=self.walk)
+        if self.dataset != 'COLLAB' or max(self.path_size) <= 2:
+            data_loader.get_all_paths()
+        return data_loader
+
+class S2VGraph(object):
+    def __init__(self, g, label, node_tags=None, node_features=None):
+        '''
+            g: a networkx graph
+            label: an integer graph label
+            node_tags: a list of integer node tags
+            node_features: a numpy float tensor, one-hot representation of the
+            tag that is used as input to neural nets
+            neighbors: list of neighbors (without self-loop)
+        '''
+        self.label = label
+        self.g = g
+        self.node_tags = node_tags
+        self.neighbors = []
+        self.node_features = 0
+        self.pe = None
+
+        self.max_neighbor = 0
+        self.mean_neighbor = 0
+
+def get_path_indices(paths, n_paths_for_graph, n_nodes):
+    """
+    paths: all_paths x k
+    n_paths:: n_graphs (sum=all_paths)
+    """
+    incr_indices = torch.cat([torch.zeros(1, dtype=torch.long), n_nodes[:-1]])
+    incr_indices = incr_indices.cumsum(dim=0)
+    incr_indices = incr_indices.repeat_interleave(n_paths_for_graph, dim=0).view(-1, 1)
+    paths = paths + incr_indices
+    return paths
+
+class PathLoader(object):
+    def __init__(self, graphs, k, batch_size, aggregation=True, dataset='MUTAG', padding=False, walk=False, mask=False):
+        # self.data = data
+        self.dataset = dataset
+        self.graphs = graphs
+        self.batch_size = batch_size
+        self.aggregation = aggregation
+        self.input_size = graphs[0].node_features.shape[-1]
+        self.n = len(graphs)
+        self.k = k
+        self.data = None
+        self.labels = None
+        self.padding = padding
+        self.walk = walk
+        self.mask = mask
+
+    def __len__(self):
+        return (self.n + self.batch_size - 1) // self.batch_size
+
+    def get_all_paths(self, dirname=None):
+        all_paths = []
+        n_paths = []
+        n_nodes = torch.zeros(self.n, dtype=torch.long)
+        if self.aggregation:
+            n_paths_for_graph = torch.zeros((self.n, self.k), dtype=torch.long)
+        else:
+            n_paths_for_graph = torch.zeros(self.n, dtype=torch.long)
+        features = []
+        labels = torch.zeros(self.n, dtype=torch.long)
+        mask_vec = []
+        if dirname is not None and self.dataset == 'COLLA':
+            try:
+                self.data = torch.load(dirname + '/all_paths_{}.pkl'.format(self.k))
+                self.labels = self.data['labels']
+                return
+            except:
+                pass
+        for i, g in enumerate(self.graphs):
+            # print(i)
+            if self.walk:
+                p, c = get_walks(g, self.k)
+            else:
+                p, c = get_paths(g, self.k)
+            if self.aggregation:
+                all_paths.append([torch.from_numpy(p[j]) for j in range(self.k)])
+                n_paths.append([torch.from_numpy(c[:, j]) for j in range(self.k)])
+                n_paths_for_graph[i] = torch.LongTensor([len(p[j]) for j in range(self.k)])
+                if self.mask:
+                    mask_vec.append([torch.ones(len(p[j])) for j in range(self.k)])
+            else:
+                all_paths.append(torch.from_numpy(p[-1]))
+                n_paths.append(torch.from_numpy(c[:, -1]))
+                n_paths_for_graph[i] = len(p[-1])
+                mask_vec.append(torch.ones(len(p[-1])))
+            n_nodes[i] = len(g.neighbors)
+            features.append(torch.from_numpy(g.node_features.astype('float32')))
+
+            labels[i] = g.label
+
+        self.data = {
+            'features': features,
+            'paths': all_paths,
+            'n_paths': n_paths,
+            'n_paths_for_graph': n_paths_for_graph,
+            'n_nodes': n_nodes,
+            'labels': labels
+        }
+        self.mask_vec = mask_vec
+        self.labels = labels
+        if dirname is not None and self.dataset == 'COLLA':
+            torch.save(self.data, dirname + '/all_paths_{}.pkl'.format(self.k))
+
+    def make_batch(self, shuffle=True):
+        if self.data is None:
+            # raise ValueError('Plase first run self.get_all_paths() to compute paths!')
+            if self.labels is None:
+                self.labels = torch.LongTensor([g.label for g in self.graphs])
+            if shuffle:
+                indices = np.random.permutation(self.n)
+            else:
+                indices = list(range(self.n))
+            for index in range(0, self.n, self.batch_size):
+                idx = indices[index:min(index + self.batch_size, self.n)]
+                size = len(idx)
+                # current_features = torch.cat([torch.from_numpy(
+                #     self.graphs[i].node_features.astype('float32')) for i in idx])
+                current_features = []
+                current_n_nodes = torch.zeros(size, dtype=torch.long)
+                if self.aggregation:
+                    current_paths = [[] for i in range(self.k)]
+                    current_n_paths = [[] for i in range(self.k)]
+                    current_n_paths_for_graph = torch.zeros((size, self.k), dtype=torch.long)
+                else:
+                    current_paths = []
+                    current_n_paths = []
+                    current_n_paths_for_graph = torch.zeros(size, dtype=torch.long)
+
+                for i, g_index in enumerate(idx):
+                    g = self.graphs[g_index]
+                    current_features.append(torch.from_numpy(
+                        g.node_features.astype('float32')))
+                    if self.walk:
+                        p, c = get_walks(g, self.k)
+                    else:
+                        p, c = get_paths(g, self.k)
+                    current_n_nodes[i] = len(g.neighbors)
+                    if self.aggregation:
+                        for j in range(self.k):
+                            current_paths[j].append(torch.from_numpy(p[j]))
+                            current_n_paths[j].append(torch.from_numpy(c[:, j]))
+                            current_n_paths_for_graph[i, j] = len(p[j])
+                    else:
+                        current_paths.append(torch.from_numpy(p[-1]))
+                        current_n_paths.append(torch.from_numpy(c[:, -1]))
+                        current_n_paths_for_graph[i] = len(p[-1])
+                current_features = torch.cat(current_features)
+                if self.aggregation:
+                    for j in range(self.k):
+                        current_paths[j] = get_path_indices(
+                            torch.cat(current_paths[j]), current_n_paths_for_graph[:, j], current_n_nodes)
+                        current_n_paths[j] = torch.cat(current_n_paths[j])
+                else:
+                    current_paths = get_path_indices(
+                        torch.cat(current_paths), current_n_paths_for_graph, current_n_nodes)
+                    current_n_paths = torch.cat(current_n_paths)
+                yield {'features': current_features,
+                       'paths': current_paths,
+                       'n_paths': current_n_paths,
+                       'n_nodes': current_n_nodes,
+                       'labels': self.labels[idx]}
+            return
+
+        if shuffle:
+            indices = np.random.permutation(self.n)
+        else:
+            indices = list(range(self.n))
+        features = self.data['features']
+
+        for index in range(0, self.n, self.batch_size):
+            idx = indices[index:min(index + self.batch_size, self.n)]
+            current_features = torch.cat([features[i] for i in idx])
+            if self.padding:
+                current_features = torch.cat([torch.zeros(self.input_size).view(1, -1), current_features])
+
+            if self.aggregation:
+                current_paths = [torch.cat([self.data['paths'][i][j] for i in idx]) for j in range(self.k)]
+            else:
+                current_paths = torch.cat([self.data['paths'][i] for i in idx]) + self.padding
+            current_n_paths_for_graph = self.data['n_paths_for_graph'][idx]
+            current_n_nodes = self.data['n_nodes'][idx]
+
+            if self.aggregation:
+                current_paths = [get_path_indices(
+                    current_paths[j], current_n_paths_for_graph[:, j],
+                    current_n_nodes) for j in range(self.k)]
+                current_n_paths = [torch.cat(
+                    [self.data['n_paths'][i][j] for i in idx]) for j in range(self.k)]
+            else:
+                current_paths = get_path_indices(
+                    current_paths, current_n_paths_for_graph, current_n_nodes)
+                current_n_paths = torch.cat([self.data['n_paths'][i] for i in idx])
+            yield {'features': current_features,
+                   'paths': current_paths,
+                   'n_paths': current_n_paths,
+                   'n_nodes': current_n_nodes,
+                   'labels': self.labels[idx]}
+
+
+File Path: gckn/data_io.py
+Content:
+import os
+import re
+import statistics
+import numpy as np
+import networkx as nx
+
+
+class S2VGraph(object):
+    def __init__(self, g, label, node_tags=None, node_features=None):
+        '''
+            g: a networkx graph
+            label: an integer graph label
+            node_tags: a list of integer node tags
+            node_features: a numpy float tensor, one-hot representation of the tag that is used as input to neural nets
+            neighbors: list of neighbors (without self-loop)
+        '''
+        self.label = label
+        self.g = g
+        self.node_tags = node_tags
+        self.neighbors = []
+        self.node_features = 0
+
+        self.max_neighbor = 0
+        self.mean_neighbor = 0
+
+
+def get_motif(mask, path_indices, graph, max_component=True, eps=0.1):
+    if not isinstance(mask, list):
+        mask = [mask]
+    if not isinstance(path_indices, list):
+        path_indices = [path_indices]
+    g = nx.Graph()
+    g.add_nodes_from(graph.nodes())
+    n = len(g.nodes())
+    for node in graph.nodes():
+        g.nodes[node]['tag'] = graph.nodes[node]['tag']
+
+    # edge_list = []
+    adj = np.zeros((n, n))
+    for m, path in zip(mask, path_indices):
+        if len(path[0]) <= 1:
+            continue
+        for i in range(len(m)):
+            if m[i] > eps:
+                p = path[i]
+                for j in range(len(p) - 1):
+                    adj[p[j], p[j+1]] += m[i]
+    adj /= np.max(adj)
+    edge_list = [(i, j, adj[i, j]) for i in range(n) for j in range(n) if adj[i, j] > eps]
+    # print(adj)
+    g.add_weighted_edges_from(edge_list)
+
+    if max_component:
+        largest_cc = max(nx.connected_components(g), key=len)
+        g = g.subgraph(largest_cc).copy()
+    else:
+        # remove zero degree nodes
+        g.remove_nodes_from(list(nx.isolates(g)))
+    return g
+
+
+def log_graph(
+    graph,
+    outdir,
+    filename,
+    identify_self=False,
+    nodecolor="tag",
+    fig_size=(4, 3),
+    dpi=300,
+    label_node_feat=True,
+    edge_vmax=None,
+    args=None,
+    eps=1e-6,
+):
+    """
+    Args:
+        nodecolor: the color of node, can be determined by 'label', or 'feat'. For feat, it needs to
+            be one-hot'
+    """
+    if len(graph.edges) == 0:
+        return
+    import matplotlib.pyplot as plt
+    plt.switch_backend("agg")
+    cmap = plt.get_cmap("tab20")
+    plt.switch_backend("agg")
+    fig = plt.figure(figsize=fig_size, dpi=dpi)
+
+    node_colors = []
+    # edge_colors = [min(max(w, 0.0), 1.0) for (u,v,w) in Gc.edges.data('weight', default=1)]
+    edge_colors = [w for (u, v, w) in graph.edges.data("weight", default=1)]
+
+    # maximum value for node color
+    vmax = 19
+    # for i in graph.nodes():
+    #     if nodecolor == "feat" and "feat" in graph.nodes[i]:
+    #         num_classes = graph.nodes[i]["feat"].size()[0]
+    #         if num_classes >= 10:
+    #             cmap = plt.get_cmap("tab20")
+    #             vmax = 19
+    #         elif num_classes >= 8:
+    #             cmap = plt.get_cmap("tab10")
+    #             vmax = 9
+    #         break
+
+    feat_labels = {}
+    for i in graph.nodes():
+        if identify_self and "self" in graph.nodes[i]:
+            node_colors.append(0)
+        elif nodecolor == "tag" and "tag" in graph.nodes[i]:
+            node_colors.append(graph.nodes[i]["tag"])
+            feat_labels[i] = graph.nodes[i]["tag"]
+        elif nodecolor == "feat" and "feat" in graph.nodes[i]:
+            # print(Gc.nodes[i]['feat'])
+            feat = graph.nodes[i]["feat"].detach().numpy()
+            # idx with pos val in 1D array
+            feat_class = 0
+            for j in range(len(feat)):
+                if feat[j] == 1:
+                    feat_class = j
+                    break
+            node_colors.append(feat_class)
+            feat_labels[i] = feat_class
+        else:
+            node_colors.append(1)
+    if not label_node_feat:
+        feat_labels = None
+
+    plt.switch_backend("agg")
+    fig = plt.figure(figsize=fig_size, dpi=dpi)
+
+    if graph.number_of_nodes() == 0:
+        raise Exception("empty graph")
+    if graph.number_of_edges() == 0:
+        raise Exception("empty edge")
+    # remove_nodes = []
+    if len(graph.nodes) > 20:
+        pos_layout = nx.kamada_kawai_layout(graph, weight=None)
+        # pos_layout = nx.spring_layout(graph, weight=None)
+    else:
+        pos_layout = nx.kamada_kawai_layout(graph, weight=None)
+
+    weights = [d for (u, v, d) in graph.edges(data="weight", default=1)]
+    if edge_vmax is None:
+        edge_vmax = statistics.median_high(
+            [d for (u, v, d) in graph.edges(data="weight", default=1)]
+        )
+    min_color = min([d for (u, v, d) in graph.edges(data="weight", default=1)])
+    # color range: gray to black
+    edge_vmin = 2 * min_color - edge_vmax
+    print(edge_vmin)
+    print(edge_vmax)
+    print(edge_colors)
+    nx.draw(
+        graph,
+        pos=pos_layout,
+        with_labels=False,
+        font_size=4,
+        labels=feat_labels,
+        node_color=node_colors,
+        vmin=0,
+        vmax=vmax,
+        cmap=cmap,
+        edge_color=edge_colors,
+        edge_cmap=plt.get_cmap("Greys"),
+        edge_vmin=edge_vmin-eps,
+        edge_vmax=edge_vmax,
+        width=1.3,
+        node_size=100,
+        alpha=0.9,
+        arrows=False
+    )
+    fig.axes[0].xaxis.set_visible(False)
+    fig.canvas.draw()
+
+    save_path = os.path.join(outdir, filename)
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    nx.write_gpickle(graph, os.path.splitext(save_path)[0] + '.gpickle')
+    plt.savefig(save_path, format="pdf")
+
+
+if __name__ == "__main__":
+    graphs = load_data('Mutagenicity', '../dataset')
+    # print(list(graphs[0].adjacency()))
+    print([list(adj.keys()) for _, adj in graphs[0].adjacency()])
+    print(graphs[0].graph['label'])
+    print(len(graphs))
+
+File Path: gckn/dynamic_pooling/__init__.py
+Content:
+
+File Path: gckn/dynamic_pooling/pooling.py
+Content:
+# -*- coding: utf-8 -*-
+import os
+import torch
+# from gckn.dynamic_pooling import pooling_cpu
+if torch.cuda.is_available():
+    try:
+        from gckn.dynamic_pooling import pooling_cuda
+    except:
+        pass
+
+
+def dpooling_forward(input, kernel_size, pooling='sum'):
+    kernel_size = kernel_size.cumsum(0)
+    active_indices = kernel_size
+    if pooling == 'max':
+        if input.is_cuda:
+            output, active_indices = pooling_cuda.max_forward(input, kernel_size)
+        else:
+            output, active_indices = pooling_cpu.max_forward(input, kernel_size)
+    elif pooling == 'sum':
+        if input.is_cuda:
+            output = pooling_cuda.sum_forward(input, kernel_size, False)
+        else:
+            output = pooling_cpu.sum_forward(input, kernel_size, False)
+    elif pooling == 'mean':
+        if input.is_cuda:
+            output = pooling_cuda.sum_forward(input, kernel_size, True)
+        else:
+            output = pooling_cpu.sum_forward(input, kernel_size, True)
+    return output, active_indices
+
+def dpooling_backward(grad_input, grad_output, indices, pooling='sum'):
+    if pooling == 'max':
+        if grad_output.is_cuda:
+            pooling_cuda.max_backward(grad_input, grad_output, indices)
+        else:
+            pooling_cpu.max_backward(grad_input, grad_output, indices)
+    elif pooling == 'sum':
+        if grad_output.is_cuda:
+            pooling_cuda.sum_backward(grad_input, grad_output, indices, False)
+        else:
+            pooling_cpu.sum_backward(grad_input, grad_output, indices, False)
+    elif pooling == 'mean':
+        if grad_output.is_cuda:
+            pooling_cuda.sum_backward(grad_input, grad_output, indices, True)
+        else:
+            pooling_cpu.sum_backward(grad_input, grad_output, indices, True)
+
+class DPoolingMax(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input, kernel_size):
+        kernel_size = kernel_size.cumsum(0)
+        if input.is_cuda:
+            output, active_indices = pooling_cuda.max_forward(input, kernel_size)
+        else:
+            output, active_indices = pooling_cpu.max_forward(input, kernel_size)
+        ctx.save_for_backward(active_indices)
+        ctx.size = input.shape
+        return output
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        grad_input = grad_output.new_zeros(ctx.size)
+        if grad_output.is_cuda:
+            pooling_cuda.max_backward(grad_input, grad_output.contiguous(), *ctx.saved_variables)
+        else:
+            pooling_cpu.max_backward(grad_input, grad_output.contiguous(), *ctx.saved_variables)
+        return grad_input, None
+
+class DPoolingSum(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input, kernel_size, mean=False):
+        kernel_size = kernel_size.cumsum(0)
+        if input.is_cuda:
+            output = pooling_cuda.sum_forward(input, kernel_size, mean)
+        else:
+            output = pooling_cpu.sum_forward(input, kernel_size, mean)
+        ctx.save_for_backward(kernel_size)
+        ctx.mean = mean
+        ctx.size = input.shape
+        return output
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        grad_input = grad_output.new_zeros(ctx.size)
+        if grad_output.is_cuda:
+            pooling_cuda.sum_backward(grad_input, grad_output.contiguous(), *ctx.saved_variables, ctx.mean)
+        else:
+            pooling_cpu.sum_backward(grad_input, grad_output.contiguous(), *ctx.saved_variables, ctx.mean)
+        return grad_input, None, None
+
+def dpooling(input, kernel_size, pooling='sum'):
+    if pooling == 'sum':
+        return DPoolingSum.apply(input, kernel_size, False)
+    elif pooling == 'mean':
+        return DPoolingSum.apply(input, kernel_size, True)
+    elif pooling == 'max':
+        return DPoolingMax.apply(input, kernel_size)
+    else:
+        raise ValueError('Not implemented!')
+
+def dpooling_max_pad(input, kernel_size):
+    output = torch.split(input, list(kernel_size))
+    output = torch.nn.utils.rnn.pad_sequence(output)
+    output,_ = output.max(dim=0)
+    return output
+
+def dpooling_torch(input, kernel_size, pooling='sum'):
+    if pooling == 'max':
+        return dpooling_max_pad(input, kernel_size)
+    all_paths = input.shape[0]
+    row = torch.arange(len(kernel_size), device=kernel_size.device).repeat_interleave(kernel_size, dim=0)
+    col = torch.arange(all_paths, device=kernel_size.device)
+    indices = torch.stack([row, col], dim=0)
+    if pooling == 'sum':
+        data = torch.ones(all_paths, device=kernel_size.device)
+    elif pooling == 'mean':
+        data = 1. / kernel_size.float()
+        data = data.repeat_interleave(kernel_size, dim=0)
+    else:
+        raise ValueError('Not implemented!')
+    pool_matrix = torch.sparse.FloatTensor(
+        indices, data, torch.Size([len(kernel_size), all_paths]))
+
+    return pool_matrix.mm(input)
+
+def test(cuda=False):
+    torch.manual_seed(1234)
+    pooling = 'sum'
+    size = 500
+    max_length = 100
+    hidden_size = 128
+    kernel_size = torch.randint(0, max_length, (size,))
+    x = torch.rand(kernel_size.sum(), hidden_size)
+    # kernel_size = torch.LongTensor([4, 5, 1])
+    if cuda:
+        x = x.cuda()
+        kernel_size = kernel_size.cuda()
+
+    x.requires_grad_()
+    print('start')
+    out = dpooling(x, kernel_size, pooling=pooling)
+    out1 = out.data
+    out = out.mean()
+    out.backward()
+    grad1 = x.grad.data
+
+    x.grad = None
+    out = dpooling_torch(x, kernel_size, pooling=pooling)
+    out2 = out.data
+    out = out.mean()
+    out.backward()
+    grad2 = x.grad.data
+    # print(x)
+    # print(kernel_size)
+    # print(out1)
+    # print(out2)
+    # print(grad1)
+    # print(grad2)
+
+    print(torch.max(torch.abs(out1 - out2)))
+    print(torch.max(torch.abs(grad1 - grad2)))
+
+    import time
+    forward = 0
+    backward = 0
+    n_iter = 100
+    for _ in range(n_iter):
+        start = time.time()
+        out = dpooling(x, kernel_size, pooling=pooling)
+        if cuda:
+            torch.cuda.synchronize()
+        forward += time.time() - start
+
+        out = out.mean()
+        start = time.time()
+        out.backward()
+        if cuda:
+            torch.cuda.synchronize()
+        backward += time.time() - start
+
+    print('Mine Forward: {:.3f} ms | Backward {:.3f} ms'.format(forward * 1e3/n_iter, backward * 1e3/n_iter))
+
+    import time
+    forward = 0
+    backward = 0
+    n_iter = 100
+    for _ in range(n_iter):
+        start = time.time()
+        out = dpooling_torch(x, kernel_size, pooling=pooling)
+        if cuda:
+            torch.cuda.synchronize()
+        forward += time.time() - start
+
+        out = out.mean()
+        start = time.time()
+        out.backward()
+        if cuda:
+            torch.cuda.synchronize()
+        backward += time.time() - start
+
+    print('Pytorch Forward: {:.3f} ms | Backward {:.3f} ms'.format(forward * 1e3/n_iter, backward * 1e3/n_iter))
+
+
+if __name__ == "__main__":
+    # test(cuda=False)
+    # import pdb; pdb.set_trace()
+    input = torch.rand(10, 5)
+    attn_weight = torch.rand(10, 3, 2)
+    kernel_size = torch.tensor([4, 3, 3])
+    print(dpooling_ot(input, attn_weight, kernel_size))
+
+File Path: gckn/gckn_fast/__init__.py
+Content:
+
+File Path: gckn/gckn_fast/gckn_fast.py
+Content:
+# -*- coding: utf-8 -*-
+import os
+import torch
+# from gckn.gckn_fast import gckn_fast_cpu
+if torch.cuda.is_available():
+    try:
+        from gckn.gckn_fast import gckn_fast_cuda
+    except:
+        pass
+
+
+def path_conv_forward(path_indices, features):
+    if features.is_cuda:
+        output = gckn_fast_cuda.path_conv_forward(path_indices, features)
+    else:
+        output = gckn_fast_cpu.path_conv_forward(path_indices, features)
+    return output
+
+def path_conv_backward(grad_input, grad_output, path_indices):
+    if grad_output.is_cuda:
+        gckn_fast_cuda.path_conv_backward(grad_input, grad_output, path_indices)
+    else:
+        gckn_fast_cpu.path_conv_backward(grad_input, grad_output, path_indices)
+
+class PathConv(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, path_indices, features):
+        if features.is_cuda:
+            output = gckn_fast_cuda.path_conv_forward(path_indices, features)
+        else:
+            output = gckn_fast_cpu.path_conv_forward(path_indices, features)
+        ctx.save_for_backward(path_indices)
+        ctx.size = features.size()
+        return output
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        grad_input = grad_output.new_zeros(ctx.size)
+        if grad_output.is_cuda:
+            gckn_fast_cuda.path_conv_backward(grad_input, grad_output.contiguous(), *ctx.saved_variables)
+        else:
+            gckn_fast_cpu.path_conv_backward(grad_input, grad_output.contiguous(), *ctx.saved_variables)
+        return None, grad_input
+
+def path_conv(path_indices, features):
+    import torch.nn.functional as F
+    output = F.embedding(path_indices, features.view(features.shape[0], -1)).view(
+                path_indices.shape[0], path_indices.shape[1], features.shape[1], features.shape[2])
+    output = output.diagonal(dim1=1, dim2=2)
+    # output: all_paths x path_size x path_size x hidden_size
+    # -> all_paths x hidden_size x path_size
+    output = output.mean(dim=-1)
+    return output
+
+def test(cuda=False):
+    torch.manual_seed(1234)
+
+    path_size = 5
+    n_nodes = 100
+    hidden_size = 32
+    n_paths = 100000
+    x = torch.randn(n_nodes, path_size, hidden_size)
+    path_indices = torch.randint(0, n_nodes, (n_paths, path_size))
+    
+    if cuda:
+        x = x.cuda()
+        path_indices = path_indices.cuda()
+
+    x.requires_grad_()
+    print('start')
+    out = PathConv.apply(path_indices, x)
+    out1 = out.data
+    out = out.mean()
+    out.backward()
+    grad1 = x.grad.data
+    x.grad = None
+
+    out = path_conv(path_indices, x)
+    out2 = out.data
+    out = out.mean()
+    out.backward()
+    grad2 = x.grad.data
+    # print(out1)
+    # print(out2)
+    print(torch.max(torch.abs(out1 - out2)))
+    print(torch.max(torch.abs(grad1 - grad2)))
+
+    import time
+    forward = 0
+    backward = 0
+    n_iter = 10
+    for _ in range(n_iter):
+        start = time.time()
+        out = PathConv.apply(path_indices, x)
+        if cuda:
+            torch.cuda.synchronize()
+        forward += time.time() - start
+
+        out = out.mean()
+        start = time.time()
+        out.backward()
+        if cuda:
+            torch.cuda.synchronize()
+        backward += time.time() - start
+
+    print('Mine Forward: {:.3f} ms | Backward {:.3f} ms'.format(forward * 1e3/n_iter, backward * 1e3/n_iter))
+
+    import time
+    forward = 0
+    backward = 0
+    n_iter = 10
+    for _ in range(n_iter):
+        start = time.time()
+        out = path_conv(path_indices, x)
+        if cuda:
+            torch.cuda.synchronize()
+        forward += time.time() - start
+
+        out = out.mean()
+        start = time.time()
+        out.backward()
+        if cuda:
+            torch.cuda.synchronize()
+        backward += time.time() - start
+
+    print('Pytorch Forward: {:.3f} ms | Backward {:.3f} ms'.format(forward * 1e3/n_iter, backward * 1e3/n_iter))
+
+
+if __name__ == "__main__":
+    test(cuda=False)
+
+File Path: gckn/graphs/__init__.py
+Content:
+from .graphs_fast import get_paths, get_walks
+File Path: gckn/graphs/setup.py
+Content:
+from distutils.extension import Extension
+
+import numpy
+
+
+def configuration(parent_package='', top_path=None):
+    from numpy.distutils.misc_util import Configuration
+
+    config = Configuration('graphs', parent_package, top_path)
+
+    extensions = [
+        Extension("gckn.graphs.graphs_fast", 
+                ['gckn/graphs/graphs_fast.pyx'],
+                extra_compile_args = ["-ffast-math"],
+                include_dirs = [numpy.get_include()]
+                )
+    ]
+    
+
+    config.ext_modules += extensions
+
+    return config
+
+
+if __name__ == '__main__':
+    from numpy.distutils.core import setup
+    setup(**configuration(top_path='').todict())
+
+File Path: gckn/kernels.py
+Content:
+import torch
+
+
+def exp(x, alpha):
+    return torch.exp(alpha*(x - 1.))
+
+def linear(x, alpha):
+    return x
+
+def d_exp(x, alpha):
+    return alpha * exp(x, alpha)
+
+kernels = {
+    "exp": exp,
+    "linear": linear
+}
+
+d_kernels = {
+    "exp": d_exp,
+    "linear": linear
+}
+
+File Path: gckn/layers.py
+Content:
+# -*- coding: utf-8 -*-
+import math
+import torch
+from torch import nn
+import torch.nn.functional as F
+from . import ops
+from .kernels import kernels, d_kernels
+from .utils import EPS, normalize_, spherical_kmeans
+from .dynamic_pooling.pooling import dpooling_torch as dpooling
+from .path_conv_agg import path_conv_agg_torch as path_conv_agg
+
+import numpy as np
+from scipy import optimize
+from sklearn.linear_model._base import LinearModel, LinearClassifierMixin
+
+
+class PathLayer(nn.Module):
+    def __init__(self, input_size, hidden_size, path_size=1,
+                 kernel_func='exp', kernel_args=[0.5], pooling='mean',
+                 aggregation=False):
+        super().__init__()
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.path_size = path_size
+
+        self.pooling = pooling
+        self.aggregation = aggregation and (path_size > 1)
+
+        self.kernel_func = kernel_func
+        if isinstance(kernel_args, (int, float)):
+            kernel_args = [kernel_args]
+        if kernel_func == 'exp':
+            kernel_args = [1. / kernel_arg ** 2 for kernel_arg in kernel_args]
+        self.kernel_args = kernel_args  # [kernel_arg / path_size for kernel_arg in kernel_args]
+        self.kernel_func = kernels[kernel_func]
+        self.kappa = lambda x: self.kernel_func(x, *self.kernel_args)
+        d_kernel_func = d_kernels[kernel_func]
+        self.d_kappa = lambda x: d_kernel_func(x, *self.kernel_args)
+
+        self._need_lintrans_computed = True
+        self.weight = nn.Parameter(
+            torch.Tensor(path_size, hidden_size, input_size))
+
+        if self.aggregation:
+            self.register_buffer('lintrans',
+                                 torch.Tensor(path_size, hidden_size,
+                                              hidden_size)
+                                 )
+            self.register_buffer('divider',
+                                 torch.arange(1., path_size + 1).view(-1, 1, 1)
+                                 )
+        else:
+            self.register_buffer('lintrans',
+                                 torch.Tensor(hidden_size, hidden_size))
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        stdv = 1. / math.sqrt(self.hidden_size)
+        for w in self.parameters():
+            if w.dim() > 1:
+                w.data.uniform_(-stdv, stdv)
+        self.normalize_()
+
+    def normalize_(self):
+        normalize_(self.weight.data, dim=-1)
+
+    def train(self, mode=True):
+        super().train(mode)
+        self._need_lintrans_computed = True
+
+    def _compute_lintrans(self):
+        if not self._need_lintrans_computed:
+            return self.lintrans
+        lintrans = torch.bmm(self.weight, self.weight.permute(0, 2, 1))
+        if self.aggregation:
+            lintrans = lintrans.cumsum(dim=0) / self.divider
+        else:
+            lintrans = lintrans.mean(dim=0)
+        lintrans = self.kappa(lintrans)
+        lintrans = ops.matrix_inverse_sqrt(lintrans)
+
+        if not self.training:
+            self._need_lintrans_computed = False
+            self.lintrans.data.copy_(lintrans.data)
+        return lintrans
+
+    def forward(self, features, paths_indices, other_info):
+        """
+        features: n_nodes x (input_path_size) x input_size
+        paths_indices: n_paths x path_size (values < n_nodes)
+        output: n_nodes x ((input_path_size) x path_size) x input_size
+        """
+        # convolution
+        self.normalize_()
+        norms = features.norm(dim=-1, keepdim=True)
+        # norms: n_nodes x (input_path_size) x 1
+        # output = features / norms.clamp(min=EPS)
+        output = torch.tensordot(features, self.weight, dims=[[-1], [-1]])
+        output = output / norms.clamp(min=EPS).unsqueeze(2)
+        n_nodes = output.shape[0]
+        if output.ndim == 4:
+            output = output.permute(0, 2, 1, 3).contiguous()
+        # output: n_nodes x path_size x (input_path_size) x hidden_size
+
+        # prepare masks
+        mask = None
+        if self.aggregation:
+            mask = [None for _ in range(self.path_size)]
+        if 'mask' in other_info and self.path_size > 1:
+            mask = other_info['mask']
+
+        output = output.view(n_nodes, self.path_size, -1)
+        # output: n_nodes x path_size x (input_path_size x hidden_size)
+        if self.aggregation:
+            outputs = []
+            for i in range(self.path_size):
+                embeded = path_conv_agg(
+                    output, paths_indices[i], other_info['n_paths'][i],
+                    self.pooling, self.kappa, self.d_kappa, mask[i])
+                outputs.append(embeded)
+            output = torch.stack(outputs, dim=0)
+            output = output.view(self.path_size, -1, self.hidden_size)
+            # output: path_size x (n_nodes x (input_path_size)) x hidden_size
+            output = norms.view(1, -1, 1) * output
+        else:
+            output = path_conv_agg(
+                output, paths_indices[self.path_size - 1],
+                other_info['n_paths'][self.path_size - 1],
+                self.pooling, self.kappa, self.d_kappa, mask)
+            # output: n_nodes x ((input_path_size) x hidden_size)
+            output = output.view(n_nodes, -1, self.hidden_size)
+            output = norms.view(n_nodes, -1, 1) * output
+            # output: n_nodes x (input_path_size) x hidden_size
+
+        lintrans = self._compute_lintrans()
+        # linear transformation
+        if self.aggregation:
+            output = output.bmm(lintrans)
+            # output = output.view(self.path_size, n_nodes, -1, self.hidden_size)
+            output = output.permute(1, 0, 2)
+            output = output.reshape(n_nodes, -1, self.hidden_size)
+            output = output.contiguous()
+        else:
+            output = torch.tensordot(output, lintrans, dims=[[-1], [-1]])
+        # output: n_nodes x ((input_path_size) x path_size) x hidden_size
+
+        return output
+
+    def sample_paths(self, features, paths_indices, n_sampling_paths=1000):
+        """Sample paths for a given of features and paths
+        features: n_nodes x (input_path_size) x input_size
+        paths_indices: n_paths x path_size
+        output: n_sampling_paths x path_size x input_size
+        """
+        paths_indices = paths_indices[self.path_size - 1]
+        if self.path_size == 1:
+            features = features.permute(1, 0, 2).reshape(-1, self.input_size)
+            n_all_paths = features.shape[0]
+            n_sampling_paths = min(n_all_paths, n_sampling_paths)
+            indices = torch.randperm(n_all_paths)[:n_sampling_paths]
+            paths = features[indices]
+            return paths.view(n_sampling_paths, 1, self.input_size).contiguous()
+        n_all_paths = paths_indices.shape[0]
+        indices = torch.randperm(n_all_paths)[:min(n_all_paths, n_sampling_paths)]
+        paths = F.embedding(paths_indices[indices], features)
+        # paths: n_sampling_paths x path_size x (input_path_size) x input_size
+        if paths.ndim == 4:
+            paths = paths.permute(0, 2, 1, 3)
+            paths = paths.reshape(-1, self.path_size, self.input_size)
+            paths = paths[:min(paths.shape[0], n_sampling_paths)]
+        return paths
+
+    def unsup_train(self, paths, init=None):
+        """Unsupervised training for path layer
+        paths: n x path_size x input_size
+        self.weight: path_size x hidden_size x input_size
+        """
+        # print(paths)
+        print(paths.shape)
+        normalize_(paths, dim=-1)
+        weight = spherical_kmeans(paths, self.hidden_size, init='kmeans++')
+        weight = weight.permute(1, 0, 2)
+        self.weight.data.copy_(weight)
+
+        self.normalize_()
+        self._need_lintrans_computed = True
+
+
+class NodePooling(nn.Module):
+    def __init__(self, pooling='mean'):
+        super().__init__()
+        self.pooling = pooling
+
+    def reset_parameters(self):
+        pass
+
+    def forward(self, features, other_info):
+        """
+        features: n_nodes x (input_path_size) x input_size
+        output: n_graphs x input_size
+        """
+        # could normalizing the features before classification help?
+        # why permuting?
+        features = features.permute(0, 2, 1).contiguous()
+        n_nodes = features.shape[0]
+        output = dpooling(features.view(n_nodes, -1), other_info['n_nodes'],
+                          self.pooling)
+
+        return output
+
+
+class Linear(nn.Linear, LinearModel, LinearClassifierMixin):
+    def __init__(self, in_features, out_features, alpha=0.0, fit_bias=True):
+        super(Linear, self).__init__(in_features, out_features, fit_bias)
+        self.alpha = alpha
+        self.fit_bias = fit_bias
+
+    def forward(self, input, proba=False):
+        out = super(Linear, self).forward(input)
+        if proba:
+            return out.sigmoid()
+        return out
+
+    def fit(self, x, y, criterion=None):
+        use_cuda = self.weight.data.is_cuda
+        if criterion is None:
+            criterion = nn.BCEWithLogitsLoss()
+        reduction = criterion.reduction
+        criterion.reduction = 'sum'
+        if isinstance(x, np.ndarray) or isinstance(y, np.ndarray):
+            x = torch.from_numpy(x)
+            y = torch.from_numpy(y)
+        if use_cuda:
+            x = x.cuda()
+            y = y.cuda()
+
+        def eval_loss(w):
+            w = w.reshape((self.out_features, -1))
+            if self.weight.grad is not None:
+                self.weight.grad = None
+            if self.bias is None:
+                self.weight.data.copy_(torch.from_numpy(w))
+            else:
+                if self.bias.grad is not None:
+                    self.bias.grad = None
+                self.weight.data.copy_(torch.from_numpy(w[:, :-1]))
+                self.bias.data.copy_(torch.from_numpy(w[:, -1]))
+            y_pred = self(x).squeeze_(-1)
+            loss = criterion(y_pred, y)
+            loss.backward()
+            if self.alpha != 0.0:
+                penalty = 0.5 * self.alpha * torch.norm(self.weight)**2
+                loss = loss + penalty
+            return loss.item()
+
+        def eval_grad(w):
+            dw = self.weight.grad.data
+            if self.alpha != 0.0:
+                dw.add_(self.weight.data, alpha=self.alpha)
+            if self.bias is not None:
+                db = self.bias.grad.data
+                dw = torch.cat((dw, db.view(-1, 1)), dim=1)
+            return dw.cpu().numpy().ravel().astype("float64")
+
+        w_init = self.weight.data
+        if self.bias is not None:
+            w_init = torch.cat((w_init, self.bias.data.view(-1, 1)), dim=1)
+        w_init = w_init.cpu().numpy().astype("float64")
+
+        w = optimize.fmin_l_bfgs_b(
+            eval_loss, w_init, fprime=eval_grad, maxiter=1000, disp=0)
+        if isinstance(w, tuple):
+            w = w[0]
+
+        w = w.reshape((self.out_features, -1))
+        self.weight.grad.data.zero_()
+        if self.bias is None:
+            self.weight.data.copy_(torch.from_numpy(w))
+        else:
+            self.bias.grad.data.zero_()
+            self.weight.data.copy_(torch.from_numpy(w[:, :-1]))
+            self.bias.data.copy_(torch.from_numpy(w[:, -1]))
+        criterion.reduction = reduction
+
+    def decision_function(self, x):
+        x = torch.from_numpy(x)
+        return self(x).data.numpy().ravel()
+
+    def predict(self, x):
+        return self.decision_function(x)
+
+    def predict_proba(self, x):
+        return self._predict_proba_lr(x)
+
+    @property
+    def coef_(self):
+        return self.weight.data.numpy()
+
+    @property
+    def intercept_(self):
+        return self.bias.data.numpy()
+
+File Path: gckn/loss.py
+Content:
+# -*- coding: utf-8 -*-
+import torch
+from torch import nn
+import torch.nn.functional as F
+from torch.nn.modules.loss import _Loss
+
+
+class HingeLoss(_Loss):
+    def __init__(self, nclass=10, weight=None, size_average=None, reduce=None,
+                 reduction='elementwise_mean', pos_weight=None, squared=True):
+        super(HingeLoss, self).__init__(size_average, reduce, reduction)
+        self.nclass = nclass
+        self.squared = squared
+        self.register_buffer('weight', weight)
+        self.register_buffer('pos_weight', pos_weight)
+
+    def forward(self, input, target):
+        if not (target.size(0) == input.size(0)):
+            raise ValueError(
+                "Target size ({}) must be the same as input size ({})".format(target.size(), input.size()))
+        if self.pos_weight is not None:
+            pos_weight = 1 + (self.pos_weight - 1) * target
+        target = 2 * F.one_hot(target, num_classes=self.nclass) - 1
+        target = target.float()
+        loss = F.relu(1. - target * input)
+        if self.squared:
+            loss = 0.5 * loss ** 2
+        if self.weight is not None:
+            loss = loss * self.weight
+        if self.pos_weight is not None:
+            loss = loss * pos_weight
+        loss = loss.sum(dim=-1)
+        if self.reduction == 'none':
+            return loss
+        elif self.reduction == 'elementwise_mean':
+            return loss.mean()
+        else:
+            return loss.sum()
+
+LOSS = {
+    'ce': nn.CrossEntropyLoss,
+    'hinge': HingeLoss,
+}
+
+File Path: gckn/models.py
+Content:
+# -*- coding: utf-8 -*-
+import torch
+from torch import nn
+from gckn.layers import PathLayer, NodePooling, Linear
+
+
+class PathSequential(nn.Module):
+    def __init__(self, input_size, hidden_sizes, path_sizes,
+                 kernel_funcs=None, kernel_args_list=None,
+                 pooling='mean', 
+                 aggregation=False, **kwargs):
+        super(PathSequential, self).__init__()
+        self.input_size = input_size
+        self.hidden_sizes = hidden_sizes
+        self.path_sizes = path_sizes
+        self.n_layers = len(hidden_sizes)
+        self.aggregation = aggregation
+
+        layers = []
+        output_size = hidden_sizes[-1]
+        for i in range(self.n_layers):
+            if kernel_funcs is None:
+                kernel_func = "exp"
+            else:
+                kernel_func = kernel_funcs[i]
+            if kernel_args_list is None:
+                kernel_args = 0.5
+            else:
+                kernel_args = kernel_args_list[i]
+
+            layer = PathLayer(input_size, hidden_sizes[i], path_sizes[i],
+                              kernel_func, kernel_args, pooling, aggregation,
+                              **kwargs)
+            layers.append(layer)
+            input_size = hidden_sizes[i]
+            if aggregation:
+                output_size *= path_sizes[i]
+        self.output_size = output_size
+
+        self.layers = nn.ModuleList(layers)
+
+    def __getitem__(self, idx):
+        return self.layers[idx]
+
+    def __len__(self):
+        return self.n_layers
+
+    def __iter__(self):
+        return iter(self.layers._modules.values())
+
+    def forward(self, features, paths_indices, other_info):
+        output = features
+        for layer in self.layers:
+            output = layer(output, paths_indices, other_info)
+        return output
+
+    def representation(self, features, paths_indices, other_info, n=-1):
+        if n == -1:
+            n = self.n_layers
+        for i in range(n):
+            features = self.layers[i](features, paths_indices, other_info)
+        return features
+
+    def normalize_(self):
+        for module in self.layers:
+            module.normalize_()
+
+    def unsup_train(self, data_loader, n_sampling_paths=100000,
+                    init=None, use_cuda=False):
+        self.train(False)
+        for i, layer in enumerate(self.layers):
+            print("Training layer {}".format(i + 1))
+            n_sampled_paths = 0
+            try:
+                n_paths_per_batch = (
+                    n_sampling_paths + len(data_loader) - 1
+                    ) // len(data_loader)
+            except Exception:
+                n_paths_per_batch = 1000
+
+            paths = torch.Tensor(
+                n_sampling_paths, layer.path_size, layer.input_size)
+            if use_cuda:
+                paths = paths.cuda()
+
+            for data in data_loader.make_batch():
+                if n_sampled_paths >= n_sampling_paths:
+                    continue
+                features = data['features']
+                paths_indices = data['paths']
+                n_paths = data['n_paths']
+                n_nodes = data['n_nodes']
+
+                if use_cuda:
+                    features = features.cuda()
+                    if isinstance(n_paths, list):
+                        paths_indices = [p.cuda() for p in paths_indices]
+                        n_paths = [p.cuda() for p in n_paths]
+                    else:
+                        paths_indices = paths_indices.cuda()
+                        n_paths = n_paths.cuda()
+                    n_nodes = n_nodes.cuda()
+                with torch.no_grad():
+                    features = self.representation(
+                        features, paths_indices,
+                        {'n_paths': n_paths, 'n_nodes': n_nodes}, i)
+                    paths_batch = layer.sample_paths(
+                        features, paths_indices, n_paths_per_batch)
+                    size = paths_batch.shape[0]
+                    size = min(size, n_sampling_paths - n_sampled_paths)
+                    paths[n_sampled_paths: n_sampled_paths + size
+                          ] = paths_batch[:size]
+                    n_sampled_paths += size
+
+            print("total number of sampled paths: {}".format(n_sampled_paths))
+            paths = paths[:n_sampled_paths]
+            layer.unsup_train(paths, init=init)
+
+
+class GCKNetFeature(nn.Module):
+    def __init__(self, input_size, hidden_sizes, path_sizes,
+                 kernel_funcs=None, kernel_args_list=None,
+                 pooling='mean', global_pooling='sum',
+                 aggregation=False, **kwargs):
+        super().__init__()
+        self.path_layers = PathSequential(
+            input_size, hidden_sizes, path_sizes,
+            kernel_funcs, kernel_args_list,
+            pooling, aggregation, **kwargs)
+        self.node_pooling = NodePooling(global_pooling)
+        self.output_size = self.path_layers.output_size
+
+    def forward(self, input, paths_indices, other_info):
+        output = self.path_layers(input, paths_indices, other_info)
+        return self.node_pooling(output, other_info)
+
+    def unsup_train(self, data_loader, n_sampling_paths=100000,
+                    init=None, use_cuda=False):
+        self.path_layers.unsup_train(data_loader, n_sampling_paths,
+                                     init, use_cuda)
+
+    def predict(self, data_loader, use_cuda=False):
+        if use_cuda:
+            self.cuda()
+        self.eval()
+        output = torch.Tensor(data_loader.n, self.output_size)
+
+        batch_start = 0
+        for data in data_loader.make_batch(shuffle=False):
+            features = data['features']
+            paths_indices = data['paths']
+            n_paths = data['n_paths']
+            n_nodes = data['n_nodes']
+            size = len(n_nodes)
+            if use_cuda:
+                features = features.cuda()
+                if isinstance(n_paths, list):
+                    paths_indices = [p.cuda() for p in paths_indices]
+                    n_paths = [p.cuda() for p in n_paths]
+                else:
+                    paths_indices = paths_indices.cuda()
+                    n_paths = n_paths.cuda()
+                n_nodes = n_nodes.cuda()
+            with torch.no_grad():
+                batch_out = self(features, paths_indices,
+                                 {'n_paths': n_paths,
+                                  'n_nodes': n_nodes}
+                                 ).cpu()
+            output[batch_start: batch_start + size] = batch_out
+            batch_start += size
+        return output, data_loader.labels
+
+
+class GCKNet(nn.Module):
+    def __init__(self, nclass, input_size, hidden_sizes, path_sizes,
+                 kernel_funcs=None, kernel_args_list=None,
+                 pooling='mean', global_pooling='sum',
+                 aggregation=False, weight_decay=0.0,
+                 batch_norm=False,
+                 **kwargs):
+        super().__init__()
+
+        self.features = GCKNetFeature(
+            input_size, hidden_sizes, path_sizes,
+            kernel_funcs, kernel_args_list,
+            pooling, global_pooling, aggregation, **kwargs)
+        self.output_size = self.features.output_size
+        self.nclass = nclass
+
+        self.batch_norm = batch_norm
+        if batch_norm:
+            self.bn_layer = nn.BatchNorm1d(self.output_size)
+
+        self.classifier = Linear(self.output_size, nclass, weight_decay)
+
+    def representation(self, input, paths_indices, other_info):
+        return self.features(input, paths_indices, other_info)
+
+    def forward(self, input, paths_indices, other_info):
+        features = self.representation(input, paths_indices, other_info)
+        if self.batch_norm:
+            features = self.bn_layer(features)
+        return self.classifier(features)
+
+    def unsup_train(self, data_loader, n_sampling_paths=100000,
+                    init=None, use_cuda=False):
+        self.features.unsup_train(data_loader=data_loader,
+                                  n_sampling_paths=n_sampling_paths,
+                                  init=init, use_cuda=use_cuda)
+
+    def unsup_train_classifier(self, data_loader, criterion, use_cuda=False):
+        encoded_data, labels = self.features.predict(data_loader, use_cuda)
+        print(encoded_data.shape)
+        self.classifier.fit(encoded_data, labels, criterion)
+
+File Path: gckn/ops.py
+Content:
+# -*- coding: utf-8 -*-
+import torch 
+
+
+class MatrixInverseSqrt(torch.autograd.Function):
+    """Matrix inverse square root for a symmetric definite positive matrix
+    """
+    @staticmethod
+    def forward(ctx, input, eps=1e-2):
+        dim = input.dim()
+        ctx.dim = dim
+        use_cuda = input.is_cuda
+        if input.size(0) < 300:
+            input = input.cpu()
+        # e, v = torch.symeig(input, eigenvectors=True)
+        e, v = torch.linalg.eigh(input, UPLO='U')
+        if use_cuda and input.size(0) < 300:
+            e = e.cuda()
+            v = v.cuda()
+        e = e.clamp(min=0)
+        e_sqrt = e.sqrt_().add_(eps)
+        ctx.save_for_backward(e_sqrt, v)
+        e_rsqrt = e_sqrt.reciprocal()
+
+        if dim > 2:
+            output = v.bmm(v.permute(0, 2, 1) * e_rsqrt.unsqueeze(-1))
+        else:
+            output = v.mm(v.t() * e_rsqrt.view(-1, 1))
+        return output
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        e_sqrt, v = ctx.saved_variables
+        if ctx.dim > 2:
+            ei = e_sqrt.unsqueeze(1).expand_as(v)
+            ej = e_sqrt.unsqueeze(-1).expand_as(v)
+        else:
+            ei = e_sqrt.expand_as(v)
+            ej = e_sqrt.view(-1, 1).expand_as(v)
+        f = torch.reciprocal((ei + ej) * ei * ej)
+        if ctx.dim > 2:
+            vt = v.permute(0, 2, 1)
+            grad_input = -v.bmm((f*(vt.bmm(grad_output.bmm(v)))).bmm(vt))
+        else:
+            grad_input = -v.mm((f*(v.t().mm(grad_output.mm(v)))).mm(v.t()))
+        return grad_input, None
+
+
+def matrix_inverse_sqrt(input, eps=1e-2):
+    """Wrapper for MatrixInverseSqrt"""
+    return MatrixInverseSqrt.apply(input, eps)
+
+
+if __name__ == "__main__":
+    torch.manual_seed(0)
+    # x = torch.rand(1, 3, 3)
+    # x = torch.bmm(x, x.permute(0, 2, 1))
+    x = torch.rand(3, 3)
+    x = torch.mm(x, x.t())
+    x.unsqueeze_(0)
+    x = x.repeat(5, 1, 1)
+    x.requires_grad_()
+    out = matrix_inverse_sqrt(x)
+    print(out)
+    out = out.sum()
+    out.backward()
+    print(x.grad)
+
+File Path: gckn/path_conv_agg.py
+Content:
+# -*- coding: utf-8 -*-
+import torch
+from gckn.gckn_fast.gckn_fast import path_conv_forward, path_conv_backward
+from gckn.dynamic_pooling.pooling import dpooling_forward, dpooling_backward
+
+
+MAXRAM = int(5e9)
+# MAXRAM = int(5e7)
+# MAXRAM = int(100000)
+
+def get_batch_indices(array, batch_size):
+    indices = [0]
+    s = 0
+    for i, v in enumerate(array):
+        s += v.item()
+        if s > batch_size:
+            indices.append(i)
+            s = v.item()
+    indices.append(len(array))
+    return indices
+
+class PathConvAggregation(torch.autograd.Function):
+    """Path extraction + convolution + aggregation
+    features: n_nodes x path_size x hidden_size
+    path_indices: n_paths x path_size
+    kernel_size: n_nodes (sum = n_paths)
+    pooling: {sum, mean, max}
+    """
+    @staticmethod
+    def forward(ctx, features, path_indices, kernel_size, pooling='sum', kappa=torch.exp, d_kappa=torch.exp):
+        batch_size = MAXRAM // (features.shape[-1] * features.element_size())
+        indices = get_batch_indices(kernel_size, batch_size)
+        batch_index = 0
+        output = []
+        active_indices = []
+        n_paths_list = []
+        # print(len(indices))
+        for i in range(len(indices) - 1):
+            batch_kernel_size = kernel_size[indices[i]:indices[i+1]]
+            size = batch_kernel_size.sum().item()
+            batch_path_indices = path_indices[batch_index: batch_index + size]
+            embeded = path_conv_forward(batch_path_indices, features)
+            embeded = kappa(embeded)
+            embeded, active_index = dpooling_forward(embeded, batch_kernel_size, pooling=pooling)
+            output.append(embeded)
+            active_indices.append(active_index)
+            n_paths_list.append(size)
+            batch_index += size
+        output = torch.cat(output)
+        active_indices = torch.cat(active_indices)
+        ctx.save_for_backward(path_indices, active_indices, features)
+        ctx.indices = indices
+        ctx.size = features.size()
+        ctx.d_kappa = d_kappa
+        ctx.pooling = pooling
+        ctx.n_paths_list = n_paths_list
+        return output
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        grad_output = grad_output.contiguous()
+        grad_input = grad_output.new_zeros(ctx.size)
+        indices = ctx.indices
+        path_indices, active_indices, features = ctx.saved_variables
+        batch_index = 0
+        grad_embed = grad_output.new_zeros(max(ctx.n_paths_list), ctx.size[-1])
+        for i in range(len(indices) - 1):
+            n_paths = ctx.n_paths_list[i]
+            batch_path_indices = path_indices[batch_index: batch_index + n_paths]
+            batch_index += n_paths
+            # grad_embed = grad_output.new_zeros(n_paths, ctx.size[-1])
+            grad_embed.zero_()
+            dpooling_backward(grad_embed, grad_output[indices[i]:indices[i+1]], active_indices[indices[i]:indices[i+1]], ctx.pooling)
+            embeded = path_conv_forward(batch_path_indices, features)
+            embeded = ctx.d_kappa(embeded)
+            grad_embed[:embeded.shape[0]].mul_(embeded)
+            path_conv_backward(grad_input, grad_embed, batch_path_indices)
+        return grad_input, None, None, None, None, None
+
+from gckn.dynamic_pooling.pooling import dpooling_torch, dpooling
+from gckn.gckn_fast.gckn_fast import path_conv, PathConv
+def path_conv_agg_torch(features, path_indices, kernel_size, pooling='sum', kappa=torch.exp, d_kappa=None, mask=None):
+    embeded = path_conv(path_indices, features)
+    embeded = kappa(embeded)
+    embeded = dpooling_torch(embeded, kernel_size, pooling)
+    return embeded
+
+def path_conv_agg(features, path_indices, kernel_size, pooling='sum', kappa=torch.exp, d_kappa=torch.exp, mask=None):
+    ram_saving = MAXRAM <= (2 * path_indices.shape[0] * features.shape[-1] * features.element_size())
+    if ram_saving and mask is None:
+        return PathConvAggregation.apply(
+            features, path_indices, kernel_size, pooling, kappa, d_kappa)
+    embeded = PathConv.apply(path_indices, features)
+    embeded = kappa(embeded)
+    if mask is not None:
+        embeded = embeded * mask.view(-1, 1)
+    embeded = dpooling(embeded, kernel_size, pooling)
+    return embeded
+
+def test(cuda=False):
+    torch.manual_seed(1234)
+
+    pooling = 'sum'
+    path_size = 5
+    n_nodes = 100
+    hidden_size = 32
+    # n_paths = 10000
+    max_length = 1000
+    kappa = lambda x: torch.exp(2.*(x - 1.))
+    d_kappa = lambda x: 2. * kappa(x)
+
+    x = torch.randn(n_nodes, path_size+5, hidden_size)
+    kernel_size = torch.randint(0, max_length, (n_nodes,))
+    n_paths = kernel_size.sum().item()
+    path_indices = torch.randint(0, n_nodes, (n_paths, path_size))
+    print(path_indices.shape)
+    if cuda:
+        x = x.cuda()
+        kernel_size = kernel_size.cuda()
+        n_paths = n_paths.cuda()
+        path_indices = path_indices.cuda()
+
+    x.requires_grad_()
+
+    print('start')
+    out = PathConvAggregation.apply(x, path_indices, kernel_size, pooling, kappa, d_kappa)
+    out1 = out.data
+    out = out.mean()
+    out.backward()
+    grad1 = x.grad.data
+    x.grad = None
+
+    out = path_conv_agg(x, path_indices, kernel_size, pooling, kappa=kappa)
+    out2 = out.data
+    out = out.mean()
+    out.backward()
+    grad2 = x.grad.data
+    # print(grad2)
+    print(torch.max(torch.abs(out1 - out2)))
+    print(torch.max(torch.abs(grad1 - grad2)))
+
+    import time
+    forward = 0
+    backward = 0
+    n_iter = 10
+    for _ in range(n_iter):
+        start = time.time()
+        out = PathConvAggregation.apply(x, path_indices, kernel_size, pooling, kappa)
+        if cuda:
+            torch.cuda.synchronize()
+        forward += time.time() - start
+
+        out = out.mean()
+        start = time.time()
+        out.backward()
+        if cuda:
+            torch.cuda.synchronize()
+        backward += time.time() - start
+
+    print('Mine Forward: {:.3f} ms | Backward {:.3f} ms'.format(forward * 1e3/n_iter, backward * 1e3/n_iter))
+
+    import time
+    forward = 0
+    backward = 0
+    n_iter = 10
+    for _ in range(n_iter):
+        start = time.time()
+        out = path_conv_agg(x, path_indices, kernel_size, pooling, kappa)
+        if cuda:
+            torch.cuda.synchronize()
+        forward += time.time() - start
+
+        out = out.mean()
+        start = time.time()
+        out.backward()
+        if cuda:
+            torch.cuda.synchronize()
+        backward += time.time() - start
+
+    print('Pytorch Forward: {:.3f} ms | Backward {:.3f} ms'.format(forward * 1e3/n_iter, backward * 1e3/n_iter))
+
+if __name__ == '__main__':
+    test()
+
+File Path: gckn/setup.py
+Content:
+def configuration(parent_package='', top_path=None):
+    from numpy.distutils.misc_util import Configuration
+
+    config = Configuration('gckn', parent_package, top_path)
+
+    config.add_subpackage('graphs')
+
+    return config
+
+
+if __name__ == '__main__':
+    from numpy.distutils.core import setup
+    setup(**configuration(top_path='').todict())
+
+File Path: gckn/utils.py
+Content:
+# -*- coding: utf-8 -*-
+import math
+import numpy as np
+import torch
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.utils.validation import check_is_fitted
+
+EPS = 1e-4
+
+
+def normalize_(x, p=2, dim=-1, c2=1.):
+    norm = x.norm(p=p, dim=dim, keepdim=True)
+    x.div_(norm.clamp(min=EPS) / math.sqrt(c2))
+    return x
+
+def init_kmeans(x, n_clusters, norm=1., n_local_trials=None, use_cuda=False):
+    n_samples, n_features = x.size()
+    clusters = torch.Tensor(n_clusters, n_features)
+    if use_cuda:
+        clusters = clusters.cuda()
+
+    if n_local_trials is None:
+        n_local_trials = 2 + int(np.log(n_clusters))
+    clusters[0] = x[np.random.randint(n_samples)]
+
+    closest_dist_sq = 2 * (norm - clusters[[0]].mm(x.t()))
+    closest_dist_sq = closest_dist_sq.view(-1)
+    current_pot = closest_dist_sq.sum().item()
+
+    for c in range(1, n_clusters):
+        rand_vals = np.random.random_sample(n_local_trials).astype('float32') * current_pot
+        rand_vals = np.minimum(rand_vals, current_pot * (1.0 - EPS))
+        candidate_ids = np.searchsorted(closest_dist_sq.cumsum(-1).cpu(), rand_vals)
+        distance_to_candidates = 2 * (norm - x[candidate_ids].mm(x.t()))
+
+        best_candidate = None
+        best_pot = None
+        best_dist_sq = None
+        for trial in range(n_local_trials):
+            # Compute potential when including center candidate
+            new_dist_sq = torch.min(closest_dist_sq,
+                                    distance_to_candidates[trial])
+            new_pot = new_dist_sq.sum().item()
+
+            # Store result if it is the best local trial so far
+            if (best_candidate is None) or (new_pot < best_pot):
+                best_candidate = candidate_ids[trial]
+                best_pot = new_pot
+                best_dist_sq = new_dist_sq
+
+        clusters[c] = x[best_candidate]
+        current_pot = best_pot
+        closest_dist_sq = best_dist_sq
+
+    return clusters
+
+def spherical_kmeans(x, n_clusters, max_iters=100, verbose=True,
+                     init=None, eps=1e-4):
+    """Spherical kmeans
+    Args:
+        x (Tensor n_samples x kmer_size x n_features): data points
+        n_clusters (int): number of clusters
+    """
+    use_cuda = x.is_cuda
+    if x.ndim == 3:
+        n_samples, kmer_size, n_features = x.size()
+    else:
+        n_samples, n_features = x.size()
+    if init == "kmeans++":
+        print(init)
+        if x.ndim == 3:
+            clusters = init_kmeans(x.view(n_samples, -1), n_clusters, norm=kmer_size, use_cuda=use_cuda)
+            clusters = clusters.view(n_clusters, kmer_size, n_features)
+        else:
+            clusters = init_kmeans(x, n_clusters, use_cuda=use_cuda)
+    else:
+        indices = torch.randperm(n_samples)[:n_clusters]
+        if use_cuda:
+            indices = indices.cuda()
+        clusters = x[indices]
+
+    prev_sim = np.inf
+
+    for n_iter in range(max_iters):
+        # assign data points to clusters
+        cos_sim = x.view(n_samples, -1).mm(clusters.view(n_clusters, -1).t())
+        tmp, assign = cos_sim.max(dim=-1)
+        sim = tmp.mean()
+        if (n_iter + 1) % 10 == 0 and verbose:
+            print("Spherical kmeans iter {}, objective value {}".format(
+                n_iter + 1, sim))
+
+        # update clusters
+        for j in range(n_clusters):
+            index = assign == j
+            if index.sum() == 0:
+                # clusters[j] = x[random.randrange(n_samples)]
+                idx = tmp.argmin()
+                clusters[j] = x[idx]
+                tmp[idx] = 1
+            else:
+                xj = x[index]
+                c = xj.mean(0)
+                clusters[j] = c / c.norm(dim=-1, keepdim=True).clamp(min=EPS)
+
+        if torch.abs(prev_sim - sim)/(torch.abs(sim)+1e-20) < 1e-6:
+            break
+        prev_sim = sim
+    return clusters
+
+File Path: setup.py
+Content:
+#! /usr/bin/env python
+
+import os
+import sys
+
+from Cython.Build import cythonize
+from setuptools import find_packages
+
+def configuration(parent_package='', top_path=None):
+    if os.path.exists('MANIFEST'):
+        os.remove('MANIFEST')
+
+    from numpy.distutils.misc_util import Configuration
+    config = Configuration(None, parent_package, top_path)
+
+    config.set_options(ignore_setup_xxx_py=True,
+                       assume_default_configuration=True,
+                       delegate_options_to_subpackages=True,
+                       quiet=True)
+
+    config.add_subpackage('gckn')
+
+    config.ext_modules = cythonize(config.ext_modules, nthreads=4)
+
+    return config
+
+if __name__ == "__main__":
+    from numpy.distutils.core import setup
+    setup(**configuration(top_path='').todict())
+
+Output:
+{
+    "experimental_code": "import math\nimport torch\nfrom torch import nn\nimport torch.nn.functional as F\nimport numpy as np\nfrom timeit import default_timer as timer\nimport networkx as nx\nimport os\n\n# Assuming these are available from internal gckn modules:\n# from gckn import ops\n# from gckn.kernels import kernels, d_kernels\n# from gckn.utils import EPS, normalize_, spherical_kmeans, init_kmeans\n# from gckn.path_conv_agg import path_conv_agg\n# from gckn.graphs.graphs_fast import get_paths, get_walks\n# from gckn.dynamic_pooling.pooling import dpooling_torch, DPoolingSum, DPoolingMax\n# from gckn.gckn_fast.gckn_fast import PathConv, path_conv\n# from gckn.models import GCKNetFeature, PathSequential\n# from gckn.layers import NodePooling, Linear\n\n# --- GCKN Layer (gckn/layers.py) ---\nclass PathLayer(nn.Module):\n    def __init__(self, input_size, hidden_size, path_size=1,\n                 kernel_func='exp', kernel_args=[0.5], pooling='mean',\n                 aggregation=False):\n        super().__init__()\n        self.input_size = input_size\n        self.hidden_size = hidden_size\n        self.path_size = path_size\n        self.pooling = pooling\n        self.aggregation = aggregation and (path_size > 1)\n        self.kernel_func = kernel_func\n        if isinstance(kernel_args, (int, float)):\n            kernel_args = [kernel_args]\n        if kernel_func == 'exp':\n            kernel_args = [1. / kernel_arg ** 2 for kernel_arg in kernel_args]\n        self.kernel_args = kernel_args\n        self.kappa = lambda x: kernels[kernel_func](x, *self.kernel_args)\n        self.d_kappa = lambda x: d_kernels[kernel_func](x, *self.kernel_args)\n        self._need_lintrans_computed = True\n        self.weight = nn.Parameter(\n            torch.Tensor(path_size, hidden_size, input_size))\n        if self.aggregation:\n            self.register_buffer('lintrans', torch.Tensor(path_size, hidden_size, hidden_size))\n            self.register_buffer('divider', torch.arange(1., path_size + 1).view(-1, 1, 1))\n        else:\n            self.register_buffer('lintrans', torch.Tensor(hidden_size, hidden_size))\n        self.reset_parameters()\n\n    def reset_parameters(self):\n        stdv = 1. / math.sqrt(self.hidden_size)\n        for w in self.parameters():\n            if w.dim() > 1:\n                w.data.uniform_(-stdv, stdv)\n        normalize_(self.weight.data, dim=-1)\n\n    def _compute_lintrans(self):\n        if not self._need_lintrans_computed:\n            return self.lintrans\n        lintrans = torch.bmm(self.weight, self.weight.permute(0, 2, 1))\n        if self.aggregation:\n            lintrans = lintrans.cumsum(dim=0) / self.divider\n        else:\n            lintrans = lintrans.mean(dim=0)\n        lintrans = self.kappa(lintrans)\n        lintrans = ops.matrix_inverse_sqrt(lintrans)\n        if not self.training:\n            self._need_lintrans_computed = False\n            self.lintrans.data.copy_(lintrans.data)\n        return lintrans\n\n    def forward(self, features, paths_indices, other_info):\n        normalize_(self.weight.data, dim=-1)\n        norms = features.norm(dim=-1, keepdim=True)\n        output = torch.tensordot(features, self.weight, dims=[[-1], [-1]])\n        output = output / norms.clamp(min=EPS).unsqueeze(2)\n        n_nodes = output.shape[0]\n        if output.ndim == 4:\n            output = output.permute(0, 2, 1, 3).contiguous()\n        mask = None\n        if self.aggregation:\n            mask = [None for _ in range(self.path_size)]\n        if 'mask' in other_info and self.path_size > 1:\n            mask = other_info['mask']\n        output = output.view(n_nodes, self.path_size, -1)\n        if self.aggregation:\n            outputs = []\n            for i in range(self.path_size):\n                embeded = path_conv_agg(\n                    output, paths_indices[i], other_info['n_paths'][i],\n                    self.pooling, self.kappa, self.d_kappa, mask[i])\n                outputs.append(embeded)\n            output = torch.stack(outputs, dim=0)\n            output = output.view(self.path_size, -1, self.hidden_size)\n            output = norms.view(1, -1, 1) * output\n        else:\n            embeded = path_conv_agg(\n                output, paths_indices[self.path_size - 1],\n                other_info['n_paths'][self.path_size - 1],\n                self.pooling, self.kappa, self.d_kappa, mask)\n            output = embeded.view(n_nodes, -1, self.hidden_size)\n            output = norms.view(n_nodes, -1, 1) * output\n        lintrans = self._compute_lintrans()\n        if self.aggregation:\n            output = output.bmm(lintrans)\n            output = output.permute(1, 0, 2)\n            output = output.reshape(n_nodes, -1, self.hidden_size)\n            output = output.contiguous()\n        else:\n            output = torch.tensordot(output, lintrans, dims=[[-1], [-1]])\n        return output\n\n    def unsup_train(self, paths, init=None):\n        normalize_(paths, dim=-1)\n        weight = spherical_kmeans(paths, self.hidden_size, init='kmeans++')\n        weight = weight.permute(1, 0, 2)\n        self.weight.data.copy_(weight)\n        self.normalize_()\n        self._need_lintrans_computed = True\n\n# --- GCKNet Model (gckn/models.py) ---\nclass GCKNet(nn.Module):\n    def __init__(self, nclass, input_size, hidden_sizes, path_sizes,\n                 kernel_funcs=None, kernel_args_list=None,\n                 pooling='mean', global_pooling='sum',\n                 aggregation=False, weight_decay=0.0,\n                 batch_norm=False, **kwargs):\n        super().__init__()\n        self.features = GCKNetFeature(\n            input_size, hidden_sizes, path_sizes,\n            kernel_funcs, kernel_args_list,\n            pooling, global_pooling, aggregation, **kwargs)\n        self.output_size = self.features.output_size\n        self.nclass = nclass\n        self.batch_norm = batch_norm\n        if batch_norm:\n            self.bn_layer = nn.BatchNorm1d(self.output_size)\n        self.classifier = Linear(self.output_size, nclass, weight_decay)\n\n    def forward(self, input, paths_indices, other_info):\n        features = self.features(input, paths_indices, other_info)\n        if self.batch_norm:\n            features = self.bn_layer(features)\n        return self.classifier(features)\n\n    def unsup_train(self, data_loader, n_sampling_paths=100000,\n                    init=None, use_cuda=False):\n        self.features.unsup_train(data_loader=data_loader,\n                                  n_sampling_paths=n_sampling_paths,\n                                  init=init, use_cuda=use_cuda)\n\n    def unsup_train_classifier(self, data_loader, criterion, use_cuda=False):\n        encoded_data, labels = self.features.predict(data_loader, use_cuda)\n        self.classifier.fit(encoded_data, labels, criterion)\n\n# --- Unsupervised Filter Learning (gckn/utils.py) ---\ndef spherical_kmeans(x, n_clusters, max_iters=100, verbose=True,\n                     init=None, eps=1e-4):\n    use_cuda = x.is_cuda\n    if x.ndim == 3:\n        n_samples, kmer_size, n_features = x.size()\n    else:\n        n_samples, n_features = x.size()\n    if init == \"kmeans++\":\n        if x.ndim == 3:\n            clusters = init_kmeans(x.view(n_samples, -1), n_clusters, norm=kmer_size, use_cuda=use_cuda)\n            clusters = clusters.view(n_clusters, kmer_size, n_features)\n        else:\n            clusters = init_kmeans(x, n_clusters, use_cuda=use_cuda)\n    else:\n        indices = torch.randperm(n_samples)[:n_clusters]\n        if use_cuda:\n            indices = indices.cuda()\n        clusters = x[indices]\n    prev_sim = np.inf\n    for n_iter in range(max_iters):\n        cos_sim = x.view(n_samples, -1).mm(clusters.view(n_clusters, -1).t())\n        tmp, assign = cos_sim.max(dim=-1)\n        sim = tmp.mean()\n        for j in range(n_clusters):\n            index = assign == j\n            if index.sum() == 0:\n                idx = tmp.argmin()\n                clusters[j] = x[idx]\n                tmp[idx] = 1\n            else:\n                xj = x[index]\n                c = xj.mean(0)\n                normalize_(c, dim=-1, c2=1.0)\n                clusters[j] = c\n        if torch.abs(prev_sim - sim)/(torch.abs(sim)+1e-20) < 1e-6:\n            break\n        prev_sim = sim\n    return clusters\n\n# --- Gaussian Kernel (gckn/kernels.py) ---\ndef exp(x, alpha):\n    return torch.exp(alpha*(x - 1.))\nkernels = {\"exp\": exp}\nd_kernels = {\"exp\": lambda x, alpha: alpha * torch.exp(alpha*(x - 1.))}\n\n# --- Path Acquisition (gckn/data.py) ---\nclass PathLoader(object):\n    def __init__(self, graphs, k, batch_size, aggregation=True, dataset='MUTAG', padding=False, walk=False, mask=False):\n        self.dataset = dataset\n        self.graphs = graphs\n        self.batch_size = batch_size\n        self.aggregation = aggregation\n        self.input_size = graphs[0].node_features.shape[-1]\n        self.n = len(graphs)\n        self.k = k\n        self.data = None\n        self.labels = None\n        self.padding = padding\n        self.walk = walk\n        self.mask = mask\n\n    def get_all_paths(self, dirname=None):\n        all_paths = []\n        n_paths = []\n        n_nodes = torch.zeros(self.n, dtype=torch.long)\n        if self.aggregation:\n            n_paths_for_graph = torch.zeros((self.n, self.k), dtype=torch.long)\n        else:\n            n_paths_for_graph = torch.zeros(self.n, dtype=torch.long)\n        features = []\n        labels = torch.zeros(self.n, dtype=torch.long)\n        mask_vec = []\n        for i, g in enumerate(self.graphs):\n            if self.walk:\n                p, c = get_walks(g, self.k)\n            else:\n                p, c = get_paths(g, self.k)\n            if self.aggregation:\n                all_paths.append([torch.from_numpy(p[j]) for j in range(self.k)])\n                n_paths.append([torch.from_numpy(c[:, j]) for j in range(self.k)])\n                n_paths_for_graph[i] = torch.LongTensor([len(p[j]) for j in range(self.k)])\n                if self.mask:\n                    mask_vec.append([torch.ones(len(p[j])) for j in range(self.k)])\n            else:\n                all_paths.append(torch.from_numpy(p[-1]))\n                n_paths.append(torch.from_numpy(c[:, -1]))\n                n_paths_for_graph[i] = len(p[-1])\n                mask_vec.append(torch.ones(len(p[-1])))\n            n_nodes[i] = len(g.neighbors)\n            features.append(torch.from_numpy(g.node_features.astype('float32')))\n            labels[i] = g.label\n        self.data = {\n            'features': features,\n            'paths': all_paths,\n            'n_paths': n_paths,\n            'n_paths_for_graph': n_paths_for_graph,\n            'n_nodes': n_nodes,\n            'labels': labels\n        }\n        self.mask_vec = mask_vec\n        self.labels = labels\n\n# --- Model Interpretation (experiments/main_sup.py & gckn/data_io.py) ---\ndef train_motif(epoch, mask, model, data_loader, criterion, optimizer,\n                mu, use_cuda=False):\n    running_loss = 0.0\n    running_acc = 0.0\n    tic = timer()\n    for data in data_loader.make_batch(False):\n        features = data['features']\n        paths_indices = data['paths']\n        n_paths = data['n_paths']\n        n_nodes = data['n_nodes']\n        labels = data['labels']\n        size = len(n_nodes)\n        if use_cuda:\n            features = features.cuda()\n            if isinstance(n_paths, list):\n                paths_indices = [p.cuda() for p in paths_indices]\n                n_paths = [p.cuda() for p in n_paths]\n            else:\n                paths_indices = paths_indices.cuda()\n                n_paths = n_paths.cuda()\n            n_nodes = n_nodes.cuda()\n            labels = labels.cuda()\n        def closure():\n            optimizer.zero_grad()\n            output = model(\n                features, paths_indices, {'n_paths': n_paths, 'n_nodes': n_nodes, 'mask': mask})\n            loss = criterion(output, labels)\n            for m in mask:\n                loss = loss + mu * m.abs().sum()\n            loss.backward()\n            return loss\n        optimizer.step(closure)\n        for m in mask:\n            m.data.clamp_(min=0, max=1)\n        output = model(\n            features, paths_indices, {'n_paths': n_paths, 'n_nodes': n_nodes, 'mask': mask})\n        loss = criterion(output, labels)\n        pred = output.data.argmax(dim=1)\n        running_loss += loss.item() * size\n        running_acc += torch.sum(pred == labels).item()\n    toc = timer()\n    epoch_loss = running_loss\n    epoch_acc = running_acc\n\ndef main_motif(args):\n    graphs, nclass = load_data(args.dataset, '../dataset', degree_as_tag=args.degree_as_tag)\n    model, model_args = load_model(args.outdir + '/model.pt')\n    if args.use_cuda:\n        model.cuda()\n    idx = args.graph_idx\n    torch.manual_seed(args.seed)\n    np.random.seed(args.seed)\n    graph = [graphs[idx]]\n    train_loader = PathLoader(graph, max(model_args.path_size), 1, True, mask=True)\n    train_loader.get_all_paths()\n    label = evaluate(model, train_loader, args.use_cuda)\n    if label.item() != 0 or graph[0].label != label.item():\n        pass\n    train_loader.labels = label\n    mask = train_loader.mask_vec[0]\n    if not isinstance(mask, list):\n        mask = [mask]\n    for i, m in enumerate(mask):\n        if args.use_cuda:\n            m = m.cuda()\n            mask[i] = m\n        m.fill_(1.)\n        m.requires_grad_()\n    model.eval()\n    optimizer = torch.optim.LBFGS(mask, lr=args.lr)\n    criterion = nn.CrossEntropyLoss()\n    for epoch in range(args.epochs):\n        train_motif(epoch, mask, model, train_loader, criterion, optimizer, args.mu,\n                    use_cuda=args.use_cuda)\n    mask = [m.data for m in mask]\n    paths = train_loader.data['paths'][0]\n    motif_graph = get_motif(mask, paths, graph[0].g)\n    outdir = args.outdir + '/motifs'\n    os.makedirs(outdir, exist_ok=True)\n    outdir = outdir + '/{}'.format(idx)\n    os.makedirs(outdir, exist_ok=True)\n    log_graph(graph[0].g, outdir, 'origin{}.pdf'.format(idx))\n    log_graph(motif_graph, outdir, 'motif{}_{}.pdf'.format(idx, label.item()))\n\ndef get_motif(mask, path_indices, graph, max_component=True, eps=0.1):\n    if not isinstance(mask, list):\n        mask = [mask]\n    if not isinstance(path_indices, list):\n        path_indices = [path_indices]\n    g = nx.Graph()\n    g.add_nodes_from(graph.nodes())\n    n = len(g.nodes())\n    for node in graph.nodes():\n        g.nodes[node]['tag'] = graph.nodes[node]['tag']\n    adj = np.zeros((n, n))\n    for m, path in zip(mask, path_indices):\n        if len(path[0]) <= 1:\n            continue\n        for i in range(len(m)):\n            if m[i] > eps:\n                p = path[i]\n                for j in range(len(p) - 1):\n                    adj[p[j], p[j+1]] += m[i]\n    adj /= np.max(adj)\n    edge_list = [(i, j, adj[i, j]) for i in range(n) for j in range(n) if adj[i, j] > eps]\n    g.add_weighted_edges_from(edge_list)\n    if max_component:\n        largest_cc = max(nx.connected_components(g), key=len)\n        g = g.subgraph(largest_cc).copy()\n    else:\n        g.remove_nodes_from(list(nx.isolates(g)))\n    return g",
+    "experimental_info": "GCKNs are evaluated on various graph classification datasets including bioinformatics datasets (MUTAG, PTC, NCI1, PROTEINS, PROTEINS_full, BZR, COX2, ENZYMES, Mutagenicity) and social network datasets (IMDBBINARY, IMDBMULTI, COLLAB). Node attributes can be continuous for some datasets (e.g., BZR, COX2) or discrete, with degree-as-tag used for social networks. The model architecture is configured with `path-size` (list of path lengths for each layer, e.g., [3]), `hidden-size` (number of filters/prototype paths per layer, e.g., [32]), `pooling` (local path pooling per node, e.g., 'sum' or 'mean'), and `global-pooling` (global node pooling per graph, e.g., 'sum' or 'mean'). The `aggregation` flag enables summing path features up to `path-size` for multi-scale representations. The primary `kernel-func` is 'exp' (exponential/Gaussian kernel) with `sigma` controlling its width (e.g., [0.5]), where sigma is used as 1/sigma^2. The model can use `walk`s instead of paths. Supervised training uses `epochs` (e.g., 300-350), `lr` (e.g., 0.01), `batch-size` (e.g., 32), `weight-decay` (e.g., 1e-04) for the classifier, and optionally `alternating` training. Filters are pre-trained unsupervised using `sampling-paths` (e.g., 300,000) for Nyström approximation. For graph classification, 10-fold cross-validation is performed. In unsupervised settings, after feature extraction, a classifier (e.g., `LinearSVC`, `RandomForestClassifier` from scikit-learn or `cyanure.LinearSVC`) is trained on the extracted features, often with hyperparameter tuning (e.g., `C` for SVM, `n_estimators`, `min_samples_split` for RandomForest) via GridSearchCV. For model interpretation, a specific graph (`graph-idx`) can be selected, and a motif-extracting process is applied using an L1-norm mask (`mu` parameter, e.g., 0.01) to identify important subgraphs related to the prediction."
+}
