@@ -1,0 +1,91 @@
+
+Input:
+The Python standard output and errors are provided below.
+Extract all information related to the experimental results from the standard output, and extract the Python error details from the errors, outputting them exactly as they are without any modifications.
+Do not extract unnecessary execution logs or information about Python package installations.
+
+# Standard Output
+=== [PHASE 2/2] Full experiment start Thu Sep 25 08:16:17 AM UTC 2025 ===
+Failed to load randall-lab/cifar10-c: Dataset scripts are no longer supported, but found cifar10-c.py
+Failed to load uoft-cs/cifar10-c: Dataset 'uoft-cs/cifar10-c' doesn't exist on the Hub or cannot be accessed.
+Failed to load imagenet-c/cifar10-c: Dataset 'imagenet-c/cifar10-c' doesn't exist on the Hub or cannot be accessed.
+Failed to load CIFAR-10-C/dataset: Dataset 'CIFAR-10-C/dataset' doesn't exist on the Hub or cannot be accessed.
+Warning: Failed to load CIFAR-10-C from HuggingFace. Using regular CIFAR-10 test set instead.
+Epochs == 0 → skipping supervised training (using pre-trained weights)
+
+===== EXPERIMENT SUMMARY =====
+{
+    "train_loss_per_epoch": [],
+    "val_acc_per_epoch": [],
+    "timestamp": "20250925_081643",
+    "config": {
+        "description": "FLASH-TTA \u2013 corruption robustness bench (CIFAR-10-C + ImageNet-C).\nUses pre-trained backbones and runs *no supervised training* (epochs: 0).\n",
+        "seed": 0,
+        "output_dir": "runs/full_experiment",
+        "figures_dir": "figures",
+        "experiment_id": "cifar10c_resnet50_flash_tta",
+        "dataset": {
+            "name": "CIFAR10C",
+            "path": "hf://randall-lab/cifar10-c",
+            "num_classes": 10
+        },
+        "model": {
+            "name": "resnet50.a1_in1k",
+            "pretrained": true,
+            "num_classes": 10,
+            "method": "flash_tta",
+            "proj_dim": 16,
+            "gru_hidden": 256
+        },
+        "training": {
+            "epochs": 0,
+            "batch_size": 128,
+            "lr": 0.0003
+        },
+        "evaluation": {
+            "batch_size": 256
+        }
+    },
+    "test_metrics": {
+        "accuracy_top1": 10.289999842643738,
+        "ece": 0.20670966382473704,
+        "brier": NaN,
+        "latency_ms_mean": 43.51708288192749,
+        "latency_ms_std": 93.69577031178557
+    }
+}
+==============================
+
+Failed to load ang9867/ImageNet-C: Unknown split "test". Should be one of ['train'].
+Failed to load imagenet-c/imagenet-c: Dataset 'imagenet-c/imagenet-c' doesn't exist on the Hub or cannot be accessed.
+Failed to load uoft-cs/imagenet-c: Dataset 'uoft-cs/imagenet-c' doesn't exist on the Hub or cannot be accessed.
+Failed to load ImageNet-C/dataset: Dataset 'ImageNet-C/dataset' doesn't exist on the Hub or cannot be accessed.
+
+
+# Error
+  0%|          | 0.00/170M [00:00<?, ?B/s]  0%|          | 32.8k/170M [00:00<15:19, 185kB/s]  0%|          | 65.5k/170M [00:00<15:07, 188kB/s]  0%|          | 98.3k/170M [00:00<14:48, 192kB/s]  0%|          | 229k/170M [00:00<06:46, 419kB/s]   0%|          | 459k/170M [00:00<03:47, 748kB/s]  1%|          | 918k/170M [00:01<02:01, 1.39MB/s]  1%|          | 1.84M/170M [00:01<01:02, 2.68MB/s]  2%|▏         | 3.67M/170M [00:01<00:31, 5.23MB/s]  4%|▍         | 6.82M/170M [00:01<00:17, 9.24MB/s]  6%|▌         | 9.96M/170M [00:01<00:13, 11.9MB/s]  8%|▊         | 13.0M/170M [00:01<00:11, 13.9MB/s]  9%|▉         | 16.2M/170M [00:02<00:10, 15.1MB/s] 11%|█▏        | 19.3M/170M [00:02<00:09, 16.0MB/s] 13%|█▎        | 22.4M/170M [00:02<00:09, 15.2MB/s] 15%|█▍        | 25.5M/170M [00:02<00:09, 15.9MB/s] 17%|█▋        | 28.6M/170M [00:02<00:08, 16.4MB/s] 19%|█▊        | 31.7M/170M [00:02<00:08, 16.8MB/s] 20%|██        | 34.6M/170M [00:03<00:08, 16.6MB/s] 22%|██▏       | 37.5M/170M [00:03<00:08, 16.5MB/s] 24%|██▍       | 40.6M/170M [00:03<00:07, 16.9MB/s] 26%|██▌       | 43.6M/170M [00:03<00:07, 16.9MB/s] 27%|██▋       | 46.8M/170M [00:03<00:07, 17.1MB/s] 29%|██▉       | 49.8M/170M [00:04<00:07, 17.0MB/s] 31%|███       | 52.9M/170M [00:04<00:06, 17.2MB/s] 33%|███▎      | 55.8M/170M [00:04<00:06, 16.8MB/s] 34%|███▍      | 58.8M/170M [00:04<00:06, 16.8MB/s] 36%|███▌      | 61.8M/170M [00:04<00:06, 16.9MB/s] 38%|███▊      | 64.8M/170M [00:04<00:06, 17.0MB/s] 40%|███▉      | 68.0M/170M [00:05<00:05, 17.2MB/s] 42%|████▏     | 71.1M/170M [00:05<00:05, 17.5MB/s] 44%|████▎     | 74.3M/170M [00:05<00:05, 17.7MB/s] 45%|████▌     | 77.4M/170M [00:05<00:05, 17.8MB/s] 47%|████▋     | 80.5M/170M [00:05<00:05, 17.9MB/s] 49%|████▉     | 83.6M/170M [00:05<00:04, 18.0MB/s] 51%|█████     | 86.8M/170M [00:06<00:04, 18.0MB/s] 53%|█████▎    | 89.9M/170M [00:06<00:04, 17.9MB/s] 55%|█████▍    | 93.1M/170M [00:06<00:04, 17.9MB/s] 56%|█████▋    | 96.1M/170M [00:06<00:04, 18.2MB/s] 58%|█████▊    | 99.3M/170M [00:06<00:03, 18.2MB/s] 60%|██████    | 102M/170M [00:07<00:04, 13.8MB/s]  61%|██████    | 104M/170M [00:07<00:04, 13.5MB/s] 62%|██████▏   | 105M/170M [00:07<00:05, 12.4MB/s] 64%|██████▎   | 109M/170M [00:07<00:04, 14.0MB/s] 66%|██████▌   | 112M/170M [00:07<00:03, 15.2MB/s] 67%|██████▋   | 115M/170M [00:08<00:03, 16.0MB/s] 69%|██████▉   | 118M/170M [00:08<00:03, 16.6MB/s] 71%|███████   | 121M/170M [00:08<00:02, 17.0MB/s] 73%|███████▎  | 124M/170M [00:08<00:03, 13.9MB/s] 74%|███████▎  | 126M/170M [00:08<00:03, 13.4MB/s] 75%|███████▍  | 127M/170M [00:08<00:03, 12.3MB/s] 76%|███████▋  | 130M/170M [00:09<00:02, 15.6MB/s] 78%|███████▊  | 132M/170M [00:09<00:02, 14.6MB/s] 79%|███████▊  | 134M/170M [00:09<00:02, 15.6MB/s] 80%|████████  | 137M/170M [00:09<00:02, 15.6MB/s] 82%|████████▏ | 139M/170M [00:09<00:01, 17.1MB/s] 83%|████████▎ | 141M/170M [00:09<00:01, 17.3MB/s] 84%|████████▍ | 143M/170M [00:09<00:01, 16.5MB/s] 85%|████████▍ | 145M/170M [00:10<00:02, 12.7MB/s] 86%|████████▌ | 146M/170M [00:10<00:01, 12.4MB/s] 87%|████████▋ | 148M/170M [00:10<00:02, 11.4MB/s] 88%|████████▊ | 150M/170M [00:10<00:01, 11.8MB/s] 89%|████████▉ | 152M/170M [00:10<00:01, 12.2MB/s] 91%|█████████ | 154M/170M [00:10<00:01, 12.5MB/s] 92%|█████████▏| 156M/170M [00:10<00:01, 14.0MB/s] 93%|█████████▎| 158M/170M [00:11<00:00, 13.1MB/s] 93%|█████████▎| 159M/170M [00:11<00:00, 12.6MB/s] 95%|█████████▍| 161M/170M [00:11<00:00, 14.5MB/s] 96%|█████████▌| 163M/170M [00:11<00:00, 13.4MB/s] 96%|█████████▋| 164M/170M [00:11<00:00, 12.9MB/s] 97%|█████████▋| 166M/170M [00:11<00:00, 13.0MB/s] 99%|█████████▊| 168M/170M [00:11<00:00, 14.3MB/s] 99%|█████████▉| 170M/170M [00:11<00:00, 13.6MB/s]100%|██████████| 170M/170M [00:12<00:00, 14.2MB/s]
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/toma/pt-80-1-a-13/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/main.py", line 60, in <module>
+    main()
+  File "/home/toma/pt-80-1-a-13/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/main.py", line 54, in main
+    _run(merged)
+  File "/home/toma/pt-80-1-a-13/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/main.py", line 25, in _run
+    Trainer(cfg).run()
+    ^^^^^^^^^^^^
+  File "/home/toma/pt-80-1-a-13/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/train.py", line 78, in __init__
+    (self.train_set, self.val_set, self.test_set) = create_datasets(cfg, tf_train, tf_val)
+                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/toma/pt-80-1-a-13/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/preprocess.py", line 248, in create_datasets
+    test_set = DATASET_FACTORY[name](cfg, tf_val)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/toma/pt-80-1-a-13/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/preprocess.py", line 180, in _create_imagenetc
+    raise FileNotFoundError(f"Unable to load ImageNet-C from HuggingFace alternatives. Please provide a local path.")
+FileNotFoundError: Unable to load ImageNet-C from HuggingFace alternatives. Please provide a local path.
+
+Output:
+{
+    "extracted_output": "===== EXPERIMENT SUMMARY =====\n{\n    \"train_loss_per_epoch\": [],\n    \"val_acc_per_epoch\": [],\n    \"timestamp\": \"20250925_081643\",\n    \"config\": {\n        \"description\": \"FLASH-TTA \\u2013 corruption robustness bench (CIFAR-10-C + ImageNet-C).\\nUses pre-trained backbones and runs *no supervised training* (epochs: 0).\\n\",\n        \"seed\": 0,\n        \"output_dir\": \"runs/full_experiment\",\n        \"figures_dir\": \"figures\",\n        \"experiment_id\": \"cifar10c_resnet50_flash_tta\",\n        \"dataset\": {\n            \"name\": \"CIFAR10C\",\n            \"path\": \"hf://randall-lab/cifar10-c\",\n            \"num_classes\": 10\n        },\n        \"model\": {\n            \"name\": \"resnet50.a1_in1k\",\n            \"pretrained\": true,\n            \"num_classes\": 10,\n            \"method\": \"flash_tta\",\n            \"proj_dim\": 16,\n            \"gru_hidden\": 256\n        },\n        \"training\": {\n            \"epochs\": 0,\n            \"batch_size\": 128,\n            \"lr\": 0.0003\n        },\n        \"evaluation\": {\n            \"batch_size\": 256\n        }\n    },\n    \"test_metrics\": {\n        \"accuracy_top1\": 10.289999842643738,\n        \"ece\": 0.20670966382473704,\n        \"brier\": NaN,\n        \"latency_ms_mean\": 43.51708288192749,\n        \"latency_ms_std\": 93.69577031178557\n    }\n}\n==============================",
+    "extracted_error": "Traceback (most recent call last):\n  File \"<frozen runpy>\", line 198, in _run_module_as_main\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \"/home/toma/pt-80-1-a-13/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/main.py\", line 60, in <module>\n    main()\n  File \"/home/toma/pt-80-1-a-13/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/main.py\", line 54, in main\n    _run(merged)\n  File \"/home/toma/pt-80-1-a-13/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/main.py\", line 25, in _run\n    Trainer(cfg).run()\n    ^^^^^^^^^^^^\n  File \"/home/toma/pt-80-1-a-13/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/train.py\", line 78, in __init__\n    (self.train_set, self.val_set, self.test_set) = create_datasets(cfg, tf_train, tf_val)\n                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/toma/pt-80-1-a-13/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/preprocess.py\", line 248, in create_datasets\n    test_set = DATASET_FACTORY[name](cfg, tf_val)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/toma/pt-80-1-a-13/_work/experiment_matsuzawa_250925/experiment_matsuzawa_250925/src/preprocess.py\", line 180, in _create_imagenetc\n    raise FileNotFoundError(f\"Unable to load ImageNet-C from HuggingFace alternatives. Please provide a local path.\")\nFileNotFoundError: Unable to load ImageNet-C from HuggingFace alternatives. Please provide a local path."
+}
