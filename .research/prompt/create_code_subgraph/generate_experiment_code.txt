@@ -80,7 +80,7 @@ File names must follow the format: `<figure_topic>[_<condition>][_pairN].pdf`
 
 
 **Critical Issue Detected**: The previous code generation failed full experiment validation:
-Full‐scale configuration does not implement the published Dynamic-Shift protocol: (1) dataset loader silently falls back to torchvision FakeData, so real external datasets are not strictly required; (2) full_experiment.yaml only covers a single ResNet-50 on ImageNet and omits ConvNeXt, ViT, ShiftTrack continuous stream and all baselines; (3) no code for streaming, adaptation-lag/energy metrics, per-block line search, TinyCurvNet, quantised stats, or Jetson benchmarking; (4) training/evaluation loops are greatly simplified and lack result logging & saving specified; therefore production-ready full experiment is incomplete and uses placeholders.
+Full-experiment mode does not reproduce the Dynamic-Shift Stress-Test specified in the research method.  Problems: (1) dataloader is a static ImageNet ImageFolder – no ShiftTrack stream, no continuous drift; (2) only one backbone from config, no ConvNeXt or ViT, no baselines; (3) missing block-size, α_max, TinyCurvNet, quant-8 options; (4) no timing / energy / adaptation-lag metrics, just top-1 accuracy; (5) training / adaptation loop limited to a single static pass, no full 260k-frame run; (6) full_experiment.yaml is minimal and lacks all hyper-parameters; hence criteria 3 and 4 are unmet – code is not production-ready.
 
 **Required Action**: Address this validation failure by ensuring your generated code strictly follows the Hugging Face code requirements and implements genuine full experiments using real datasets and models.
 
