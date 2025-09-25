@@ -1,0 +1,3825 @@
+
+Input:
+You are a researcher with expertise in engineering in the field of machine learning.
+
+# Instructions
+- The content described in “Repository Content” corresponds to the GitHub repository of the method described in “Method.”
+- Please extract the following two pieces of information from “Repository Content”:
+    - experimental_code：Extract the implementation sections that are directly related to the method described in “Method.”
+    - experimental_info：Extract and output the experimental settings related to the method described in “Method.”
+
+# Method
+The Adaptive Node Sampling (ANS-GT) module optimizes node sampling by treating it as an adversary bandit problem, modifying the Exp4.P method. It adaptively assigns weights to various sampling heuristics (1-hop, 2-hop neighbors, PPR, and KNN based on attribute similarity) and combines their probabilities. Rewards are calculated based on the attention weights and sampling probabilities, encouraging sampling strategies that yield more significant nodes. The Hierarchical Graph Attention scheme combines fine-grained local attention (using ANS-GT) and coarse-grained global attention. Global attention utilizes graph coarsening algorithms (e.g., Variational Neighborhoods) to group nodes into super-nodes, reducing complexity and capturing long-range dependencies. The model integrates global nodes with learnable features and employs proximity encoding for positional information. The overall computational complexity is designed to be linear with the number of nodes (O(n)).
+
+# Repository Content
+File Path: collator.py
+Content:
+import torch
+import random
+
+def pad_1d_unsqueeze(x, padlen):
+    xlen = x.size(0)
+    if xlen < padlen:
+        new_x = x.new_zeros([padlen], dtype=x.dtype)
+        new_x[:xlen] = x
+        x = new_x
+    return x.unsqueeze(0)
+
+
+def pad_2d_unsqueeze(x, padlen):
+    xlen, xdim = x.size()
+    if xlen < padlen:
+        new_x = x.new_zeros([padlen, xdim], dtype=x.dtype)
+        new_x[:xlen, :] = x
+        x = new_x
+    return x.unsqueeze(0)
+
+
+def pad_attn_bias_unsqueeze(x, padlen):
+    xlen = x.size(0)
+    if xlen < padlen:
+        new_x = x.new_zeros(
+            [padlen, padlen], dtype=x.dtype).fill_(float('-inf'))
+        new_x[:xlen, :xlen] = x
+        new_x[xlen:, :xlen] = 0
+        x = new_x
+    return x.unsqueeze(0)
+
+
+def pad_edge_type_unsqueeze(x, padlen):
+    xlen = x.size(0)
+    if xlen < padlen:
+        new_x = x.new_zeros([padlen, padlen, x.size(-1)], dtype=x.dtype)
+        new_x[:xlen, :xlen, :] = x
+        x = new_x
+    return x.unsqueeze(0)
+
+
+def pad_spatial_pos_unsqueeze(x, padlen):
+    xlen = x.size(0)
+    if xlen < padlen:
+        new_x = x.new_zeros([padlen, padlen], dtype=x.dtype)
+        new_x[:xlen, :xlen] = x
+        x = new_x
+    return x.unsqueeze(0)
+
+
+def pad_3d_unsqueeze(x, padlen1, padlen2, padlen3):
+    x = x + 1
+    xlen1, xlen2, xlen3, xlen4 = x.size()
+    if xlen1 < padlen1 or xlen2 < padlen2 or xlen3 < padlen3:
+        new_x = x.new_zeros([padlen1, padlen2, padlen3, xlen4], dtype=x.dtype)
+        new_x[:xlen1, :xlen2, :xlen3, :] = x
+        x = new_x
+    return x.unsqueeze(0)
+
+
+class Batch():
+    def __init__(self, attn_bias, x, y, ids):
+        super(Batch, self).__init__()
+        self.x, self.y = x, y
+        self.attn_bias = attn_bias
+        self.ids = ids
+
+    def to(self, device):
+        self.x, self.y = self.x.to(device), self.y.to(device)
+        self.attn_bias = self.attn_bias.to(device)
+        self.ids = self.ids.to(device)
+        return self
+
+    def __len__(self):
+        return self.y.size(0)
+
+
+def collator(items, feature, shuffle=False, perturb=False):
+    batch_list = []
+    for item in items:
+        for x in item:
+            batch_list.append((x[0], x[1], x[2][0]))
+    if shuffle:
+        random.shuffle(batch_list)
+    attn_biases, xs, ys = zip(*batch_list)
+    max_node_num = max(i.size(0) for i in xs)
+    y = torch.cat([i.unsqueeze(0) for i in ys])
+    x = torch.cat([pad_2d_unsqueeze(feature[i], max_node_num) for i in xs])
+    ids = torch.cat([i.unsqueeze(0) for i in xs])
+    if perturb:
+        x += torch.FloatTensor(x.shape).uniform_(-0.1, 0.1)
+    attn_bias = torch.cat([i.unsqueeze(0) for i in attn_biases])
+
+    return Batch(
+        attn_bias=attn_bias,
+        x=x,
+        y=y,
+        ids=ids,
+    )
+
+
+File Path: graph_coarsening/coarsening_utils.py
+Content:
+import numpy as np
+import pygsp as gsp
+from pygsp import graphs, filters, reduction
+import scipy as sp
+from scipy import sparse
+
+import matplotlib
+import matplotlib.pylab as plt
+from mpl_toolkits.mplot3d import Axes3D
+
+from sortedcontainers import SortedList
+from graph_coarsening.graph_utils import *
+from graph_coarsening.maxWeightMatching import *
+
+def coarsen(G, K=10, r=0.5, max_levels=20, method='variation_edges', algorithm='greedy', Uk=None, lk=None, max_level_r=0.99):
+    """
+    This function provides a common interface for coarsening algorithms that contract subgraphs
+    
+    Parameters
+    ----------
+    G : pygsp Graph
+    K : int
+        The size of the subspace we are interested in preserving.
+    r : float between (0,1)
+        The desired reduction defined as 1 - n/N.
+        
+    Returns
+    -------
+    C : np.array of size n x N
+        The coarsening matrix.
+    Gc : pygsp Graph
+        The smaller graph. 
+    Call : list of np.arrays
+        Coarsening matrices for each level
+    Gall : list of (n_levels+1) pygsp Graphs
+        All graphs involved in the multilevel coarsening 
+        
+    Example
+    -------
+    C, Gc, Call, Gall = coarsen(G, K=10, r=0.8)
+    """
+    r = np.clip(r, 0, 0.999)
+    G0 = G
+    N = G.N
+    
+    # current and target graph sizes 
+    n, n_target = N, np.ceil((1-r)*N)
+    
+    C = sp.sparse.eye(N, format='csc')
+    Gc = G
+
+    Call, Gall = [], []
+    Gall.append(G)
+    
+    for level in range(1,max_levels+1): 
+    
+        G = Gc 
+
+        # how much more we need to reduce the current graph    
+        r_cur = np.clip(1-n_target/n, 0.0, max_level_r)
+        
+        if 'variation' in method:
+            
+            if level == 1:
+                if (Uk is not None) and (lk is not None) and (len(lk)>= K):
+                    mask = lk<1e-10; lk[mask] = 1; lsinv = lk**(-0.5); lsinv[mask] = 0
+                    B = Uk[:,:K] @ np.diag(lsinv[:K])    
+                else:
+                    offset = 2*max(G.dw)
+                    T = offset*sp.sparse.eye(G.N, format='csc') - G.L
+                    lk, Uk = sp.sparse.linalg.eigsh(T, k=K, which='LM', tol=1e-5)
+                    lk = (offset-lk)[::-1]
+                    Uk = Uk[:,::-1]                
+                    mask = lk<1e-10; lk[mask] = 1; lsinv = lk**(-0.5); lsinv[mask] = 0
+                    B = Uk @ np.diag(lsinv)    
+                A = B
+            else:
+                B = iC.dot(B) 
+                d, V = np.linalg.eig(B.T @ (G.L).dot(B))
+                mask = (d==0); d[mask] = 1; dinvsqrt = d**(-1/2); dinvsqrt[mask] = 0
+                A = B @ np.diag(dinvsqrt) @ V
+            
+            if method == 'variation_edges':
+                coarsening_list = contract_variation_edges(G, K=K, A=A, r=r_cur, algorithm=algorithm)
+            else:
+                coarsening_list = contract_variation_linear(G, K=K, A=A, r=r_cur, mode=method)
+                                        
+        else:
+            weights = get_proximity_measure(G, method, K=K)
+        
+            if algorithm == 'optimal':
+                # the edge-weight should be light at proximal edges
+                weights = -weights
+                if ('rss' not in method) : weights -= min(weights)
+                coarsening_list = matching_optimal(G, weights=weights, r=r_cur)
+
+            elif algorithm == 'greedy':
+                coarsening_list = matching_greedy(G, weights=weights, r=r_cur)
+
+        iC = get_coarsening_matrix(G, coarsening_list)
+        
+        if iC.shape[1] - iC.shape[0] <= 2: break # avoid too many levels for so few nodes
+            
+        C  = iC.dot(C)
+        Call.append(iC)
+                
+        Wc = zero_diag(coarsen_matrix(G.W, iC)) # coarsen and remove self-loops
+        Wc = (Wc + Wc.T) / 2  # this is only needed to avoid pygsp complaining for tiny errors 
+        if not hasattr(G, 'coords'): 
+            Gc = gsp.graphs.Graph(Wc)
+        else:
+            Gc = gsp.graphs.Graph(Wc, coords=coarsen_vector(G.coords, iC))
+        Gall.append(Gc)
+
+        n = Gc.N
+
+        if n <= n_target: break
+        
+    return C, Gc, Call, Gall
+                        
+################################################################################
+# General coarsening utility functions
+################################################################################
+
+def coarsen_vector(x, C):
+    return (C.power(2)).dot(x)
+
+def lift_vector(x, C):
+    #Pinv = C.T; Pinv[Pinv>0] = 1
+    D = sp.sparse.diags(np.array(1/np.sum(C,0))[0])    
+    Pinv = (C.dot(D)).T
+    return Pinv.dot(x)
+
+def coarsen_matrix(W, C):
+    #Pinv = C.T; #Pinv[Pinv>0] = 1
+    D = sp.sparse.diags(np.array(1/np.sum(C,0))[0])    
+    Pinv = (C.dot(D)).T
+    return (Pinv.T).dot(W.dot(Pinv))
+
+def lift_matrix(W, C):
+    P = C.power(2)    
+    return (P.T).dot(W.dot(P))
+
+def get_coarsening_matrix(G, partitioning):
+    """
+    This function should be called in order to build the coarsening matrix C. 
+    
+    Parameters
+    ----------
+    G : the graph to be coarsened
+    partitioning : a list of subgraphs to be contracted
+    
+    Returns
+    -------
+    C : the new coarsening matrix
+        
+    Example
+    -------
+    C = contract(gsp.graphs.sensor(20),[0,1]) ??
+    """
+
+    #C = np.eye(G.N)
+    C = sp.sparse.eye(G.N, format='lil')
+
+    rows_to_delete = []
+    for subgraph in partitioning:
+            
+        nc = len(subgraph)
+        
+        # add v_j's to v_i's row
+        C[subgraph[0],subgraph] = 1/np.sqrt(nc) #np.ones((1,nc))/np.sqrt(nc)
+    
+        rows_to_delete.extend(subgraph[1:])
+       
+    # delete vertices   
+    #C = np.delete(C,rows_to_delete,0)
+    
+    C.rows = np.delete(C.rows, rows_to_delete)
+    C.data = np.delete(C.data, rows_to_delete)
+    C._shape = (G.N - len(rows_to_delete), G.N)
+    
+    C = sp.sparse.csc_matrix(C)
+        
+    # check that this is a projection matrix
+    #assert sp.sparse.linalg.norm( ((C.T).dot(C))**2 - ((C.T).dot(C)) , ord='fro') < 1e-5
+
+    return C
+
+def coarsening_quality(G, C, kmax=30, Uk=None, lk=None):
+    """
+    Measures how good is a coarsening. 
+    
+    Parameters
+    ----------
+    G : pygsp Graph
+    C : np.array(n,N)
+        The coarsening matrix
+    kmax : int
+        Until which eigenvalue we are interested in.
+        
+    Returns
+    -------
+    metric : dictionary
+        Contains all relevant metrics for coarsening quality:
+        * error_eigenvalue : np.array(kmax) 
+        * error_subspace : np.array(kmax)
+        * error_sintheta : np.array(kmax)
+        * angle_matrix : np.array(kmax)
+        * rss constants : np.array(kmax)
+        as well as some general properties of Gc:
+        * r : int
+            reduction ratio
+        * m : int
+            number of edges
+    """
+    N = G.N
+    I = np.eye(N)
+
+    if (Uk is not None) and (lk is not None) and (len(lk)>= kmax):
+        U, l = Uk, lk        
+    elif hasattr(G, 'U'):   
+        U, l = G.U, G.e
+    else: 
+        l, U = sp.sparse.linalg.eigsh(G.L, k=kmax, which='SM', tol=1e-3) 
+  
+    l[0] = 1; linv = l**(-0.5); linv[0] = 0; # l[0] = 0 # avoids divide by 0 
+    
+    # below here, everything is C specific
+    n = C.shape[0]
+    Pi = C.T @ C
+    S = get_S(G).T
+    Lc = C.dot((G.L).dot(C.T))
+    Lp = Pi @ G.L @ Pi
+    
+    if kmax>n/2:
+        [Uc,lc] = eig(Lc.toarray())        
+    else:
+        lc, Uc = sp.sparse.linalg.eigsh(Lc, k=kmax, which='SM', tol=1e-3) 
+
+    if not sp.sparse.issparse(Lc): print('warning: Lc should be sparse.')
+    
+    metrics = {'r': 1 - n / N, 'm': int((Lc.nnz-n)/2)} 
+
+    kmax = np.clip(kmax, 1, n) 
+    
+    # eigenvalue relative error
+    metrics['error_eigenvalue'] = np.abs(l[:kmax] - lc[:kmax]) / l[:kmax] 
+    metrics['error_eigenvalue'][0] = 0
+    
+    # angles between eigenspaces
+    metrics['angle_matrix'] = U.T @ C.T @ Uc
+
+    # rss constants
+#    metrics['rss'] = np.diag(U.T @ Lp @ U)/l - 1 
+#    metrics['rss'][0] = 0
+    
+    # other errors
+    kmax = np.clip(kmax, 2, n)
+    
+    error_subspace       = np.zeros(kmax) 
+    error_subspace_bound = np.zeros(kmax) 
+    error_sintheta       = np.zeros(kmax)
+    
+    M       = S @ Pi @ U @ np.diag(linv) 
+#    M_bound = S @ (I - Pi) @ U @ np.diag(linv) 
+    
+    for kIdx in range(1,kmax):
+        error_subspace[kIdx]       = np.abs(np.linalg.norm( M[:,:kIdx + 1], ord=2)-1)
+#        error_subspace_bound[kIdx] = np.linalg.norm( M_bound[:,:kIdx + 1], ord=2)
+        error_sintheta[kIdx]       = np.linalg.norm(metrics['angle_matrix'][0:kIdx+1,kIdx+1:], ord='fro')**2
+
+    metrics['error_subspace']       = error_subspace
+    #metrics['error_subspace_bound'] = error_subspace_bound  
+    metrics['error_sintheta']       = error_sintheta
+    
+    return metrics
+
+def plot_coarsening(Gall, Call, size=3, edge_width=0.8, node_size=20, alpha=0.55, title=''):
+    """
+    Plot a (hierarchical) coarsening
+    
+    Parameters
+    ----------
+    G_all : list of pygsp Graphs
+    Call  : list of np.arrays
+    
+    Returns
+    -------
+    fig : matplotlib figure
+    """    
+    # colors signify the size of a coarsened subgraph ('k' is 1, 'g' is 2, 'b' is 3, and so on)
+    colors = ['k', 'g', 'b', 'r', 'y']
+    
+    n_levels = len(Gall)-1
+    if n_levels == 0: return None
+    fig = plt.figure(figsize=(n_levels*size*3, size*2))
+    
+    for level in range(n_levels):
+    
+        G = Gall[level]
+        edges = np.array(G.get_edge_list()[0:2])
+    
+        Gc = Gall[level+1]
+#         Lc = C.dot(G.L.dot(C.T))
+#         Wc = sp.sparse.diags(Lc.diagonal(), 0) - Lc; 
+#         Wc = (Wc + Wc.T) / 2
+#         Gc = gsp.graphs.Graph(Wc, coords=(C.power(2)).dot(G.coords))
+        edges_c = np.array(Gc.get_edge_list()[0:2])
+        C = Call[level]
+        C = C.toarray()
+        
+        if G.coords.shape[1] == 2: 
+            ax = fig.add_subplot(1, n_levels+1, level+1)
+            ax.axis('off')
+            ax.set_title(f'{title} | level = {level}, N = {G.N}')
+            
+            [x,y] = G.coords.T
+            for eIdx in range(0, edges.shape[1]):
+                ax.plot(x[edges[:,eIdx]], y[edges[:,eIdx]], color='k', alpha=alpha, lineWidth=edge_width)    
+            for i in range(Gc.N):
+                subgraph = np.arange(G.N)[C[i,:] > 0] 
+                ax.scatter(x[subgraph], y[subgraph], c = colors[np.clip(len(subgraph)-1,0,4)], s = node_size*len(subgraph), alpha=alpha)        
+
+        elif G.coords.shape[1] == 3:
+            ax = fig.add_subplot(1, n_levels+1, level+1, projection='3d')
+            ax.axis('off')
+
+            [x,y,z] = G.coords.T
+            for eIdx in range(0, edges.shape[1]):
+                ax.plot(x[edges[:,eIdx]], y[edges[:,eIdx]], zs=z[edges[:,eIdx]], color='k', alpha=alpha, lineWidth=edge_width)
+            for i in range(Gc.N):
+                subgraph = np.arange(G.N)[C[i,:] > 0]  
+                ax.scatter(x[subgraph], y[subgraph], z[subgraph], c=colors[np.clip(len(subgraph)-1,0,4)], s=node_size*len(subgraph), alpha=alpha)        
+
+    # the final graph
+    Gc = Gall[-1]
+    edges_c = np.array(Gc.get_edge_list()[0:2])
+    
+    if G.coords.shape[1] == 2: 
+        ax = fig.add_subplot(1, n_levels+1, n_levels+1)
+        ax.axis('off')
+        [x,y] = Gc.coords.T
+        ax.scatter(x, y, c = 'k', s = node_size, alpha=alpha)        
+        for eIdx in range(0, edges_c.shape[1]):
+            ax.plot(x[edges_c[:,eIdx]], y[edges_c[:,eIdx]], color='k', alpha=alpha, lineWidth=edge_width) 
+    
+    elif G.coords.shape[1] == 3: 
+        ax = fig.add_subplot(1, n_levels+1, n_levels+1, projection='3d')
+        ax.axis('off')
+        [x,y,z] = Gc.coords.T
+        ax.scatter(x, y, z, c = 'k', s = node_size, alpha=alpha)        
+        for eIdx in range(0, edges_c.shape[1]):
+            ax.plot(x[edges_c[:,eIdx]], y[edges_c[:,eIdx]], z[edges_c[:,eIdx]], color='k', alpha=alpha, lineWidth=edge_width) 
+              
+    ax.set_title(f'{title} | level = {n_levels}, n = {Gc.N}')     
+    fig.tight_layout()    
+    return fig
+
+
+################################################################################
+# Variation-based contraction algorithms
+################################################################################
+
+def contract_variation_edges(G, A=None, K=10, r=0.5, algorithm='greedy'):
+    """
+    Sequential contraction with local variation and edge-based families.
+    This is a specialized implementation for the edge-based family, that works 
+    slightly faster than the contract_variation() function, which works for 
+    any family.
+    
+    See contract_variation() for documentation.
+    """
+    N, deg, M = G.N, G.dw, G.Ne      
+    ones = np.ones(2)   
+    Pibot = np.eye(2) - np.outer(ones, ones) / 2 
+    
+    # cost function for the edge 
+    def subgraph_cost(G, A, edge):
+        edge, w = edge[:2].astype(np.int), edge[2]
+        deg_new = 2*deg[edge] - w
+        L = np.array([[deg_new[0],-w], [-w,deg_new[1]]])
+        B = Pibot @ A[edge,:]
+        return np.linalg.norm(B.T @ L @ B)
+    
+    # cost function for the edge 
+    def subgraph_cost_old(G, A, edge):
+        w = G.W[edge[0], edge[1]]
+        deg_new = 2*deg[edge] - w
+        L = np.array([[deg_new[0],-w], [-w,deg_new[1]]])
+        B = Pibot @ A[edge,:]
+        return np.linalg.norm(B.T @ L @ B)
+ 
+    #edges = np.array(G.get_edge_list()[0:2])
+    edges = np.array(G.get_edge_list())
+    weights = np.array([subgraph_cost(G, A, edges[:,e]) for e in range(M)]) 
+    #weights = np.zeros(M)
+    #for e in range(M):
+    #    weights[e] = subgraph_cost_old(G, A, edges[:,e])
+    
+    if algorithm == 'optimal':
+        # identify the minimum weight matching
+        coarsening_list = matching_optimal(G, weights=weights, r=r)
+
+    elif algorithm == 'greedy':
+        # find a heavy weight matching
+        coarsening_list = matching_greedy(G, weights=-weights, r=r)
+
+    return coarsening_list  
+
+
+def contract_variation_linear(G, A=None, K=10, r=0.5, mode='neighborhood'):
+    """
+    Sequential contraction with local variation and general families.
+    This is an implemmentation that improves running speed, 
+    at the expense of being more greedy (and thus having slightly larger error).
+    
+    See contract_variation() for documentation.
+    """
+    
+    N, deg, W_lil = G.N, G.dw, G.W.tolil()  
+    
+    # The following is correct only for a single level of coarsening.
+    # Normally, A should be passed as an argument.
+    if A is None:    
+        lk, Uk = sp.sparse.linalg.eigsh(G.L, k=K, which='SM', tol=1e-3) # this is not optimized!
+        lk[0] = 1; lsinv = lk**(-0.5); lsinv[0] = 0; lk[0] = 0
+        D_lsinv = np.diag(lsinv)
+        A = Uk @ np.diag(lsinv)
+
+    # cost function for the subgraph induced by nodes array
+    def subgraph_cost(nodes):
+        nc = len(nodes)
+        ones = np.ones(nc)            
+        W = W_lil[nodes,:][:,nodes]#.tocsc()
+        L = np.diag(2*deg[nodes] - W.dot(ones)) - W
+        B = (np.eye(nc) - np.outer(ones, ones) / nc ) @ A[nodes,:]
+        return np.linalg.norm(B.T @ L @ B)/(nc-1)
+        
+    class CandidateSet:
+        def __init__(self, candidate_list):
+            self.set  = candidate_list
+            self.cost = subgraph_cost(candidate_list)
+        def __lt__(self, other):
+            return self.cost < other.cost
+        
+    family = []
+    W_bool = G.A + sp.sparse.eye(G.N, dtype=np.bool_, format='csr')
+    if 'neighborhood' in mode:
+        for i in range(N):
+            #i_set = G.A[i,:].indices # get_neighbors(G, i)
+            #i_set = np.append(i_set, i)
+            i_set = W_bool[i,:].indices
+            family.append(CandidateSet(i_set))
+
+    if 'cliques' in mode:
+        import networkx as nx
+        Gnx = nx.from_scipy_sparse_matrix(G.W)
+        for clique in nx.find_cliques(Gnx):
+            family.append(CandidateSet(np.array(clique)))
+
+    else:
+        if 'edges' in mode:
+            edges = np.array(G.get_edge_list()[0:2])
+            for e in range(0,edges.shape[1]):
+                family.append(CandidateSet(edges[:,e]))
+        if 'triangles' in mode:
+            triangles = set([])
+            edges = np.array(G.get_edge_list()[0:2])
+            for e in range(0,edges.shape[1]):
+                [u,v] = edges[:,e]
+                for w in range(G.N):
+                    if G.W[u,w] > 0 and G.W[v,w] > 0:
+                        triangles.add(frozenset([u,v,w]))
+            triangles = list(map(lambda x: np.array(list(x)), triangles))
+            for triangle in triangles:
+                family.append(CandidateSet(triangle))
+    
+    family = SortedList(family)
+    marked = np.zeros(G.N, dtype=np.bool_)
+        
+    # ----------------------------------------------------------------------------
+    # Construct a (minimum weight) independent set. 
+    # ----------------------------------------------------------------------------
+    coarsening_list = [] 
+    #n, n_target = N, (1-r)*N
+    n_reduce = np.floor(r*N) # how many nodes do we need to reduce/eliminate?
+    
+    while len(family)>0: 
+
+        i_cset = family.pop(index=0)                
+        i_set  = i_cset.set
+                
+         # check if marked
+        i_marked = marked[i_set]
+        
+        if not any(i_marked): 
+            
+            n_gain = len(i_set) - 1
+            if n_gain > n_reduce: continue # this helps avoid over-reducing
+
+            # all vertices are unmarked: add i_set to the coarsening list
+            marked[i_set] = True
+            coarsening_list.append(i_set)
+            #n -= len(i_set) - 1 
+            n_reduce -= n_gain
+            
+            #if n <= n_target: break
+            if n_reduce <= 0: break
+            
+        # may be worth to keep this set
+        else:
+            i_set = i_set[~i_marked]
+            if len(i_set) > 1: 
+                # todo1: check whether to add to coarsening_list before adding to family 
+                # todo2: currently this will also select contraction sets that are disconnected 
+                # should we eliminate those?
+                i_cset.set = i_set
+                i_cset.cost = subgraph_cost(i_set)
+                family.add(i_cset)
+               
+    return coarsening_list  
+
+
+
+################################################################################
+# Edge-based contraction algorithms
+################################################################################
+    
+def get_proximity_measure(G, name, K=10):
+    
+    N = G.N
+    W = G.W #np.array(G.W.toarray(), dtype=np.float32)
+    deg = G.dw #np.sum(W, axis=0) 
+    edges = np.array(G.get_edge_list()[0:2])
+    weights = np.array(G.get_edge_list()[2])
+    M = edges.shape[1]
+    
+    num_vectors = K #int(1*K*np.log(K))    
+    if 'lanczos' in name:
+        l_lan, X_lan  = sp.sparse.linalg.eigsh(G.L, k=K, which='SM', tol=1e-2) 
+    elif 'cheby' in name:
+        X_cheby = generate_test_vectors(G, num_vectors=num_vectors, method='Chebychev', lambda_cut = G.e[K+1])
+    elif 'JC' in name:
+        X_jc    = generate_test_vectors(G, num_vectors=num_vectors, method='JC', iterations=20)
+    elif 'GS' in name:
+        X_gs    = generate_test_vectors(G, num_vectors=num_vectors, method='GS', iterations=1)
+    if 'expected' in name:
+        X = X_lan
+        assert(not np.isnan(X).any() )
+        assert(X.shape[0] == N)
+        K = X.shape[1]
+        
+    proximity = np.zeros(M, dtype=np.float32)
+
+    # heuristic for mutligrid 
+    if name == 'heavy_edge':
+        wmax = np.array(np.max(G.W, 0).todense())[0] + 1e-5
+        for e in range(0,M):
+            proximity[e] = weights[e] / max(wmax[edges[:,e]])   # select edges with large proximity
+        return proximity
+    
+    # heuristic for mutligrid 
+    elif name == 'algebraic_JC':
+        proximity += np.Inf
+        for e in range(0,M):
+            i,j = edges[:,e]
+            for kIdx in range(num_vectors):                
+                xk = X_jc[:,kIdx]
+                proximity[e] = min(proximity[e], 1 / max(np.abs(xk[i]-xk[j])**2, 1e-6) )  # select edges with large proximity
+
+        return proximity 
+    
+    # heuristic for mutligrid  
+    elif name == 'affinity_GS':
+        c = np.zeros((N,N))
+        for e in range(0,M):
+            i,j = edges[:,e]
+            c[i,j] = (X_gs[i,:] @ X_gs[j,:].T)**2 / ( (X_gs[i,:] @ X_gs[i,:].T)**2 * (X_gs[j,:] @ X_gs[j,:].T)**2 )  # select 
+
+        c += c.T
+        c -= np.diag(np.diag(c)) 
+        for e in range(0,M):
+            i,j = edges[:,e]
+            proximity[e] = c[i,j] / ( max(c[i,:]) * max(c[j,:]) ) 
+  
+        return proximity
+    
+        
+    for e in range(0,M):
+        i,j = edges[:,e]
+
+        if name == 'heavy_edge_degree':
+            proximity[e] = deg[i] + deg[j] + 2*G.W[i,j]  # select edges with large proximity
+
+        # loose as little information as possible (custom)    
+        elif 'min_expected_loss' in name:
+             for kIdx in range(1,K):    
+                xk = X[:,kIdx]
+                proximity[e] = sum([proximity[e], (xk[i]-xk[j])**2 ] )  # select edges with small proximity            
+        # loose as little gradient information as possible (custom)    
+        elif name == 'min_expected_gradient_loss':
+             for kIdx in range(1,K):    
+                xk = X[:,kIdx]
+                proximity[e] = sum([proximity[e], (xk[i]-xk[j])**2 * (deg[i] + deg[j] + 2*G.W[i,j]) ] )  # select edges with small proximity            
+
+        # relaxation ensuring that K first eigenspaces are aligned (custom)
+        elif name == 'rss':
+            for kIdx in range(1,K):    
+                xk = G.U[:,kIdx]
+                lk = G.e[kIdx]
+                proximity[e] = sum([proximity[e], (xk[i]-xk[j])**2 * ((deg[i] + deg[j] + 2*G.W[i,j])/4) / lk ] )  # select edges with small proximity
+
+        # fast relaxation ensuring that K first eigenspaces are aligned (custom)
+        elif name == 'rss_lanczos':
+            for kIdx in range(1,K):    
+                xk = X_lan[:,kIdx]
+                lk = l_lan[kIdx]
+                proximity[e] = sum( [proximity[e], (xk[i]-xk[j])**2 * ((deg[i] + deg[j] + 2*G.W[i,j])/4 - 0.5*(lk + lk)) / lk  ] )  # select edges with small proximity
+
+        # approximate relaxation ensuring that K first eigenspaces are aligned (custom)
+        elif name == 'rss_cheby':
+            for kIdx in range(num_vectors):
+                xk = X_cheby[:,kIdx]
+                lk = xk.T @ G.L @ xk
+                proximity[e] = sum( [proximity[e], ( (xk[i]-xk[j])**2 * ((deg[i] + deg[j] + 2*G.W[i,j])/4 - 0*lk ) / lk )] ) # select edges with small proximity
+                
+        # heuristic for mutligrid (algebraic multigrid)
+        elif name == 'algebraic_GS':
+            proximity[e] = np.Inf
+            for kIdx in range(num_vectors):                
+                xk = X_gs[:,kIdx]
+                proximity[e] = min(proximity[e], 1 / max(np.abs(xk[i]-xk[j])**2, 1e-6) )  # select edges with large proximity
+                
+    if ('rss' in name) or ('expected' in name): proximity = -proximity     
+        
+    return proximity
+
+
+def generate_test_vectors(G, num_vectors=10, method = 'Gauss-Seidel', iterations=5, lambda_cut=0.1):
+    
+    L = G.L 
+    N = G.N
+    X = np.random.randn(N, num_vectors) / np.sqrt(N)    
+    
+    if method == 'GS' or method == 'Gauss-Seidel':
+        
+        L_upper = sp.sparse.triu(L, 1, format='csc')
+        L_lower_diag = sp.sparse.triu(L, 0, format='csc').T
+
+        for j in range(num_vectors):
+            x = X[:,j] 
+            for t in range(iterations): 
+                x = - sp.sparse.linalg.spsolve_triangular(L_lower_diag, L_upper @ x)
+            X[:,j] = x
+        return X
+
+    if method == 'JC' or method == 'Jacobi':
+        
+        deg = G.dw.astype(float)
+        D = sp.sparse.diags(deg,0)
+        deginv = deg**(-1)
+        deginv[deginv == np.Inf] = 0
+        Dinv = sp.sparse.diags(deginv,0)
+        M = Dinv.dot(D-L)
+        
+        for j in range(num_vectors):
+            x = X[:,j] 
+            for t in range(iterations):
+                x = 0.5 * x + 0.5 * M.dot(x)
+            X[:,j] = x
+        return X
+
+    elif method == 'Chebychev':
+        from pygsp import filters
+        f = filters.Filter(G, lambda x : ((x <= lambda_cut)*1).astype(np.float32))
+        return f.filter(X, method='chebyshev', order=50)
+    
+def matching_optimal(G, weights, r=0.4):
+    """
+    Generates a matching optimally with the objective of minimizing the total 
+    weight of all edges in the matching.
+
+    Parameters
+    ----------
+    G : pygsp graph
+    weights : np.array(M) 
+        a weight for each edge
+    ratio : float
+        The desired dimensionality reduction (ratio = 1 - n/N) 
+        
+    Notes: 
+    * The complexity of this is O(N^3)
+    * Depending on G, the algorithm might fail to return ratios>0.3 
+    """
+    N = G.N
+    
+    # the edge set
+    edges = G.get_edge_list()
+    edges = np.array(edges[0:2])
+    M = edges.shape[1]    
+
+    max_weight = 1*np.max(weights) 
+
+    # prepare the input for the minimum weight matching problem 
+    edge_list = []
+    for edgeIdx in range(M):
+        [i,j] = edges[:,edgeIdx]
+        if i==j: continue; 
+        edge_list.append( (i, j, max_weight-weights[edgeIdx]) )
+
+    assert(min(weights) >= 0)
+    
+    # solve it    
+    tmp = np.array(maxWeightMatching(edge_list))
+    
+    # format output
+    m = tmp.shape[0]
+    matching = np.zeros((m,2), dtype=int)
+    matching[:,0] = range(m)
+    matching[:,1] = tmp
+
+    # remove null edges and duplicates
+    idx = np.where(tmp!=-1)[0]
+    matching = matching[idx,:]
+    idx = np.where(matching[:,0] > matching[:,1])[0]
+    matching = matching[idx,:]
+
+    assert(matching.shape[0] >= 1)
+    
+    # if the returned matching is larger than what is requested, select the min weight subset of it
+    matched_weights = np.zeros(matching.shape[0])
+    for mIdx in range(matching.shape[0]):        
+        i = matching[mIdx,0]
+        j = matching[mIdx,1]        
+        eIdx = [e for e,t in enumerate(edges[:,:].T) if ((t==[i,j]).all() or (t==[j,i]).all()) ]
+        matched_weights[mIdx] = weights[eIdx]
+
+    keep = min(int(np.ceil(r*N)), matching.shape[0])
+    if keep < matching.shape[0]:         
+        idx = np.argpartition(matched_weights, keep)
+        idx = idx[0:keep]
+        matching = matching[idx,:]
+
+    return matching 
+
+def matching_greedy(G, weights, r=0.4):
+    """
+    Generates a matching greedily by selecting at each iteration the edge   
+    with the largest weight and then removing all adjacent edges from the 
+    candidate set.
+    
+    Parameters
+    ----------
+    G : pygsp graph
+    weights : np.array(M) 
+        a weight for each edge
+    r : float
+        The desired dimensionality reduction (r = 1 - n/N) 
+        
+    Notes: 
+    * The complexity of this is O(M)
+    * Depending on G, the algorithm might fail to return ratios>0.3 
+    """
+
+    N = G.N
+
+    # the edge set
+    edges = np.array(G.get_edge_list()[0:2])
+    M = edges.shape[1]    
+
+    idx = np.argsort(-weights)
+    # idx = np.argsort(weights)[::-1]
+    edges = edges[:,idx]
+    
+    # the candidate edge set
+    candidate_edges = edges.T.tolist()
+    
+    # the matching edge set (this is a list of arrays)
+    matching = []
+
+    # which vertices have been selected
+    marked = np.zeros(N, dtype=np.bool_)
+    
+    n, n_target = N, (1-r)*N
+    while (len(candidate_edges)>0):
+
+        # pop a candidate edge
+        [i,j] = candidate_edges.pop(0)
+
+        # check if marked
+        if any(marked[[i,j]]): continue
+    
+        marked[[i,j]] = True
+        n -= 1
+        
+        # add it to the matching
+        matching.append(np.array([i,j]))
+
+        # termination condition
+        if n <= n_target: break
+        
+    return np.array(matching)
+
+
+
+##############################################################################
+# Sparsification and Kron reduction
+# Most of the code has been adapted from the PyGSP implementation. 
+##############################################################################
+def kron_coarsening(G, r=0.5, m=None):
+    
+    if not hasattr(G, 'coords'): 
+        G.set_coordinates(np.random.rand(G.N,2)) # needed by kron
+    
+    n_target = np.floor((1-r)*G.N)
+    levels   = int(np.ceil(np.log2(G.N/n_target)))
+    
+    try:
+        Gs = my_graph_multiresolution(G, levels, r=r, sparsify=False, sparsify_eps=None, reduction_method='kron', reg_eps=0.01)
+        Gk = Gs[-1]
+
+        # sparsify to a target number of edges m
+        if m is not None:
+            M = Gk.Ne #int(Gk.W.nnz/2) 
+            epsilon = min(10/np.sqrt(G.N),.3) #1 - m/M
+            Gc = graph_sparsify(Gk, epsilon, maxiter=10)
+            Gc.mr = Gk.mr
+        else:
+            Gc = Gk
+
+        return Gc, Gs[0] 
+    
+    except:
+        return None, None
+
+def kron_quality(G, Gc, kmax=30, Uk=None, lk=None):
+    
+    N, n = G.N, Gc.N
+    keep_inds = Gc.mr['idx']
+
+    metrics = {'r': 1 - n / N, 'm': int(Gc.W.nnz/2), 'failed':False}
+    kmax = np.clip(kmax, 1, n) 
+
+    if (Uk is not None) and (lk is not None) and (len(lk)>= kmax):
+        U, l = Uk, lk
+    elif hasattr(G, 'U'):   
+        U, l = G.U, G.e
+    else: 
+        l, U = sp.sparse.linalg.eigsh(G.L, k=kmax, which='SM', tol=1e-3) 
+    
+    l[0] = 1; linv = l**(-0.5); linv[0] = 0; # avoids divide by 0 
+    
+    C    = np.eye(N); C = C[keep_inds,:]
+    L    = G.L.toarray()
+    
+    try:
+        Phi  = np.linalg.pinv(L + 0.01*np.eye(N))
+        Cinv = (Phi @ C.T) @ np.linalg.pinv(C @ Phi @ C.T)
+        
+        if kmax>n/2:
+            [Uc,lc] = eig(Gc.L.toarray())        
+        else:
+            lc, Uc = sp.sparse.linalg.eigsh(Gc.L, k=kmax, which='SM', tol=1e-3) 
+
+
+        # eigenvalue relative error
+        metrics['error_eigenvalue'] = np.abs(l[:kmax] - lc[:kmax]) / l[:kmax] 
+        metrics['error_eigenvalue'][0] = 0
+
+        # TODO : angles between eigenspaces
+        # metrics['angle_matrix'] = U.T @ C.T @ Uc
+
+        # other errors
+        kmax = np.clip(kmax, 2, n)
+
+        error_subspace = np.zeros(kmax) 
+        error_sintheta = np.zeros(kmax)
+
+        # M = (Lsqrtm - sp.linalg.sqrtm(Cinv @ Gc.L.dot(C))) @ U @ np.diag(linv) # is this correct? 
+        M = U - sp.linalg.sqrtm(Cinv @ Gc.L.dot(C)) @ U @ np.diag(linv) # is this correct? 
+        for kIdx in range(0, kmax): 
+            error_subspace[kIdx] = np.abs(np.linalg.norm(M[:,:kIdx + 1], ord=2)-1)
+
+        metrics['error_subspace'] = error_subspace
+        metrics['error_sintheta'] = error_sintheta
+
+    except:
+        metrics['failed'] = True
+    
+    return metrics
+    
+def kron_interpolate(G, Gc, x):
+    return np.squeeze(reduction.interpolate(G, x, Gc.mr['idx']))
+
+    
+
+def my_graph_multiresolution(G, levels, r=0.5, sparsify=True, sparsify_eps=None,
+                          downsampling_method='largest_eigenvector',
+                          reduction_method='kron', compute_full_eigen=False,
+                          reg_eps=0.005):
+    r"""Compute a pyramid of graphs (by Kron reduction).
+
+    'graph_multiresolution(G,levels)' computes a multiresolution of
+    graph by repeatedly downsampling and performing graph reduction. The
+    default downsampling method is the largest eigenvector method based on
+    the polarity of the components of the eigenvector associated with the
+    largest graph Laplacian eigenvalue. The default graph reduction method
+    is Kron reduction followed by a graph sparsification step.
+    *param* is a structure of optional parameters.
+
+    Parameters
+    ----------
+    G : Graph structure
+        The graph to reduce.
+    levels : int
+        Number of level of decomposition
+    lambd : float
+        Stability parameter. It adds self loop to the graph to give the
+        algorithm some stability (default = 0.025). [UNUSED?!]
+    sparsify : bool
+        To perform a spectral sparsification step immediately after
+        the graph reduction (default is True).
+    sparsify_eps : float
+        Parameter epsilon used in the spectral sparsification
+        (default is min(10/sqrt(G.N),.3)).
+    downsampling_method: string
+        The graph downsampling method (default is 'largest_eigenvector').
+    reduction_method : string
+        The graph reduction method (default is 'kron')
+    compute_full_eigen : bool
+        To also compute the graph Laplacian eigenvalues and eigenvectors
+        for every graph in the multiresolution sequence (default is False).
+    reg_eps : float
+        The regularized graph Laplacian is :math:`\bar{L}=L+\epsilon I`.
+        A smaller epsilon may lead to better regularization, but will also
+        require a higher order Chebyshev approximation. (default is 0.005)
+
+    Returns
+    -------
+    Gs : list
+        A list of graph layers.
+
+    Examples
+    --------
+    >>> from pygsp import reduction
+    >>> levels = 5
+    >>> G = graphs.Sensor(N=512)
+    >>> G.compute_fourier_basis()
+    >>> Gs = reduction.graph_multiresolution(G, levels, sparsify=False)
+    >>> for idx in range(levels):
+    ...     Gs[idx].plotting['plot_name'] = 'Reduction level: {}'.format(idx)
+    ...     Gs[idx].plot()
+
+    """
+    if sparsify_eps is None:
+        sparsify_eps = min(10. / np.sqrt(G.N), 0.3)
+
+    if compute_full_eigen:
+        G.compute_fourier_basis()
+    else:
+        G.estimate_lmax()
+
+    Gs = [G]
+    Gs[0].mr = {'idx': np.arange(G.N), 'orig_idx': np.arange(G.N)}
+
+    n_target = int(np.floor(G.N * (1-r)))
+    
+    for i in range(levels):
+        if downsampling_method == 'largest_eigenvector':
+            if hasattr(Gs[i], '_U'):
+                V = Gs[i].U[:, -1]
+            else:
+                V = sp.sparse.linalg.eigs(Gs[i].L, 1)[1][:, 0]
+
+            V *= np.sign(V[0])
+            n  = max(int(Gs[i].N/2), n_target)            
+
+            ind = np.argsort(V) # np.nonzero(V >= 0)[0] 
+            ind = np.flip(ind,0)
+            ind = ind[:n]
+
+        else:
+            raise NotImplementedError('Unknown graph downsampling method.')
+
+        if reduction_method == 'kron':
+            Gs.append(reduction.kron_reduction(Gs[i], ind))
+
+        else:
+            raise NotImplementedError('Unknown graph reduction method.')
+
+        if sparsify and Gs[i+1].N > 2:
+            Gs[i+1] = reduction.graph_sparsify(Gs[i+1], min(max(sparsify_eps, 2. / np.sqrt(Gs[i+1].N)), 1.))
+
+        if Gs[i+1].is_directed():
+            W = (Gs[i+1].W + Gs[i+1].W.T)/2
+            Gs[i+1] = graphs.Graph(W, coords=Gs[i+1].coords)
+            
+        if compute_full_eigen:
+            Gs[i+1].compute_fourier_basis()
+        else:
+            Gs[i+1].estimate_lmax()
+
+        Gs[i+1].mr = {'idx': ind, 'orig_idx': Gs[i].mr['orig_idx'][ind], 'level': i}
+
+        L_reg = Gs[i].L + reg_eps * sparse.eye(Gs[i].N)
+        Gs[i].mr['K_reg'] = reduction.kron_reduction(L_reg, ind)
+        Gs[i].mr['green_kernel'] = filters.Filter(Gs[i], lambda x: 1./(reg_eps + x))
+
+    return Gs
+
+def graph_sparsify(M, epsilon, maxiter=10):
+
+    from pygsp import utils
+    from scipy import sparse, stats
+    
+    # Test the input parameters
+    if isinstance(M, graphs.Graph):
+        if not M.lap_type == 'combinatorial':
+            raise NotImplementedError
+        L = M.L
+    else:
+        L = M
+
+    N = np.shape(L)[0]
+
+    if not 1./np.sqrt(N) <= epsilon < 1:
+        raise ValueError('GRAPH_SPARSIFY: Epsilon out of required range')
+
+    # Not sparse
+    resistance_distances = utils.resistance_distance(L).toarray()
+    # Get the Weight matrix
+    if isinstance(M, graphs.Graph):
+        W = M.W
+    else:
+        W = np.diag(L.diagonal()) - L.toarray()
+        W[W < 1e-10] = 0
+
+    W = sparse.coo_matrix(W)
+    W.data[W.data < 1e-10] = 0
+    W = W.tocsc()
+    W.eliminate_zeros()
+
+    start_nodes, end_nodes, weights = sparse.find(sparse.tril(W))
+
+    # Calculate the new weights.
+    weights = np.maximum(0, weights)
+    Re = np.maximum(0, resistance_distances[start_nodes, end_nodes])
+    Pe = weights * Re + 1e-4
+    Pe = Pe / np.sum(Pe)
+    
+    for i in range(maxiter):
+        # Rudelson, 1996 Random Vectors in the Isotropic Position
+        # (too hard to figure out actual C0)
+        C0 = 1 / 30.
+        # Rudelson and Vershynin, 2007, Thm. 3.1
+        C = 4 * C0
+        q = round(N * np.log(N) * 9 * C**2 / (epsilon**2))
+
+        results = stats.rv_discrete(values=(np.arange(np.shape(Pe)[0]), Pe)).rvs(size=int(q))
+        spin_counts = stats.itemfreq(results).astype(int)
+        per_spin_weights = weights / (q * Pe)
+
+        counts = np.zeros(np.shape(weights)[0])
+        counts[spin_counts[:, 0]] = spin_counts[:, 1]
+        new_weights = counts * per_spin_weights
+
+        sparserW = sparse.csc_matrix((new_weights, (start_nodes, end_nodes)),
+                                     shape=(N, N))
+        sparserW = sparserW + sparserW.T
+        sparserL = sparse.diags(sparserW.diagonal(), 0) - sparserW
+
+#        if graphs.Graph(W=sparserW).is_connected():
+#            break
+#        elif i == maxiter - 1:
+#            print('Despite attempts to reduce epsilon, sparsified graph is disconnected')
+#        else:
+#            epsilon -= (epsilon - 1/np.sqrt(N)) / 2.
+
+    if isinstance(M, graphs.Graph):
+        sparserW = sparse.diags(sparserL.diagonal(), 0) - sparserL
+        if not M.is_directed():
+            sparserW = (sparserW + sparserW.T) / 2.
+
+        Mnew = graphs.Graph(W=sparserW)
+        #M.copy_graph_attributes(Mnew)
+    else:
+        Mnew = sparse.lil_matrix(sparserL)
+
+    return Mnew
+##############################################################################
+
+
+File Path: graph_coarsening/graph_lib.py
+Content:
+import numpy as np
+import scipy as sp
+import pygsp as gsp
+from pygsp import graphs
+import graph_coarsening.graph_utils as graph_utils
+import os
+
+def real(N, graph_name, connected=True):
+    r""" 
+    A convenience method for loading toy graphs that have been collected from the internet.
+ 
+	Parameters:
+	----------
+	N : int 
+	    The number of nodes.
+
+	graph_name : a string 
+        Use to select which graph is returned. Choices include 
+            * airfoil
+                Graph from airflow simulation
+                http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.50.9217&rep=rep1&type=pdf
+                http://networkrepository.com/airfoil1.php
+            * yeast
+                Network of protein-to-protein interactions in budding yeast.
+                http://networkrepository.com/bio-yeast.php
+            * minnesota
+                Minnesota road network.
+                I am using the version provided by the PyGSP software package (initially taken from the MatlabBGL library.)
+            * bunny
+                The Stanford bunny is a computer graphics 3D test model developed by Greg Turk and Marc Levoy in 1994 at Stanford University
+                I am using the version provided by the PyGSP software package.
+	connected : Boolean
+        Set to True if only the giant component is to be returned.    
+"""
+
+    directory = os.path.dirname(graph_utils.__file__) + '/data/'
+    
+    tries = 0    
+    while True:
+        tries = tries + 1
+
+        if graph_name == 'airfoil': 
+            G = graphs.Airfoil()
+            G = graphs.Graph(W=G.W[0:N,0:N], coords=G.coords[0:N,:])
+
+        elif graph_name == 'yeast': 
+            file = directory + 'bio-yeast.npy'  
+            W = np.load(file)
+            G = graphs.Graph(W = W[0:N,0:N])
+
+        elif graph_name == 'minnesota': 
+            G = graphs.Minnesota()
+            W = G.W.astype(np.float)
+            G = graphs.Graph(W=W[0:N,0:N], coords=G.coords[0:N,:])
+
+        elif graph_name == 'bunny':
+            G = graphs.Bunny()
+            W = G.W.astype(np.float)
+            G = graphs.Graph(W=W[0:N,0:N], coords=G.coords[0:N,:])
+            
+        if connected==False or G.is_connected(): break 
+        if tries > 1: 
+            print('WARNING: disconnected graph.. trying to use the giant component')
+            G,_ = graph_utils.get_giant_component(G)
+            break
+    return G
+
+def models(N, graph_name, connected=True, default_params=False, k=12, sigma=0.5):
+
+    tries = 0    
+    while True:
+        tries = tries + 1
+        if graph_name == 'regular':         
+            if default_params: k = 10; 
+            offsets = []
+            for i in range(1,int(k/2)+1):
+                offsets.append(i) 
+                offsets.append(-(N-i)) 
+
+            offsets = np.array(offsets)
+            vals = np.ones_like(offsets)
+            W  = sp.sparse.diags(vals, offsets, shape=(N, N), format='csc', dtype=np.float)
+            W = (W + W.T)/2
+            G = graphs.Graph(W = W)    
+
+        else: print('ERROR: uknown model'); return 
+            
+        if connected==False or G.is_connected(): break 
+        if tries > 1: 
+            print('WARNING: disconnected graph.. trying to use the giant component')
+            G = graph_utils.get_giant_component(G)
+            break
+    return G
+
+
+
+File Path: graph_coarsening/graph_utils.py
+Content:
+import numpy as np
+import pygsp as gsp
+
+def get_neighbors(G, i):
+    return G.A[i,:].indices
+    # return np.arange(G.N)[np.array((G.W[i,:] > 0).todense())[0]]
+    
+def get_giant_component(G):
+
+    from scipy.sparse import csgraph
+
+    [ncomp, labels] = csgraph.connected_components(G.W, directed=False, return_labels=True)
+
+    W_g = np.array((0,0))
+    coords_g = np.array((0,2))
+    keep = np.array(0)
+    
+    for i in range(0,ncomp):
+        
+        idx = np.where(labels!=i)
+        idx = idx[0]
+        
+        if G.N-len(idx) > W_g.shape[0]:        
+            W_g = G.W.toarray()
+            W_g = np.delete(W_g, idx, axis=0)
+            W_g = np.delete(W_g, idx, axis=1)
+            if hasattr(G, 'coords'):
+                coords_g = np.delete(G.coords, idx, axis=0)
+            keep = np.delete(np.arange(G.N), idx)    
+
+    if not hasattr(G, 'coords'):
+        # print(W_g.shape)
+        G_g = gsp.graphs.Graph(W=W_g)        
+    else:
+        G_g = gsp.graphs.Graph(W=W_g, coords=coords_g)
+
+    
+    return (G_g, keep)
+
+
+def get_S(G):
+    """
+    Construct the N x |E| gradient matrix S
+    """
+    # the edge set
+    edges = G.get_edge_list()
+    weights = np.array(edges[2])
+    edges = np.array(edges[0:2])
+    M = edges.shape[1]
+    
+    # Construct the N x |E| gradient matrix S
+    S = np.zeros((G.N,M))
+    for e in np.arange(M):
+        S[edges[0,e], e] = np.sqrt(weights[e])
+        S[edges[1,e], e] = -np.sqrt(weights[e])
+        
+    return S   
+
+# Compare the spectum of L and Lc
+def eig(A, order='ascend'):
+
+    # eigenvalue decomposition
+    [l,X] = np.linalg.eigh(A)
+
+    # reordering indices     
+    idx = l.argsort()   
+    if order == 'descend':
+        idx = idx[::-1]
+
+    # reordering     
+    l = np.real(l[idx])
+    X = X[:, idx]
+    return (X,np.real(l))
+
+def zero_diag(A):
+    
+    import scipy as sp
+
+    if sp.sparse.issparse(A):
+        return A - sp.sparse.dia_matrix((A.diagonal()[sp.newaxis, :], [0]), shape=(A.shape[0], A.shape[1]))
+    else:
+        D = A.diagonal()
+        return A - np.diag(D)
+
+def is_symmetric(As):
+    """Check if a sparse matrix is symmetric
+
+    Parameters
+    ----------
+    As : array or sparse matrix
+        A square matrix.
+
+    Returns
+    -------
+    check : bool
+        The check result.
+
+    """
+    from scipy import sparse 
+    
+    if As.shape[0] != As.shape[1]:
+        return False
+
+    if not isinstance(As, sparse.coo_matrix):
+        As = sparse.coo_matrix(As)
+
+    r, c, v = As.row, As.col, As.data
+    tril_no_diag = r > c
+    triu_no_diag = c > r
+
+    if triu_no_diag.sum() != tril_no_diag.sum():
+        return False
+
+    rl = r[tril_no_diag]
+    cl = c[tril_no_diag]
+    vl = v[tril_no_diag]
+    ru = r[triu_no_diag]
+    cu = c[triu_no_diag]
+    vu = v[triu_no_diag]
+
+    sortl = np.lexsort((cl, rl))
+    sortu = np.lexsort((ru, cu))
+    vl = vl[sortl]
+    vu = vu[sortu]
+
+    check = np.allclose(vl, vu)
+
+    return check
+
+File Path: graph_coarsening/maxWeightMatching.py
+Content:
+"""Weighted maximum matching in general graphs.
+
+The algorithm is taken from "Efficient Algorithms for Finding Maximum
+Matching in Graphs" by Zvi Galil, ACM Computing Surveys, 1986.
+It is based on the "blossom" method for finding augmenting paths and
+the "primal-dual" method for finding a matching of maximum weight, both
+due to Jack Edmonds.
+Some ideas came from "Implementation of algorithms for maximum matching
+on non-bipartite graphs" by H.J. Gabow, Standford Ph.D. thesis, 1973.
+
+A C program for maximum weight matching by Ed Rothberg was used extensively
+to validate this new code.
+"""
+
+#
+# Changes:
+#
+# 2013-04-07
+#   * Added Python 3 compatibility with contributions from Daniel Saunders.
+#
+# 2008-06-08
+#   * First release.
+#
+
+from __future__ import print_function
+from sys import version as sys_version
+
+# If assigned, DEBUG(str) is called with lots of debug messages.
+DEBUG = None
+"""def DEBUG(s):
+    from sys import stderr
+    print('DEBUG:', s, file=stderr)
+"""
+
+# Check delta2/delta3 computation after every substage;
+# only works on integer weights, slows down the algorithm to O(n^4).
+CHECK_DELTA = False
+
+# Check optimality of solution before returning; only works on integer weights.
+CHECK_OPTIMUM = False
+
+
+def maxWeightMatching(edges, maxcardinality=False):
+    """Compute a maximum-weighted matching in the general undirected
+    weighted graph given by "edges".  If "maxcardinality" is true,
+    only maximum-cardinality matchings are considered as solutions.
+
+    Edges is a sequence of tuples (i, j, wt) describing an undirected
+    edge between vertex i and vertex j with weight wt.  There is at most
+    one edge between any two vertices; no vertex has an edge to itself.
+    Vertices are identified by consecutive, non-negative integers.
+
+    Return a list "mate", such that mate[i] == j if vertex i is
+    matched to vertex j, and mate[i] == -1 if vertex i is not matched.
+
+    This function takes time O(n ** 3)."""
+
+    #
+    # Vertices are numbered 0 .. (nvertex-1).
+    # Non-trivial blossoms are numbered nvertex .. (2*nvertex-1)
+    #
+    # Edges are numbered 0 .. (nedge-1).
+    # Edge endpoints are numbered 0 .. (2*nedge-1), such that endpoints
+    # (2*k) and (2*k+1) both belong to edge k.
+    #
+    # Many terms used in the comments (sub-blossom, T-vertex) come from
+    # the paper by Galil; read the paper before reading this code.
+    #
+
+    # Python 2/3 compatibility.
+    if sys_version < '3':
+        integer_types = (int, long)
+    else:
+        integer_types = (int,)
+
+    # Deal swiftly with empty graphs.
+    if not edges:
+        return [ ]
+
+    # Count vertices.
+    nedge = len(edges)
+    nvertex = 0
+    for (i, j, w) in edges:
+        assert i >= 0 and j >= 0 and i != j
+        if i >= nvertex:
+            nvertex = i + 1
+        if j >= nvertex:
+            nvertex = j + 1
+
+    # Find the maximum edge weight.
+    maxweight = max(0, max([ wt for (i, j, wt) in edges ]))
+
+    # If p is an edge endpoint,
+    # endpoint[p] is the vertex to which endpoint p is attached.
+    # Not modified by the algorithm.
+    endpoint = [ edges[p//2][p%2] for p in range(2*nedge) ]
+
+    # If v is a vertex,
+    # neighbend[v] is the list of remote endpoints of the edges attached to v.
+    # Not modified by the algorithm.
+    neighbend = [ [ ] for i in range(nvertex) ]
+    for k in range(len(edges)):
+        (i, j, w) = edges[k]
+        neighbend[i].append(2*k+1)
+        neighbend[j].append(2*k)
+
+    # If v is a vertex,
+    # mate[v] is the remote endpoint of its matched edge, or -1 if it is single
+    # (i.e. endpoint[mate[v]] is v's partner vertex).
+    # Initially all vertices are single; updated during augmentation.
+    mate = nvertex * [ -1 ]
+
+    # If b is a top-level blossom,
+    # label[b] is 0 if b is unlabeled (free);
+    #             1 if b is an S-vertex/blossom;
+    #             2 if b is a T-vertex/blossom.
+    # The label of a vertex is found by looking at the label of its
+    # top-level containing blossom.
+    # If v is a vertex inside a T-blossom,
+    # label[v] is 2 iff v is reachable from an S-vertex outside the blossom.
+    # Labels are assigned during a stage and reset after each augmentation.
+    label = (2 * nvertex) * [ 0 ]
+
+    # If b is a labeled top-level blossom,
+    # labelend[b] is the remote endpoint of the edge through which b obtained
+    # its label, or -1 if b's base vertex is single.
+    # If v is a vertex inside a T-blossom and label[v] == 2,
+    # labelend[v] is the remote endpoint of the edge through which v is
+    # reachable from outside the blossom.
+    labelend = (2 * nvertex) * [ -1 ]
+
+    # If v is a vertex,
+    # inblossom[v] is the top-level blossom to which v belongs.
+    # If v is a top-level vertex, v is itself a blossom (a trivial blossom)
+    # and inblossom[v] == v.
+    # Initially all vertices are top-level trivial blossoms.
+    inblossom = list(range(nvertex))
+
+    # If b is a sub-blossom,
+    # blossomparent[b] is its immediate parent (sub-)blossom.
+    # If b is a top-level blossom, blossomparent[b] is -1.
+    blossomparent = (2 * nvertex) * [ -1 ]
+
+    # If b is a non-trivial (sub-)blossom,
+    # blossomchilds[b] is an ordered list of its sub-blossoms, starting with
+    # the base and going round the blossom.
+    blossomchilds = (2 * nvertex) * [ None ]
+
+    # If b is a (sub-)blossom,
+    # blossombase[b] is its base VERTEX (i.e. recursive sub-blossom).
+    blossombase = list(range(nvertex)) + nvertex * [ -1 ]
+
+    # If b is a non-trivial (sub-)blossom,
+    # blossomendps[b] is a list of endpoints on its connecting edges,
+    # such that blossomendps[b][i] is the local endpoint of blossomchilds[b][i]
+    # on the edge that connects it to blossomchilds[b][wrap(i+1)].
+    blossomendps = (2 * nvertex) * [ None ]
+
+    # If v is a free vertex (or an unreached vertex inside a T-blossom),
+    # bestedge[v] is the edge to an S-vertex with least slack,
+    # or -1 if there is no such edge.
+    # If b is a (possibly trivial) top-level S-blossom,
+    # bestedge[b] is the least-slack edge to a different S-blossom,
+    # or -1 if there is no such edge.
+    # This is used for efficient computation of delta2 and delta3.
+    bestedge = (2 * nvertex) * [ -1 ]
+
+    # If b is a non-trivial top-level S-blossom,
+    # blossombestedges[b] is a list of least-slack edges to neighbouring
+    # S-blossoms, or None if no such list has been computed yet.
+    # This is used for efficient computation of delta3.
+    blossombestedges = (2 * nvertex) * [ None ]
+
+    # List of currently unused blossom numbers.
+    unusedblossoms = list(range(nvertex, 2*nvertex))
+
+    # If v is a vertex,
+    # dualvar[v] = 2 * u(v) where u(v) is the v's variable in the dual
+    # optimization problem (multiplication by two ensures integer values
+    # throughout the algorithm if all edge weights are integers).
+    # If b is a non-trivial blossom,
+    # dualvar[b] = z(b) where z(b) is b's variable in the dual optimization
+    # problem.
+    dualvar = nvertex * [ maxweight ] + nvertex * [ 0 ]
+
+    # If allowedge[k] is true, edge k has zero slack in the optimization
+    # problem; if allowedge[k] is false, the edge's slack may or may not
+    # be zero.
+    allowedge = nedge * [ False ]
+
+    # Queue of newly discovered S-vertices.
+    queue = [ ]
+
+    # Return 2 * slack of edge k (does not work inside blossoms).
+    def slack(k):
+        (i, j, wt) = edges[k]
+        return dualvar[i] + dualvar[j] - 2 * wt
+
+    # Generate the leaf vertices of a blossom.
+    def blossomLeaves(b):
+        if b < nvertex:
+            yield b
+        else:
+            for t in blossomchilds[b]:
+                if t < nvertex:
+                    yield t
+                else:
+                    for v in blossomLeaves(t):
+                        yield v
+
+    # Assign label t to the top-level blossom containing vertex w
+    # and record the fact that w was reached through the edge with
+    # remote endpoint p.
+    def assignLabel(w, t, p):
+        if DEBUG: DEBUG('assignLabel(%d,%d,%d)' % (w, t, p))
+        b = inblossom[w]
+        assert label[w] == 0 and label[b] == 0
+        label[w] = label[b] = t
+        labelend[w] = labelend[b] = p
+        bestedge[w] = bestedge[b] = -1
+        if t == 1:
+            # b became an S-vertex/blossom; add it(s vertices) to the queue.
+            queue.extend(blossomLeaves(b))
+            if DEBUG: DEBUG('PUSH ' + str(list(blossomLeaves(b))))
+        elif t == 2:
+            # b became a T-vertex/blossom; assign label S to its mate.
+            # (If b is a non-trivial blossom, its base is the only vertex
+            # with an external mate.)
+            base = blossombase[b]
+            assert mate[base] >= 0
+            assignLabel(endpoint[mate[base]], 1, mate[base] ^ 1)
+
+    # Trace back from vertices v and w to discover either a new blossom
+    # or an augmenting path. Return the base vertex of the new blossom or -1.
+    def scanBlossom(v, w):
+        if DEBUG: DEBUG('scanBlossom(%d,%d)' % (v, w))
+        # Trace back from v and w, placing breadcrumbs as we go.
+        path = [ ]
+        base = -1
+        while v != -1 or w != -1:
+            # Look for a breadcrumb in v's blossom or put a new breadcrumb.
+            b = inblossom[v]
+            if label[b] & 4:
+                base = blossombase[b]
+                break
+            assert label[b] == 1
+            path.append(b)
+            label[b] = 5
+            # Trace one step back.
+            assert labelend[b] == mate[blossombase[b]]
+            if labelend[b] == -1:
+                # The base of blossom b is single; stop tracing this path.
+                v = -1
+            else:
+                v = endpoint[labelend[b]]
+                b = inblossom[v]
+                assert label[b] == 2
+                # b is a T-blossom; trace one more step back.
+                assert labelend[b] >= 0
+                v = endpoint[labelend[b]]
+            # Swap v and w so that we alternate between both paths.
+            if w != -1:
+                v, w = w, v
+       # Remove breadcrumbs.
+        for b in path:
+            label[b] = 1
+        # Return base vertex, if we found one.
+        return base
+
+    # Construct a new blossom with given base, containing edge k which
+    # connects a pair of S vertices. Label the new blossom as S; set its dual
+    # variable to zero; relabel its T-vertices to S and add them to the queue.
+    def addBlossom(base, k):
+        (v, w, wt) = edges[k]
+        bb = inblossom[base]
+        bv = inblossom[v]
+        bw = inblossom[w]
+        # Create blossom.
+        b = unusedblossoms.pop()
+        if DEBUG: DEBUG('addBlossom(%d,%d) (v=%d w=%d) -> %d' % (base, k, v, w, b))
+        blossombase[b] = base
+        blossomparent[b] = -1
+        blossomparent[bb] = b
+        # Make list of sub-blossoms and their interconnecting edge endpoints.
+        blossomchilds[b] = path = [ ]
+        blossomendps[b] = endps = [ ]
+        # Trace back from v to base.
+        while bv != bb:
+            # Add bv to the new blossom.
+            blossomparent[bv] = b
+            path.append(bv)
+            endps.append(labelend[bv])
+            assert (label[bv] == 2 or
+                    (label[bv] == 1 and labelend[bv] == mate[blossombase[bv]]))
+            # Trace one step back.
+            assert labelend[bv] >= 0
+            v = endpoint[labelend[bv]]
+            bv = inblossom[v]
+        # Reverse lists, add endpoint that connects the pair of S vertices.
+        path.append(bb)
+        path.reverse()
+        endps.reverse()
+        endps.append(2*k)
+        # Trace back from w to base.
+        while bw != bb:
+            # Add bw to the new blossom.
+            blossomparent[bw] = b
+            path.append(bw)
+            endps.append(labelend[bw] ^ 1)
+            assert (label[bw] == 2 or
+                    (label[bw] == 1 and labelend[bw] == mate[blossombase[bw]]))
+            # Trace one step back.
+            assert labelend[bw] >= 0
+            w = endpoint[labelend[bw]]
+            bw = inblossom[w]
+        # Set label to S.
+        assert label[bb] == 1
+        label[b] = 1
+        labelend[b] = labelend[bb]
+        # Set dual variable to zero.
+        dualvar[b] = 0
+        # Relabel vertices.
+        for v in blossomLeaves(b):
+            if label[inblossom[v]] == 2:
+                # This T-vertex now turns into an S-vertex because it becomes
+                # part of an S-blossom; add it to the queue.
+                queue.append(v)
+            inblossom[v] = b
+        # Compute blossombestedges[b].
+        bestedgeto = (2 * nvertex) * [ -1 ]
+        for bv in path:
+            if blossombestedges[bv] is None:
+                # This subblossom does not have a list of least-slack edges;
+                # get the information from the vertices.
+                nblists = [ [ p // 2 for p in neighbend[v] ]
+                            for v in blossomLeaves(bv) ]
+            else:
+                # Walk this subblossom's least-slack edges.
+                nblists = [ blossombestedges[bv] ]
+            for nblist in nblists:
+                for k in nblist:
+                    (i, j, wt) = edges[k]
+                    if inblossom[j] == b:
+                        i, j = j, i
+                    bj = inblossom[j]
+                    if (bj != b and label[bj] == 1 and
+                        (bestedgeto[bj] == -1 or
+                         slack(k) < slack(bestedgeto[bj]))):
+                        bestedgeto[bj] = k
+            # Forget about least-slack edges of the subblossom.
+            blossombestedges[bv] = None
+            bestedge[bv] = -1
+        blossombestedges[b] = [ k for k in bestedgeto if k != -1 ]
+        # Select bestedge[b].
+        bestedge[b] = -1
+        for k in blossombestedges[b]:
+            if bestedge[b] == -1 or slack(k) < slack(bestedge[b]):
+                bestedge[b] = k
+        if DEBUG: DEBUG('blossomchilds[%d]=' % b + repr(blossomchilds[b]))
+
+    # Expand the given top-level blossom.
+    def expandBlossom(b, endstage):
+        if DEBUG: DEBUG('expandBlossom(%d,%d) %s' % (b, endstage, repr(blossomchilds[b])))
+        # Convert sub-blossoms into top-level blossoms.
+        for s in blossomchilds[b]:
+            blossomparent[s] = -1
+            if s < nvertex:
+                inblossom[s] = s
+            elif endstage and dualvar[s] == 0:
+                # Recursively expand this sub-blossom.
+                expandBlossom(s, endstage)
+            else:
+                for v in blossomLeaves(s):
+                    inblossom[v] = s
+        # If we expand a T-blossom during a stage, its sub-blossoms must be
+        # relabeled.
+        if (not endstage) and label[b] == 2:
+            # Start at the sub-blossom through which the expanding
+            # blossom obtained its label, and relabel sub-blossoms untili
+            # we reach the base.
+            # Figure out through which sub-blossom the expanding blossom
+            # obtained its label initially.
+            assert labelend[b] >= 0
+            entrychild = inblossom[endpoint[labelend[b] ^ 1]]
+            # Decide in which direction we will go round the blossom.
+            j = blossomchilds[b].index(entrychild)
+            if j & 1:
+                # Start index is odd; go forward and wrap.
+                j -= len(blossomchilds[b])
+                jstep = 1
+                endptrick = 0
+            else:
+                # Start index is even; go backward.
+                jstep = -1
+                endptrick = 1
+            # Move along the blossom until we get to the base.
+            p = labelend[b]
+            while j != 0:
+                # Relabel the T-sub-blossom.
+                label[endpoint[p ^ 1]] = 0
+                label[endpoint[blossomendps[b][j-endptrick]^endptrick^1]] = 0
+                assignLabel(endpoint[p ^ 1], 2, p)
+                # Step to the next S-sub-blossom and note its forward endpoint.
+                allowedge[blossomendps[b][j-endptrick]//2] = True
+                j += jstep
+                p = blossomendps[b][j-endptrick] ^ endptrick
+                # Step to the next T-sub-blossom.
+                allowedge[p//2] = True
+                j += jstep
+            # Relabel the base T-sub-blossom WITHOUT stepping through to
+            # its mate (so don't call assignLabel).
+            bv = blossomchilds[b][j]
+            label[endpoint[p ^ 1]] = label[bv] = 2
+            labelend[endpoint[p ^ 1]] = labelend[bv] = p
+            bestedge[bv] = -1
+            # Continue along the blossom until we get back to entrychild.
+            j += jstep
+            while blossomchilds[b][j] != entrychild:
+                # Examine the vertices of the sub-blossom to see whether
+                # it is reachable from a neighbouring S-vertex outside the
+                # expanding blossom.
+                bv = blossomchilds[b][j]
+                if label[bv] == 1:
+                    # This sub-blossom just got label S through one of its
+                    # neighbours; leave it.
+                    j += jstep
+                    continue
+                for v in blossomLeaves(bv):
+                    if label[v] != 0:
+                        break
+                # If the sub-blossom contains a reachable vertex, assign
+                # label T to the sub-blossom.
+                if label[v] != 0:
+                    assert label[v] == 2
+                    assert inblossom[v] == bv
+                    label[v] = 0
+                    label[endpoint[mate[blossombase[bv]]]] = 0
+                    assignLabel(v, 2, labelend[v])
+                j += jstep
+        # Recycle the blossom number.
+        label[b] = labelend[b] = -1
+        blossomchilds[b] = blossomendps[b] = None
+        blossombase[b] = -1
+        blossombestedges[b] = None
+        bestedge[b] = -1
+        unusedblossoms.append(b)
+
+    # Swap matched/unmatched edges over an alternating path through blossom b
+    # between vertex v and the base vertex. Keep blossom bookkeeping consistent.
+    def augmentBlossom(b, v):
+        if DEBUG: DEBUG('augmentBlossom(%d,%d)' % (b, v))
+        # Bubble up through the blossom tree from vertex v to an immediate
+        # sub-blossom of b.
+        t = v
+        while blossomparent[t] != b:
+            t = blossomparent[t]
+        # Recursively deal with the first sub-blossom.
+        if t >= nvertex:
+            augmentBlossom(t, v)
+        # Decide in which direction we will go round the blossom.
+        i = j = blossomchilds[b].index(t)
+        if i & 1:
+            # Start index is odd; go forward and wrap.
+            j -= len(blossomchilds[b])
+            jstep = 1
+            endptrick = 0
+        else:
+            # Start index is even; go backward.
+            jstep = -1
+            endptrick = 1
+        # Move along the blossom until we get to the base.
+        while j != 0:
+            # Step to the next sub-blossom and augment it recursively.
+            j += jstep
+            t = blossomchilds[b][j]
+            p = blossomendps[b][j-endptrick] ^ endptrick
+            if t >= nvertex:
+                augmentBlossom(t, endpoint[p])
+            # Step to the next sub-blossom and augment it recursively.
+            j += jstep
+            t = blossomchilds[b][j]
+            if t >= nvertex:
+                augmentBlossom(t, endpoint[p ^ 1])
+            # Match the edge connecting those sub-blossoms.
+            mate[endpoint[p]] = p ^ 1
+            mate[endpoint[p ^ 1]] = p
+            if DEBUG: DEBUG('PAIR %d %d (k=%d)' % (endpoint[p], endpoint[p^1], p//2))
+        # Rotate the list of sub-blossoms to put the new base at the front.
+        blossomchilds[b] = blossomchilds[b][i:] + blossomchilds[b][:i]
+        blossomendps[b]  = blossomendps[b][i:]  + blossomendps[b][:i]
+        blossombase[b] = blossombase[blossomchilds[b][0]]
+        assert blossombase[b] == v
+
+    # Swap matched/unmatched edges over an alternating path between two
+    # single vertices. The augmenting path runs through edge k, which
+    # connects a pair of S vertices.
+    def augmentMatching(k):
+        (v, w, wt) = edges[k]
+        if DEBUG: DEBUG('augmentMatching(%d) (v=%d w=%d)' % (k, v, w))
+        if DEBUG: DEBUG('PAIR %d %d (k=%d)' % (v, w, k))
+        for (s, p) in ((v, 2*k+1), (w, 2*k)):
+            # Match vertex s to remote endpoint p. Then trace back from s
+            # until we find a single vertex, swapping matched and unmatched
+            # edges as we go.
+            while 1:
+                bs = inblossom[s]
+                assert label[bs] == 1
+                assert labelend[bs] == mate[blossombase[bs]]
+                # Augment through the S-blossom from s to base.
+                if bs >= nvertex:
+                    augmentBlossom(bs, s)
+                # Update mate[s]
+                mate[s] = p
+                # Trace one step back.
+                if labelend[bs] == -1:
+                    # Reached single vertex; stop.
+                    break
+                t = endpoint[labelend[bs]]
+                bt = inblossom[t]
+                assert label[bt] == 2
+                # Trace one step back.
+                assert labelend[bt] >= 0
+                s = endpoint[labelend[bt]]
+                j = endpoint[labelend[bt] ^ 1]
+                # Augment through the T-blossom from j to base.
+                assert blossombase[bt] == t
+                if bt >= nvertex:
+                    augmentBlossom(bt, j)
+                # Update mate[j]
+                mate[j] = labelend[bt]
+                # Keep the opposite endpoint;
+                # it will be assigned to mate[s] in the next step.
+                p = labelend[bt] ^ 1
+                if DEBUG: DEBUG('PAIR %d %d (k=%d)' % (s, t, p//2))
+
+    # Verify that the optimum solution has been reached.
+    def verifyOptimum():
+        if maxcardinality:
+            # Vertices may have negative dual;
+            # find a constant non-negative number to add to all vertex duals.
+            vdualoffset = max(0, -min(dualvar[:nvertex]))
+        else:
+            vdualoffset = 0
+        # 0. all dual variables are non-negative
+        assert min(dualvar[:nvertex]) + vdualoffset >= 0
+        assert min(dualvar[nvertex:]) >= 0
+        # 0. all edges have non-negative slack and
+        # 1. all matched edges have zero slack;
+        for k in range(nedge):
+            (i, j, wt) = edges[k]
+            s = dualvar[i] + dualvar[j] - 2 * wt
+            iblossoms = [ i ]
+            jblossoms = [ j ]
+            while blossomparent[iblossoms[-1]] != -1:
+                iblossoms.append(blossomparent[iblossoms[-1]])
+            while blossomparent[jblossoms[-1]] != -1:
+                jblossoms.append(blossomparent[jblossoms[-1]])
+            iblossoms.reverse()
+            jblossoms.reverse()
+            for (bi, bj) in zip(iblossoms, jblossoms):
+                if bi != bj:
+                    break
+                s += 2 * dualvar[bi]
+            assert s >= 0
+            if mate[i] // 2 == k or mate[j] // 2 == k:
+                assert mate[i] // 2 == k and mate[j] // 2 == k
+                assert s == 0
+        # 2. all single vertices have zero dual value;
+        for v in range(nvertex):
+            assert mate[v] >= 0 or dualvar[v] + vdualoffset == 0
+        # 3. all blossoms with positive dual value are full.
+        for b in range(nvertex, 2*nvertex):
+            if blossombase[b] >= 0 and dualvar[b] > 0:
+                assert len(blossomendps[b]) % 2 == 1
+                for p in blossomendps[b][1::2]:
+                    assert mate[endpoint[p]] == p ^ 1
+                    assert mate[endpoint[p ^ 1]] == p
+        # Ok.
+
+    # Check optimized delta2 against a trivial computation.
+    def checkDelta2():
+        for v in range(nvertex):
+            if label[inblossom[v]] == 0:
+                bd = None
+                bk = -1
+                for p in neighbend[v]:
+                    k = p // 2
+                    w = endpoint[p]
+                    if label[inblossom[w]] == 1:
+                        d = slack(k)
+                        if bk == -1 or d < bd:
+                            bk = k
+                            bd = d
+                if DEBUG and (bestedge[v] != -1 or bk != -1) and (bestedge[v] == -1 or bd != slack(bestedge[v])):
+                    DEBUG('v=' + str(v) + ' bk=' + str(bk) + ' bd=' + str(bd) + ' bestedge=' + str(bestedge[v]) + ' slack=' + str(slack(bestedge[v])))
+                assert (bk == -1 and bestedge[v] == -1) or (bestedge[v] != -1 and bd == slack(bestedge[v]))
+
+    # Check optimized delta3 against a trivial computation.
+    def checkDelta3():
+        bk = -1
+        bd = None
+        tbk = -1
+        tbd = None
+        for b in range(2 * nvertex):
+            if blossomparent[b] == -1 and label[b] == 1:
+                for v in blossomLeaves(b):
+                    for p in neighbend[v]:
+                        k = p // 2
+                        w = endpoint[p]
+                        if inblossom[w] != b and label[inblossom[w]] == 1:
+                            d = slack(k)
+                            if bk == -1 or d < bd:
+                                bk = k
+                                bd = d
+                if bestedge[b] != -1:
+                    (i, j, wt) = edges[bestedge[b]]
+                    assert inblossom[i] == b or inblossom[j] == b
+                    assert inblossom[i] != b or inblossom[j] != b
+                    assert label[inblossom[i]] == 1 and label[inblossom[j]] == 1
+                    if tbk == -1 or slack(bestedge[b]) < tbd:
+                        tbk = bestedge[b]
+                        tbd = slack(bestedge[b])
+        if DEBUG and bd != tbd:
+            DEBUG('bk=%d tbk=%d bd=%s tbd=%s' % (bk, tbk, repr(bd), repr(tbd)))
+        assert bd == tbd
+
+    # Main loop: continue until no further improvement is possible.
+    for t in range(nvertex):
+
+        # Each iteration of this loop is a "stage".
+        # A stage finds an augmenting path and uses that to improve
+        # the matching.
+        if DEBUG: DEBUG('STAGE %d' % t)
+
+        # Remove labels from top-level blossoms/vertices.
+        label[:] = (2 * nvertex) * [ 0 ]
+
+        # Forget all about least-slack edges.
+        bestedge[:] = (2 * nvertex) * [ -1 ]
+        blossombestedges[nvertex:] = nvertex * [ None ]
+
+        # Loss of labeling means that we can not be sure that currently
+        # allowable edges remain allowable througout this stage.
+        allowedge[:] = nedge * [ False ]
+
+        # Make queue empty.
+        queue[:] = [ ]
+ 
+        # Label single blossoms/vertices with S and put them in the queue.
+        for v in range(nvertex):
+            if mate[v] == -1 and label[inblossom[v]] == 0:
+                assignLabel(v, 1, -1)
+
+        # Loop until we succeed in augmenting the matching.
+        augmented = 0
+        while 1:
+
+            # Each iteration of this loop is a "substage".
+            # A substage tries to find an augmenting path;
+            # if found, the path is used to improve the matching and
+            # the stage ends. If there is no augmenting path, the
+            # primal-dual method is used to pump some slack out of
+            # the dual variables.
+            if DEBUG: DEBUG('SUBSTAGE')
+
+            # Continue labeling until all vertices which are reachable
+            # through an alternating path have got a label.
+            while queue and not augmented:
+
+                # Take an S vertex from the queue.
+                v = queue.pop()
+                if DEBUG: DEBUG('POP v=%d' % v)
+                assert label[inblossom[v]] == 1
+
+                # Scan its neighbours:
+                for p in neighbend[v]:
+                    k = p // 2
+                    w = endpoint[p]
+                    # w is a neighbour to v
+                    if inblossom[v] == inblossom[w]:
+                        # this edge is internal to a blossom; ignore it
+                        continue
+                    if not allowedge[k]:
+                        kslack = slack(k)
+                        if kslack <= 0:
+                            # edge k has zero slack => it is allowable
+                            allowedge[k] = True
+                    if allowedge[k]:
+                        if label[inblossom[w]] == 0:
+                            # (C1) w is a free vertex;
+                            # label w with T and label its mate with S (R12).
+                            assignLabel(w, 2, p ^ 1)
+                        elif label[inblossom[w]] == 1:
+                            # (C2) w is an S-vertex (not in the same blossom);
+                            # follow back-links to discover either an
+                            # augmenting path or a new blossom.
+                            base = scanBlossom(v, w)
+                            if base >= 0:
+                                # Found a new blossom; add it to the blossom
+                                # bookkeeping and turn it into an S-blossom.
+                                addBlossom(base, k)
+                            else:
+                                # Found an augmenting path; augment the
+                                # matching and end this stage.
+                                augmentMatching(k)
+                                augmented = 1
+                                break
+                        elif label[w] == 0:
+                            # w is inside a T-blossom, but w itself has not
+                            # yet been reached from outside the blossom;
+                            # mark it as reached (we need this to relabel
+                            # during T-blossom expansion).
+                            assert label[inblossom[w]] == 2
+                            label[w] = 2
+                            labelend[w] = p ^ 1
+                    elif label[inblossom[w]] == 1:
+                        # keep track of the least-slack non-allowable edge to
+                        # a different S-blossom.
+                        b = inblossom[v]
+                        if bestedge[b] == -1 or kslack < slack(bestedge[b]):
+                            bestedge[b] = k
+                    elif label[w] == 0:
+                        # w is a free vertex (or an unreached vertex inside
+                        # a T-blossom) but we can not reach it yet;
+                        # keep track of the least-slack edge that reaches w.
+                        if bestedge[w] == -1 or kslack < slack(bestedge[w]):
+                            bestedge[w] = k
+
+            if augmented:
+                break
+
+            # There is no augmenting path under these constraints;
+            # compute delta and reduce slack in the optimization problem.
+            # (Note that our vertex dual variables, edge slacks and delta's
+            # are pre-multiplied by two.)
+            deltatype = -1
+            delta = deltaedge = deltablossom = None
+
+            # Verify data structures for delta2/delta3 computation.
+            if CHECK_DELTA:
+                checkDelta2()
+                checkDelta3()
+
+            # Compute delta1: the minumum value of any vertex dual.
+            if not maxcardinality:
+                deltatype = 1
+                delta = min(dualvar[:nvertex])
+
+            # Compute delta2: the minimum slack on any edge between
+            # an S-vertex and a free vertex.
+            for v in range(nvertex):
+                if label[inblossom[v]] == 0 and bestedge[v] != -1:
+                    d = slack(bestedge[v])
+                    if deltatype == -1 or d < delta:
+                        delta = d
+                        deltatype = 2
+                        deltaedge = bestedge[v]
+
+            # Compute delta3: half the minimum slack on any edge between
+            # a pair of S-blossoms.
+            for b in range(2 * nvertex):
+                if ( blossomparent[b] == -1 and label[b] == 1 and
+                     bestedge[b] != -1 ):
+                    kslack = slack(bestedge[b])
+                    if isinstance(kslack, integer_types):
+                        assert (kslack % 2) == 0
+                        d = kslack // 2
+                    else:
+                        d = kslack / 2
+                    if deltatype == -1 or d < delta:
+                        delta = d
+                        deltatype = 3
+                        deltaedge = bestedge[b]
+
+            # Compute delta4: minimum z variable of any T-blossom.
+            for b in range(nvertex, 2*nvertex):
+                if ( blossombase[b] >= 0 and blossomparent[b] == -1 and
+                     label[b] == 2 and
+                     (deltatype == -1 or dualvar[b] < delta) ):
+                    delta = dualvar[b]
+                    deltatype = 4
+                    deltablossom = b
+
+            if deltatype == -1:
+                # No further improvement possible; max-cardinality optimum
+                # reached. Do a final delta update to make the optimum
+                # verifyable.
+                assert maxcardinality
+                deltatype = 1
+                delta = max(0, min(dualvar[:nvertex]))
+
+            # Update dual variables according to delta.
+            for v in range(nvertex):
+                if label[inblossom[v]] == 1:
+                    # S-vertex: 2*u = 2*u - 2*delta
+                    dualvar[v] -= delta
+                elif label[inblossom[v]] == 2:
+                    # T-vertex: 2*u = 2*u + 2*delta
+                    dualvar[v] += delta
+            for b in range(nvertex, 2*nvertex):
+                if blossombase[b] >= 0 and blossomparent[b] == -1:
+                    if label[b] == 1:
+                        # top-level S-blossom: z = z + 2*delta
+                        dualvar[b] += delta
+                    elif label[b] == 2:
+                        # top-level T-blossom: z = z - 2*delta
+                        dualvar[b] -= delta
+
+            # Take action at the point where minimum delta occurred.
+            if DEBUG: DEBUG('delta%d=%f' % (deltatype, delta))
+            if deltatype == 1: 
+                # No further improvement possible; optimum reached.
+                break
+            elif deltatype == 2:
+                # Use the least-slack edge to continue the search.
+                allowedge[deltaedge] = True
+                (i, j, wt) = edges[deltaedge]
+                if label[inblossom[i]] == 0:
+                    i, j = j, i
+                assert label[inblossom[i]] == 1
+                queue.append(i)
+            elif deltatype == 3:
+                # Use the least-slack edge to continue the search.
+                allowedge[deltaedge] = True
+                (i, j, wt) = edges[deltaedge]
+                assert label[inblossom[i]] == 1
+                queue.append(i)
+            elif deltatype == 4:
+                # Expand the least-z blossom.
+                expandBlossom(deltablossom, False)
+
+            # End of a this substage.
+
+        # Stop when no more augmenting path can be found.
+        if not augmented:
+            break
+
+        # End of a stage; expand all S-blossoms which have dualvar = 0.
+        for b in range(nvertex, 2*nvertex):
+            if ( blossomparent[b] == -1 and blossombase[b] >= 0 and
+                 label[b] == 1 and dualvar[b] == 0 ):
+                expandBlossom(b, True)
+
+    # Verify that we reached the optimum solution.
+    if CHECK_OPTIMUM:
+        verifyOptimum()
+
+    # Transform mate[] such that mate[v] is the vertex to which v is paired.
+    for v in range(nvertex):
+        if mate[v] >= 0:
+            mate[v] = endpoint[mate[v]]
+    for v in range(nvertex):
+        assert mate[v] == -1 or mate[mate[v]] == v
+
+    return mate
+
+
+# Unit tests
+if __name__ == '__main__':
+    import unittest, math
+
+    class MaxWeightMatchingTests(unittest.TestCase):
+
+        def test10_empty(self):
+            # empty input graph
+            self.assertEqual(maxWeightMatching([]), [])
+
+        def test11_singleedge(self):
+            # single edge
+            self.assertEqual(maxWeightMatching([ (0,1,1) ]), [1, 0])
+
+        def test12(self):
+            self.assertEqual(maxWeightMatching([ (1,2,10), (2,3,11) ]), [ -1, -1, 3, 2 ])
+
+        def test13(self):
+            self.assertEqual(maxWeightMatching([ (1,2,5), (2,3,11), (3,4,5) ]), [ -1, -1, 3, 2, -1 ])
+
+        def test14_maxcard(self):
+            # maximum cardinality
+            self.assertEqual(maxWeightMatching([ (1,2,5), (2,3,11), (3,4,5) ], True), [ -1, 2, 1, 4, 3 ])
+
+        def test15_float(self):
+            # floating point weigths
+            self.assertEqual(maxWeightMatching([ (1,2,math.pi), (2,3,math.exp(1)), (1,3,3.0), (1,4,math.sqrt(2.0)) ]), [ -1, 4, 3, 2, 1 ])
+
+        def test16_negative(self):
+            # negative weights
+            self.assertEqual(maxWeightMatching([ (1,2,2), (1,3,-2), (2,3,1), (2,4,-1), (3,4,-6) ], False), [ -1, 2, 1, -1, -1 ])
+            self.assertEqual(maxWeightMatching([ (1,2,2), (1,3,-2), (2,3,1), (2,4,-1), (3,4,-6) ], True), [ -1, 3, 4, 1, 2 ])
+
+        def test20_sblossom(self):
+            # create S-blossom and use it for augmentation
+            self.assertEqual(maxWeightMatching([ (1,2,8), (1,3,9), (2,3,10), (3,4,7) ]), [ -1, 2, 1, 4, 3 ])
+            self.assertEqual(maxWeightMatching([ (1,2,8), (1,3,9), (2,3,10), (3,4,7), (1,6,5), (4,5,6) ]), [ -1, 6, 3, 2, 5, 4, 1 ])
+
+        def test21_tblossom(self):
+            # create S-blossom, relabel as T-blossom, use for augmentation
+            self.assertEqual(maxWeightMatching([ (1,2,9), (1,3,8), (2,3,10), (1,4,5), (4,5,4), (1,6,3) ]), [ -1, 6, 3, 2, 5, 4, 1 ])
+            self.assertEqual(maxWeightMatching([ (1,2,9), (1,3,8), (2,3,10), (1,4,5), (4,5,3), (1,6,4) ]), [ -1, 6, 3, 2, 5, 4, 1 ])
+            self.assertEqual(maxWeightMatching([ (1,2,9), (1,3,8), (2,3,10), (1,4,5), (4,5,3), (3,6,4) ]), [ -1, 2, 1, 6, 5, 4, 3 ])
+
+        def test22_s_nest(self):
+            # create nested S-blossom, use for augmentation
+            self.assertEqual(maxWeightMatching([ (1,2,9), (1,3,9), (2,3,10), (2,4,8), (3,5,8), (4,5,10), (5,6,6) ]), [ -1, 3, 4, 1, 2, 6, 5 ])
+
+        def test23_s_relabel_nest(self):
+            # create S-blossom, relabel as S, include in nested S-blossom
+            self.assertEqual(maxWeightMatching([ (1,2,10), (1,7,10), (2,3,12), (3,4,20), (3,5,20), (4,5,25), (5,6,10), (6,7,10), (7,8,8) ]), [ -1, 2, 1, 4, 3, 6, 5, 8, 7 ])
+
+        def test24_s_nest_expand(self):
+            # create nested S-blossom, augment, expand recursively
+            self.assertEqual(maxWeightMatching([ (1,2,8), (1,3,8), (2,3,10), (2,4,12), (3,5,12), (4,5,14), (4,6,12), (5,7,12), (6,7,14), (7,8,12) ]), [ -1, 2, 1, 5, 6, 3, 4, 8, 7 ])
+
+        def test25_s_t_expand(self):
+            # create S-blossom, relabel as T, expand
+            self.assertEqual(maxWeightMatching([ (1,2,23), (1,5,22), (1,6,15), (2,3,25), (3,4,22), (4,5,25), (4,8,14), (5,7,13) ]), [ -1, 6, 3, 2, 8, 7, 1, 5, 4 ])
+
+        def test26_s_nest_t_expand(self):
+            # create nested S-blossom, relabel as T, expand
+            self.assertEqual(maxWeightMatching([ (1,2,19), (1,3,20), (1,8,8), (2,3,25), (2,4,18), (3,5,18), (4,5,13), (4,7,7), (5,6,7) ]), [ -1, 8, 3, 2, 7, 6, 5, 4, 1 ])
+
+        def test30_tnasty_expand(self):
+            # create blossom, relabel as T in more than one way, expand, augment
+            self.assertEqual(maxWeightMatching([ (1,2,45), (1,5,45), (2,3,50), (3,4,45), (4,5,50), (1,6,30), (3,9,35), (4,8,35), (5,7,26), (9,10,5) ]), [ -1, 6, 3, 2, 8, 7, 1, 5, 4, 10, 9 ])
+
+        def test31_tnasty2_expand(self):
+            # again but slightly different
+            self.assertEqual(maxWeightMatching([ (1,2,45), (1,5,45), (2,3,50), (3,4,45), (4,5,50), (1,6,30), (3,9,35), (4,8,26), (5,7,40), (9,10,5) ]), [ -1, 6, 3, 2, 8, 7, 1, 5, 4, 10, 9 ])
+
+        def test32_t_expand_leastslack(self):
+            # create blossom, relabel as T, expand such that a new least-slack S-to-free edge is produced, augment
+            self.assertEqual(maxWeightMatching([ (1,2,45), (1,5,45), (2,3,50), (3,4,45), (4,5,50), (1,6,30), (3,9,35), (4,8,28), (5,7,26), (9,10,5) ]), [ -1, 6, 3, 2, 8, 7, 1, 5, 4, 10, 9 ])
+
+        def test33_nest_tnasty_expand(self):
+            # create nested blossom, relabel as T in more than one way, expand outer blossom such that inner blossom ends up on an augmenting path
+            self.assertEqual(maxWeightMatching([ (1,2,45), (1,7,45), (2,3,50), (3,4,45), (4,5,95), (4,6,94), (5,6,94), (6,7,50), (1,8,30), (3,11,35), (5,9,36), (7,10,26), (11,12,5) ]), [ -1, 8, 3, 2, 6, 9, 4, 10, 1, 5, 7, 12, 11 ])
+
+        def test34_nest_relabel_expand(self):
+            # create nested S-blossom, relabel as S, expand recursively
+            self.assertEqual(maxWeightMatching([ (1,2,40), (1,3,40), (2,3,60), (2,4,55), (3,5,55), (4,5,50), (1,8,15), (5,7,30), (7,6,10), (8,10,10), (4,9,30) ]), [ -1, 2, 1, 5, 9, 3, 7, 6, 10, 4, 8 ])
+
+    CHECK_DELTA = True
+    unittest.main()
+
+# end
+
+File Path: lr.py
+Content:
+from torch.optim.lr_scheduler import _LRScheduler
+
+
+class PolynomialDecayLR(_LRScheduler):
+
+    def __init__(self, optimizer, warmup, tot, lr, end_lr, power, last_epoch=-1, verbose=False):
+        self.warmup = warmup
+        self.tot = tot
+        self.lr = lr
+        self.end_lr = end_lr
+        self.power = power
+        super(PolynomialDecayLR, self).__init__(optimizer)
+
+
+    def get_lr(self):
+        if self._step_count <= self.warmup:
+            self.warmup_factor = self._step_count / float(self.warmup)
+            lr = self.warmup_factor * self.lr
+        elif self._step_count >= self.tot:
+            lr = self.end_lr
+        else:
+            warmup = self.warmup
+            lr_range = self.lr - self.end_lr
+            pct_remaining = 1 - (self._step_count - warmup) / (self.tot - warmup)
+            lr = lr_range * pct_remaining ** (self.power) + self.end_lr
+
+        return [lr for group in self.optimizer.param_groups]
+
+    def _get_closed_form_lr(self):
+        assert False
+
+File Path: main_adaptive.py
+Content:
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from collator import collator
+import random
+import numpy as np
+from torch.utils.data import DataLoader
+from functools import partial
+from model import GT
+from lr import PolynomialDecayLR
+import argparse
+import math
+from tqdm import tqdm
+from preprocess_data import node_sampling, process_data
+from torch.nn.functional import normalize
+import scipy.sparse as sp
+from numpy.linalg import inv
+
+
+def train(args, model, device, loader, optimizer, lr_scheduler):
+    model.train()
+
+    for batch in tqdm(loader, desc="Iteration"):
+        batch = batch.to(device)
+        pred = model(batch)
+        y_true = batch.y.view(-1)
+        loss = F.nll_loss(pred, y_true)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+
+def eval_train(args, model, device, loader):
+    y_true = []
+    y_pred = []
+    loss_list = []
+    model.eval()
+    with torch.no_grad():
+        for batch in tqdm(loader, desc="Iteration"):
+            batch = batch.to(device)
+            pred = model(batch)
+            loss_list.append(F.nll_loss(pred, batch.y.view(-1)).item())
+            y_true.append(batch.y)
+            y_pred.append(pred.argmax(1))
+
+    y_pred = torch.cat(y_pred)
+    y_true = torch.cat(y_true)
+    correct = (y_pred == y_true).sum()
+    acc = correct.item() / len(y_true)
+
+    return acc, np.mean(loss_list)
+
+
+def eval(args, model, device, loader):
+    y_true = []
+    y_pred = []
+    loss_list = []
+    model.eval()
+    with torch.no_grad():
+        for batch in tqdm(loader, desc="Iteration"):
+            batch = batch.to(device)
+            pred = model(batch)
+            loss_list.append(F.nll_loss(pred, batch.y.view(-1)).item())
+            y_true.append(batch.y)
+            y_pred.append(pred.argmax(1))
+
+    y_pred = torch.cat(y_pred)
+    y_true = torch.cat(y_true)
+
+    pred_list = []
+    for i in torch.split(y_pred, args.num_data_augment, dim=0):
+        pred_list.append(i.bincount().argmax().unsqueeze(0))
+    y_pred = torch.cat(pred_list)
+    y_true = y_true.view(-1, args.num_data_augment)[:, 0]
+    correct = (y_pred == y_true).sum()
+    acc = correct.item() / len(y_true)
+
+    return acc, np.mean(loss_list)
+
+
+def get_reward(args, model, device, loader, p):
+    column_normalized_adj = sp.load_npz('./dataset/' + args.dataset_name + '/column_normalized_adj.npz')
+    normalized_adj = sp.load_npz('./dataset/'+args.dataset_name+'/normalized_adj.npz')
+    data_x = torch.load('./dataset/' + args.dataset_name + '/x.pt')
+    normalized_adj1 = normalized_adj*normalized_adj
+    eigen_adj = 0.15 * inv((sp.eye(normalized_adj.shape[0]) - (1 - 0.15) * column_normalized_adj).toarray())
+    eigen_adj1 = normalized_adj.toarray()
+    eigen_adj2 = normalized_adj1.toarray()
+    x = normalize(data_x, dim=1)
+    eigen_adj3 = np.array(torch.matmul(x, x.transpose(1, 0)))
+    r = [[], [], [], []]
+    reward = np.zeros(4)
+    model.eval()
+    n_node = 10
+    for step, batch in enumerate(tqdm(loader, desc="Iteration")):
+        batch = batch.to(device)
+        with torch.no_grad():
+            scores = model(batch, get_score=True)
+        scores = scores[:, 1:n_node]
+        for i, score in enumerate(torch.split(scores, args.num_data_augment, dim=0)):
+            ids = batch.ids[i*args.num_data_augment:(i+1)*args.num_data_augment]
+            id = ids[0, 0].cpu().item()
+            ids = ids[:, 1:n_node]
+            s = eigen_adj[id]
+            s1 = eigen_adj1[id]
+            s2 = eigen_adj2[id]
+            s3 = eigen_adj3[id]
+            s[id], s1[id], s2[id], s3[id] = 0, 0, 0, 0
+            s = torch.tensor(np.maximum(s, 0)).to(device)
+            s = s/(s.sum()+1e-5)
+            s1 = torch.tensor(np.maximum(s1, 0)).to(device)
+            s1 = s1/(s1.sum()+1e-5)
+            s2 = torch.tensor(np.maximum(s2, 0)).to(device)
+            s2 = s2/(s2.sum()+1e-5)
+            s3 = torch.tensor(np.maximum(s3, 0)).to(device)
+            s3 = s3 / (s3.sum() + 1e-5)
+            phi = p[0]*s + p[1]*s1 + p[2]*s2 + p[3]*s3 + 1e-5
+            r[0].append(torch.sum(score * s[ids] / phi[ids]) / args.num_data_augment)
+            r[1].append(torch.sum(score * s1[ids] / phi[ids]) / args.num_data_augment)
+            r[2].append(torch.sum(score * s2[ids] / phi[ids]) / args.num_data_augment)
+            r[3].append(torch.sum(score * s3[ids] / phi[ids]) / args.num_data_augment)
+    reward[0] = torch.mean(torch.cat([i.unsqueeze(0) for i in r[0]])).cpu().numpy()
+    reward[1] = torch.mean(torch.cat([i.unsqueeze(0) for i in r[1]])).cpu().numpy()
+    reward[2] = torch.mean(torch.cat([i.unsqueeze(0) for i in r[2]])).cpu().numpy()
+    reward[3] = torch.mean(torch.cat([i.unsqueeze(0) for i in r[3]])).cpu().numpy()
+    return reward
+
+
+def random_split(data_list, frac_train, frac_valid, frac_test, seed):
+    np.testing.assert_almost_equal(frac_train + frac_valid + frac_test, 1.0)
+    random.seed(seed)
+    all_idx = np.arange(len(data_list))
+    random.shuffle(all_idx)
+    train_idx = all_idx[:int(frac_train * len(data_list))]
+    val_idx = all_idx[int(frac_train * len(data_list)):int((frac_train+frac_valid) * len(data_list))]
+    test_idx = all_idx[int((frac_train+frac_valid) * len(data_list)):]
+    train_list = []
+    test_list = []
+    val_list = []
+    for i in train_idx:
+        train_list.append(data_list[i])
+    for i in val_idx:
+        val_list.append(data_list[i])
+    for i in test_idx:
+        test_list.append(data_list[i])
+    return train_list, val_list, test_list
+
+
+def main():
+    parser = argparse.ArgumentParser(description='PyTorch implementation of graph transformer')
+    parser.add_argument('--dataset_name', type=str, default='cora')
+    parser.add_argument('--n_layers', type=int, default=4)
+    parser.add_argument('--num_heads', type=int, default=8)
+    parser.add_argument('--hidden_dim', type=int, default=128)
+    parser.add_argument('--ffn_dim', type=int, default=128)
+    parser.add_argument('--attn_bias_dim', type=int, default=6)
+    parser.add_argument('--intput_dropout_rate', type=float, default=0.1)
+    parser.add_argument('--dropout_rate', type=float, default=0.3)
+    parser.add_argument('--weight_decay', type=float, default=0.01)
+    parser.add_argument('--attention_dropout_rate', type=float, default=0.5)
+    parser.add_argument('--checkpoint_path', type=str, default='')
+    parser.add_argument('--warmup_epochs', type=int, default=100)
+    parser.add_argument('--epochs', type=int, default=1000)
+    parser.add_argument('--peak_lr', type=float, default=2e-4)
+    parser.add_argument('--end_lr', type=float, default=1e-9)
+    parser.add_argument('--validate', action='store_true', default=False)
+    parser.add_argument('--test', action='store_true', default=False)
+    parser.add_argument('--num_data_augment', type=int, default=8)
+    parser.add_argument('--num_global_node', type=int, default=1)
+    parser.add_argument('--batch_size', type=int, default=32)
+    parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--num_workers', type=int, default=4, help='number of workers for dataset loading')
+    parser.add_argument('--device', type=int, default=0, help='which gpu to use if any (default: 0)')
+    parser.add_argument('--perturb_feature', type=bool, default=False)
+    parser.add_argument('--weight_update_period', type=int, default=10000, help='epochs to update the sampling weight')
+    args = parser.parse_args()
+    device = torch.device("cuda:" + str(args.device)) if torch.cuda.is_available() else torch.device("cpu")
+
+    data_list = torch.load('./dataset/'+args.dataset_name+'/data.pt')
+    feature = torch.load('./dataset/'+args.dataset_name+'/feature.pt')
+    y = torch.load('./dataset/'+args.dataset_name+'/y.pt')
+    train_dataset, test_dataset, valid_dataset = random_split(data_list, frac_train=0.6, frac_valid=0.2, frac_test=0.2, seed=args.seed)
+    print('dataset load successfully')
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers = args.num_workers, collate_fn=partial(collator, feature=feature, shuffle=True, perturb=args.perturb_feature))
+    val_loader = DataLoader(valid_dataset, batch_size=args.batch_size, shuffle=False, num_workers = args.num_workers, collate_fn=partial(collator, feature=feature, shuffle=False))
+    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers = args.num_workers, collate_fn=partial(collator, feature=feature, shuffle=False))
+    print(args)
+
+    model = GT(
+        n_layers=args.n_layers,
+        num_heads=args.num_heads,
+        input_dim=feature.shape[1],
+        hidden_dim=args.hidden_dim,
+        output_dim=y.max().item()+1,
+        attn_bias_dim=args.attn_bias_dim,
+        attention_dropout_rate=args.attention_dropout_rate,
+        dropout_rate=args.dropout_rate,
+        intput_dropout_rate=args.intput_dropout_rate,
+        ffn_dim=args.ffn_dim,
+        num_global_node=args.num_global_node
+    )
+    if not args.test and not args.validate:
+        print(model)
+    print('Total params:', sum(p.numel() for p in model.parameters()))
+    model.to(device)
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.peak_lr, weight_decay=args.weight_decay)
+    lr_scheduler = PolynomialDecayLR(
+            optimizer,
+            warmup=args.warmup_epochs,
+            tot=args.epochs,
+            lr=args.peak_lr,
+            end_lr=args.end_lr,
+            power=1.0)
+
+    val_acc_list, test_acc_list = [], []
+    sampling_weight = np.ones(4)
+    weight_history = []
+    p_min = 0.05
+    p = (1 - 4 * p_min) * sampling_weight / sum(sampling_weight) + p_min
+
+    for epoch in range(1, args.epochs+1):
+        print("====epoch " + str(epoch))
+        train(args, model, device, train_loader, optimizer, lr_scheduler)
+        lr_scheduler.step()
+
+        print("====Evaluation")
+        train_acc, train_loss = eval_train(args, model, device, train_loader)
+
+        val_acc, val_loss = eval(args, model, device, val_loader)
+        test_acc, test_loss = eval(args, model, device, test_loader)
+
+        print("train_acc: %f val_acc: %f test_acc: %f" % (train_acc, val_acc, test_acc))
+        print("train_loss: %f val_loss: %f test_loss: %f" % (train_loss, val_loss, test_loss))
+        val_acc_list.append(val_acc)
+        test_acc_list.append(test_acc)
+
+        if epoch % args.weight_update_period == 0:
+            r = get_reward(args, model, device, val_loader, p)
+            print('reward:', r)
+            sampling_weight = sampling_weight*np.exp(2.0*(r+0.01/p))
+            p = (1 - 4 * p_min) * sampling_weight / sum(sampling_weight) + p_min
+            print('p:', p)
+            weight_history.append(p)
+            data_list, feature = node_sampling(p)
+            train_dataset, valid_dataset, test_dataset = random_split(data_list, frac_train=0.6, frac_valid=0.2,
+                                                                      frac_test=0.2, seed=args.seed)
+            train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True,
+                                      num_workers=args.num_workers,
+                                      collate_fn=partial(collator, feature=feature, shuffle=True,
+                                                         perturb=args.perturb_feature))
+            val_loader = DataLoader(valid_dataset, batch_size=args.batch_size, shuffle=False,
+                                    num_workers=args.num_workers,
+                                    collate_fn=partial(collator, feature=feature, shuffle=False))
+            test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False,
+                                     num_workers=args.num_workers,
+                                     collate_fn=partial(collator, feature=feature, shuffle=False))
+
+    print('best validation acc: ', max(val_acc_list))
+    print('best test acc: ', max(test_acc_list))
+    print('best acc: ', test_acc_list[val_acc_list.index(max(val_acc_list))])
+    np.save('./exps/'+args.dataset_name+'/weight_history', np.array(weight_history))
+    np.save('./exps/' + args.dataset_name + '/test_acc_list', np.array(test_acc_list))
+    np.save('./exps/' + args.dataset_name + '/val_acc_list', np.array(val_acc_list))
+
+
+if __name__ == "__main__":
+    main()
+
+File Path: model.py
+Content:
+import torch
+import math
+import torch.nn as nn
+from torch.nn import functional as F
+
+
+def init_params(module, n_layers):
+    if isinstance(module, nn.Linear):
+        module.weight.data.normal_(mean=0.0, std=0.02 / math.sqrt(n_layers))
+        if module.bias is not None:
+            module.bias.data.zero_()
+    if isinstance(module, nn.Embedding):
+        module.weight.data.normal_(mean=0.0, std=0.02)
+
+
+class FeedForwardNetwork(nn.Module):
+    def __init__(self, hidden_size, ffn_size, dropout_rate):
+        super(FeedForwardNetwork, self).__init__()
+
+        self.layer1 = nn.Linear(hidden_size, ffn_size)
+        self.gelu = nn.GELU()
+        self.layer2 = nn.Linear(ffn_size, hidden_size)
+
+    def forward(self, x):
+        x = self.layer1(x)
+        x = self.gelu(x)
+        x = self.layer2(x)
+        return x
+
+
+class MultiHeadAttention(nn.Module):
+    def __init__(self, hidden_size, attention_dropout_rate, num_heads, attn_bias_dim):
+        super(MultiHeadAttention, self).__init__()
+
+        self.num_heads = num_heads
+
+        self.att_size = att_size = hidden_size // num_heads
+        self.scale = att_size ** -0.5
+
+        self.linear_q = nn.Linear(hidden_size, num_heads * att_size)
+        self.linear_k = nn.Linear(hidden_size, num_heads * att_size)
+        self.linear_v = nn.Linear(hidden_size, num_heads * att_size)
+        self.linear_bias = nn.Linear(attn_bias_dim, num_heads)
+        self.att_dropout = nn.Dropout(attention_dropout_rate)
+
+        self.output_layer = nn.Linear(num_heads * att_size, hidden_size)
+
+    def forward(self, q, k, v, attn_bias=None, get_score=False):
+        orig_q_size = q.size()
+
+        d_k = self.att_size
+        d_v = self.att_size
+        batch_size = q.size(0)
+
+        # head_i = Attention(Q(W^Q)_i, K(W^K)_i, V(W^V)_i)
+        q = self.linear_q(q).view(batch_size, -1, self.num_heads, d_k)
+        k = self.linear_k(k).view(batch_size, -1, self.num_heads, d_k)
+        v = self.linear_v(v).view(batch_size, -1, self.num_heads, d_v)
+        attn_bias = self.linear_bias(attn_bias).permute(0, 3, 1, 2)
+
+        q = q.transpose(1, 2)                  # [b, h, q_len, d_k]
+        v = v.transpose(1, 2)                  # [b, h, v_len, d_v]
+        k = k.transpose(1, 2).transpose(2, 3)  # [b, h, d_k, k_len]
+
+        # Scaled Dot-Product Attention.
+        # Attention(Q, K, V) = softmax((QK^T)/sqrt(d_k))V
+        q = q * self.scale
+        x = torch.matmul(q, k)  # [b, h, q_len, k_len]
+        if attn_bias is not None:
+            x = x + attn_bias
+
+        x = torch.softmax(x, dim=3)
+        if get_score:
+            score = x[:, :, 0, :] * torch.norm(v, dim=3)
+        x = self.att_dropout(x)
+        x = x.matmul(v)  # [b, h, q_len, attn]
+
+        x = x.transpose(1, 2).contiguous()  # [b, q_len, h, attn]
+        x = x.view(batch_size, -1, self.num_heads * d_v)
+
+        x = self.output_layer(x)
+
+        assert x.size() == orig_q_size
+        if get_score:
+            return x, score.mean(dim=1)
+        else:
+            return x
+
+
+class EncoderLayer(nn.Module):
+    def __init__(self, hidden_size, ffn_size, dropout_rate, attention_dropout_rate, num_heads, attn_bias_dim):
+        super(EncoderLayer, self).__init__()
+
+        self.self_attention_norm = nn.LayerNorm(hidden_size)
+        self.self_attention = MultiHeadAttention(
+            hidden_size, attention_dropout_rate, num_heads, attn_bias_dim)
+        self.self_attention_dropout = nn.Dropout(dropout_rate)
+
+        self.ffn_norm = nn.LayerNorm(hidden_size)
+        self.ffn = FeedForwardNetwork(hidden_size, ffn_size, dropout_rate)
+        self.ffn_dropout = nn.Dropout(dropout_rate)
+
+
+    def forward(self, x, attn_bias=None, get_score=False):
+        y = self.self_attention_norm(x)
+        if get_score:
+            _, score = self.self_attention(y, y, y, attn_bias, get_score=True)
+            return score
+        y = self.self_attention(y, y, y, attn_bias)
+        y = self.self_attention_dropout(y)
+        x = x + y
+
+        y = self.ffn_norm(x)
+        y = self.ffn(y)
+        y = self.ffn_dropout(y)
+        x = x + y
+        return x
+
+
+class GT(nn.Module):
+    def __init__(
+        self,
+        n_layers,
+        num_heads,
+        input_dim,
+        hidden_dim,
+        output_dim,
+        attn_bias_dim,
+        dropout_rate,
+        intput_dropout_rate,
+        ffn_dim,
+        num_global_node,
+        attention_dropout_rate,
+    ):
+        super().__init__()
+
+        self.num_heads = num_heads
+        self.node_encoder = nn.Linear(input_dim, hidden_dim)
+        self.input_dropout = nn.Dropout(intput_dropout_rate)
+        encoders = [EncoderLayer(hidden_dim, ffn_dim, dropout_rate, attention_dropout_rate, num_heads, attn_bias_dim)
+                    for _ in range(n_layers)]
+        self.layers = nn.ModuleList(encoders)
+        self.n_layers = n_layers
+        self.final_ln = nn.LayerNorm(hidden_dim)
+        self.downstream_out_proj = nn.Linear(hidden_dim, output_dim)
+        self.hidden_dim = hidden_dim
+        self.num_global_node = num_global_node
+        self.graph_token = nn.Embedding(self.num_global_node, hidden_dim)
+        self.graph_token_virtual_distance = nn.Embedding(self.num_global_node, attn_bias_dim)
+        self.apply(lambda module: init_params(module, n_layers=n_layers))
+
+    def forward(self, batched_data, perturb=None, get_score=False):
+        attn_bias, x = batched_data.attn_bias, batched_data.x
+        # graph_attn_bias
+        n_graph, n_node = x.size()[:2]
+        graph_attn_bias = attn_bias.clone()
+        node_feature = self.node_encoder(x)         # [n_graph, n_node, n_hidden]
+        if perturb is not None:
+            node_feature += perturb
+
+        global_node_feature = self.graph_token.weight.unsqueeze(0).repeat(n_graph, 1, 1)
+        node_feature = torch.cat([node_feature, global_node_feature], dim=1)
+
+        graph_attn_bias = torch.cat([graph_attn_bias, self.graph_token_virtual_distance.weight.unsqueeze(0).unsqueeze(2).
+                                     repeat(n_graph, 1, n_node, 1)], dim=1)
+        graph_attn_bias = torch.cat(
+            [graph_attn_bias, self.graph_token_virtual_distance.weight.unsqueeze(0).unsqueeze(0).
+            repeat(n_graph, n_node+self.num_global_node, 1, 1)], dim=2)
+
+        # transfomrer encoder
+        output = self.input_dropout(node_feature)
+        if get_score:
+            for i, enc_layer in enumerate(self.layers):
+                if i == self.n_layers-1:
+                    score = enc_layer(output, graph_attn_bias, get_score=True)
+                else:
+                    output = enc_layer(output, graph_attn_bias)
+            return score
+        for enc_layer in self.layers:
+            output = enc_layer(output, graph_attn_bias)
+        output = self.final_ln(output)
+
+        # output part
+        output = self.downstream_out_proj(output[:, 0, :])
+        return F.log_softmax(output, dim=1)
+
+
+
+File Path: preprocess_data.py
+Content:
+import numpy as np
+import torch
+import os.path as osp
+import pickle
+from torch_geometric.data import InMemoryDataset, download_url, Data
+from torch.nn import functional as F
+from torch.utils.data import DataLoader
+from functools import partial
+import scipy.sparse as sp
+from numpy.linalg import inv
+from torch_geometric.datasets import Planetoid, Amazon
+from pygsp import graphs
+from graph_coarsening.coarsening_utils import coarsen
+from torch.nn.functional import normalize
+import torch_geometric.transforms as T
+from torch_geometric.utils.undirected import is_undirected, to_undirected
+from torch_sparse import coalesce
+
+
+def adj_normalize(mx):
+    "A' = (D + I)^-1/2 * ( A + I ) * (D + I)^-1/2"
+    mx = mx + sp.eye(mx.shape[0])
+    rowsum = np.array(mx.sum(1))
+    r_inv = np.power(rowsum, -0.5).flatten()
+    r_inv[np.isinf(r_inv)] = 0.
+    r_mat_inv = sp.diags(r_inv)
+    mx = r_mat_inv.dot(mx).dot(r_mat_inv)
+    return mx
+
+
+def eigenvector(L):
+    EigVal, EigVec = np.linalg.eig(L.toarray())
+    idx = EigVal.argsort()  # increasing order
+    EigVal, EigVec = EigVal[idx], np.real(EigVec[:, idx])
+    return torch.tensor(EigVec[:, 1:11], dtype = torch.float32)
+
+
+def column_normalize(mx):
+    "A' = A * D^-1 "
+    rowsum = np.array(mx.sum(1))
+    r_inv = np.power(rowsum, -1.0).flatten()
+    r_inv[np.isinf(r_inv)] = 0.
+    r_mat_inv = sp.diags(r_inv)
+    mx = mx.dot(r_mat_inv)
+    return mx
+
+
+def coarse_graph_adj(mx, p):
+    p[p > 0] = 1.
+    p = np.array(p)
+    rowsum = p.sum(1)
+    r_inv = np.power(rowsum, -0.5).flatten()
+    r_inv[np.isinf(r_inv)] = 0.
+    r_mat_inv = np.diag(r_inv)
+    p = np.matmul(p.T, r_mat_inv)
+    mx = np.matmul(mx.toarray(), p)
+    mx = np.matmul(p.T, mx)
+    return mx
+
+
+def coarse_adj_normalize(adj):
+    adj += np.diag(np.ones(adj.shape[0]))
+    r_inv = np.power(adj.sum(1), -0.5).flatten()
+    r_inv[np.isinf(r_inv)] = 0.
+    r_mat_inv = np.diag(r_inv)
+    adj = np.matmul(r_mat_inv, adj)
+    adj = np.matmul(adj, r_mat_inv)
+    return adj
+
+
+def process_data(p=None):
+    name = 'cora'
+    dataset = Planetoid(root='./data/', name=name)
+    data = dataset[0]
+    adj = sp.coo_matrix((np.ones(data.edge_index.shape[1]), (data.edge_index[0], data.edge_index[1])),
+                                shape=(data.y.shape[0], data.y.shape[0]),
+                                dtype=np.float32)
+    normalized_adj = adj_normalize(adj)
+    column_normalized_adj = column_normalize(adj)
+    sp.save_npz('./dataset/'+name+'/normalized_adj.npz', normalized_adj)
+    sp.save_npz('./dataset/' + name + '/column_normalized_adj.npz', column_normalized_adj)
+    c = 0.15
+    k1 = 14
+    k2 = 0
+    Samples = 8 # sampled subgraphs for each node
+    power_adj_list = [normalized_adj]
+    for m in range(5):
+        power_adj_list.append(power_adj_list[0]*power_adj_list[m])
+    torch.save(data.x, './dataset/' + name + '/x.pt')
+    torch.save(data.y, './dataset/' + name + '/y.pt')
+    torch.save(data.edge_index, './dataset/' + name + '/edge_index.pt')
+
+    #Sampling heuristics: 0,1,2,3
+    eigen_adj = c * inv((sp.eye(adj.shape[0]) - (1 - c) * normalized_adj).toarray())
+    eigen_adj1 = power_adj_list[0].toarray()
+    eigen_adj2 = power_adj_list[1].toarray()
+    x = normalize(data.x, dim=1)
+    eigen_adj3 = np.array(torch.matmul(x, x.transpose(1, 0)))
+
+    G = graphs.Graph(adj)
+    C, Gc, _, _ = coarsen(G, K=10, r=0.9, method='algebraic_JC')
+    C = torch.tensor(C/C.sum(1), dtype=torch.float32)
+    super_node_feature = torch.matmul(C, data.x)
+    feature = torch.cat([data.x, super_node_feature])
+    node_supernode_dict = {}
+    for i in range(data.y.shape[0]):
+        node_supernode_dict[i] = torch.where(C[:, i] > 0)[0].item()
+    Coarse_adj = coarse_graph_adj(adj, C)
+    Coarse_graph_dim = Coarse_adj.shape[0]
+    normalized_coarse_graph = coarse_adj_normalize(Coarse_adj)
+    coarse_power_adj_list = [normalized_coarse_graph]
+    for m in range(5):
+        coarse_power_adj_list.append(np.matmul(normalized_coarse_graph, coarse_power_adj_list[m]))
+
+    #create subgraph samples
+    data_list = []
+    for id in range(data.y.shape[0]):
+        sub_data_list = []
+        s = eigen_adj[id]
+        s[id] = -1000.0
+        top_neighbor_index = s.argsort()[-(k1+k2):]
+        super_node_id = node_supernode_dict[id]
+
+        s = eigen_adj[id]
+        s[id] = 0
+        s = np.maximum(s, 0)
+        if p is not None:
+            s1 = eigen_adj1[id]
+            s2 = eigen_adj2[id]
+            s3 = eigen_adj3[id]
+            s1[id] = 0
+            s2[id] = 0
+            s3[id] = 0
+            s1 = np.maximum(s1, 0)
+            s2 = np.maximum(s2, 0)
+            s3 = np.maximum(s3, 0)
+            s = p[0]*s/(s.sum()+1e-5) + p[1]*s1/(s1.sum()+1e-5) + p[2]*s2/(s2.sum()+1e-5) + p[3]*s3/(s3.sum()+1e-5)
+        sample_num1 = np.minimum(k1, (s > 0).sum())
+        sample_num2 = np.minimum(k2, (Coarse_adj[super_node_id] > 0).sum())
+        #create subgraph samples for ensemble
+        for _ in range(Samples):
+            if sample_num1 > 0:
+                sample_index1 = np.random.choice(a=np.arange(data.y.shape[0]), size=sample_num1, replace=False, p=s/s.sum())
+            else:
+                sample_index1 = np.array([], dtype=int)
+            if sample_num2 > 0:
+                sample_index2 = np.random.choice(a=np.arange(Coarse_graph_dim), size=sample_num2, replace=False, p=Coarse_adj[super_node_id]/Coarse_adj[super_node_id].sum())
+            else:
+                sample_index2 = np.array([], dtype=int)
+
+            node_feature_id = torch.cat([torch.tensor([id, ]), torch.tensor(sample_index1, dtype=int),
+                                    torch.tensor(top_neighbor_index[: k1+k2-sample_num2-sample_num1], dtype=int)])
+
+            super_node_list = np.concatenate([[super_node_id], sample_index2])
+            node2supernode_list = np.array([node_supernode_dict[i.item()] for i in node_feature_id])
+            all_node_list = np.concatenate([node2supernode_list, super_node_list])
+
+            attn_bias = torch.cat([torch.tensor(i[node_feature_id, :][:, node_feature_id].toarray(), dtype=torch.float32).unsqueeze(0) for i in power_adj_list])
+
+            attn_bias_complem1 = torch.cat([torch.tensor(i[super_node_list, :][:, node2supernode_list], dtype=torch.float32).unsqueeze(0) for i in coarse_power_adj_list])
+            attn_bias_complem2 = torch.cat([torch.tensor(i[all_node_list, :][:, super_node_list], dtype=torch.float32).unsqueeze(0) for i in coarse_power_adj_list])
+
+            attn_bias = torch.cat([attn_bias, attn_bias_complem1], dim=1)
+            attn_bias = torch.cat([attn_bias, attn_bias_complem2], dim=2)
+
+            attn_bias = attn_bias.permute(1, 2, 0)
+
+            label = torch.cat([data.y[node_feature_id], torch.zeros(len(super_node_list))]).long()
+            feature_id = torch.cat([node_feature_id, torch.tensor(super_node_list + data.y.shape[0], dtype=int)])
+            assert len(feature_id) == k1+k2+2
+            sub_data_list.append([attn_bias, feature_id, label])
+        data_list.append(sub_data_list)
+
+    torch.save(data_list, './dataset/'+name+'/data.pt')
+    torch.save(feature, './dataset/'+name+'/feature.pt')
+
+
+def node_sampling(p=None):
+    print('Sampling Nodes!')
+    name = 'cora'
+    edge_index = torch.load('./dataset/'+name+'/edge_index.pt')
+    data_x = torch.load('./dataset/'+name+'/x.pt')
+    data_y = torch.load('./dataset/'+name+'/y.pt')
+    adj = sp.coo_matrix((np.ones(edge_index.shape[1]), (edge_index[0], edge_index[1])),
+                                shape=(data_y.shape[0], data_y.shape[0]),
+                                dtype=np.float32)
+    normalized_adj = sp.load_npz('./dataset/'+name+'/normalized_adj.npz')
+    column_normalized_adj = sp.load_npz('./dataset/' + name + '/column_normalized_adj.npz')
+    c = 0.15
+    k1 = 14
+    k2 = 0
+    Samples = 8 # sampled subgraphs for each node
+    power_adj_list = [normalized_adj]
+    for m in range(5):
+        power_adj_list.append(power_adj_list[0]*power_adj_list[m])
+
+    eigen_adj = c * inv((sp.eye(adj.shape[0]) - (1 - c) * column_normalized_adj).toarray())
+    eigen_adj1 = power_adj_list[0].toarray()
+    eigen_adj2 = power_adj_list[1].toarray()
+    x = normalize(data_x, dim=1)
+    eigen_adj3 = np.array(torch.matmul(x, x.transpose(1, 0)))
+
+    G = graphs.Graph(adj)
+    C, Gc, _, _ = coarsen(G, K=10, r=0.9, method='variation_neighborhood')
+    C = torch.tensor(C/C.sum(1), dtype=torch.float32)
+    super_node_feature = torch.matmul(C, data_x)
+    feature = torch.cat([data_x, super_node_feature])
+    node_supernode_dict = {}
+    for i in range(data_y.shape[0]):
+        node_supernode_dict[i] = torch.where(C[:, i] > 0)[0].item()
+    Coarse_adj = coarse_graph_adj(adj, C)
+    Coarse_graph_dim = Coarse_adj.shape[0]
+    normalized_coarse_graph = coarse_adj_normalize(Coarse_adj)
+    coarse_power_adj_list = [normalized_coarse_graph]
+    for m in range(5):
+        coarse_power_adj_list.append(np.matmul(normalized_coarse_graph, coarse_power_adj_list[m]))
+
+    #create subgraph samples
+    data_list = []
+    for id in range(data_y.shape[0]):
+        sub_data_list = []
+        s = eigen_adj[id]
+        s[id] = -1000.0
+        top_neighbor_index = s.argsort()[-(k1+k2):]
+        super_node_id = node_supernode_dict[id]
+
+        s = eigen_adj[id]
+        s[id] = 0
+        s = np.maximum(s, 0)
+        if p is not None:
+            s1 = eigen_adj1[id]
+            s2 = eigen_adj2[id]
+            s3 = eigen_adj3[id]
+            s1[id] = 0
+            s2[id] = 0
+            s3[id] = 0
+            s1 = np.maximum(s1, 0)
+            s2 = np.maximum(s2, 0)
+            s3 = np.maximum(s3, 0)
+            s = p[0]*s/(s.sum()+1e-5) + p[1]*s1/(s1.sum()+1e-5) + p[2]*s2/(s2.sum()+1e-5) + p[3]*s3/(s3.sum()+1e-5)
+        sample_num1 = np.minimum(k1, (s > 0).sum())
+        sample_num2 = np.minimum(k2, (Coarse_adj[super_node_id] > 0).sum())
+        # sample_num2 = 0
+        for _ in range(Samples):
+            if sample_num1 > 0:
+                sample_index1 = np.random.choice(a=np.arange(data_y.shape[0]), size=sample_num1, replace=False, p=s/s.sum())
+            else:
+                sample_index1 = np.array([], dtype=int)
+
+            if sample_num2 > 0:
+                sample_index2 = np.random.choice(a=np.arange(Coarse_graph_dim), size=sample_num2, replace=False,
+                                                 p=Coarse_adj[super_node_id]/Coarse_adj[super_node_id].sum())
+            else:
+                sample_index2 = np.array([], dtype=int)
+
+            node_feature_id = torch.cat([torch.tensor([id, ]), torch.tensor(sample_index1, dtype=int),
+                                    torch.tensor(top_neighbor_index[: k1+k2-sample_num2-sample_num1], dtype=int)])
+
+            super_node_list = np.concatenate([[super_node_id], sample_index2])
+            node2supernode_list = np.array([node_supernode_dict[i.item()] for i in node_feature_id])
+            all_node_list = np.concatenate([node2supernode_list, super_node_list])
+
+            attn_bias = torch.cat([torch.tensor(i[node_feature_id, :][:, node_feature_id].toarray(), dtype=torch.float32).unsqueeze(0) for i in power_adj_list])
+
+            attn_bias_complem1 = torch.cat([torch.tensor(i[super_node_list, :][:, node2supernode_list], dtype=torch.float32).unsqueeze(0) for i in coarse_power_adj_list])
+            attn_bias_complem2 = torch.cat([torch.tensor(i[all_node_list, :][:, super_node_list], dtype=torch.float32).unsqueeze(0) for i in coarse_power_adj_list])
+
+            attn_bias = torch.cat([attn_bias, attn_bias_complem1], dim=1)
+            attn_bias = torch.cat([attn_bias, attn_bias_complem2], dim=2)
+
+            attn_bias = attn_bias.permute(1, 2, 0)
+
+            label = torch.cat([data_y[node_feature_id], torch.zeros(len(super_node_list))]).long()
+            feature_id = torch.cat([node_feature_id, torch.tensor(super_node_list + data_y.shape[0], dtype=int)])
+
+            sub_data_list.append([attn_bias, feature_id, label])
+        data_list.append(sub_data_list)
+
+    return data_list, feature
+
+
+if __name__ == '__main__':
+    process_data()
+
+
+
+
+File Path: preprocess_data_large.py
+Content:
+import numpy as np
+import torch
+import os.path as osp
+import pickle
+from torch_geometric.data import InMemoryDataset, download_url, Data
+from torch.nn import functional as F
+from torch.utils.data import DataLoader
+from functools import partial
+import scipy.sparse as sp
+from numpy.linalg import inv
+from torch_geometric.datasets import Planetoid, Amazon
+from pygsp import graphs
+from graph_coarsening.coarsening_utils import coarsen
+from torch.nn.functional import normalize
+import torch_geometric.transforms as T
+from torch_geometric.utils.undirected import is_undirected, to_undirected
+from torch_sparse import coalesce
+from ogb.nodeproppred import PygNodePropPredDataset
+from tqdm import tqdm
+
+
+def adj_normalize(mx):
+    "A' = (D + I)^-1/2 * ( A + I ) * (D + I)^-1/2"
+    mx = mx + sp.eye(mx.shape[0])
+    rowsum = np.array(mx.sum(1))
+    r_inv = np.power(rowsum, -0.5).flatten()
+    r_inv[np.isinf(r_inv)] = 0.
+    r_mat_inv = sp.diags(r_inv)
+    mx = r_mat_inv.dot(mx).dot(r_mat_inv)
+    return mx
+
+
+def eigenvector(L):
+    EigVal, EigVec = np.linalg.eig(L.toarray())
+    idx = EigVal.argsort()  # increasing order
+    EigVal, EigVec = EigVal[idx], np.real(EigVec[:, idx])
+    return torch.tensor(EigVec[:, 1:11], dtype = torch.float32)
+
+
+def column_normalize(mx):
+    "A' = A * D^-1 "
+    rowsum = np.array(mx.sum(1))
+    r_inv = np.power(rowsum, -1.0).flatten()
+    r_inv[np.isinf(r_inv)] = 0.
+    r_mat_inv = sp.diags(r_inv)
+    mx = mx.dot(r_mat_inv)
+    return mx
+
+
+def coarse_graph_adj(mx, p):
+    p[p > 0] = 1.
+    p = np.array(p)
+    rowsum = p.sum(1)
+    r_inv = np.power(rowsum, -0.5).flatten()
+    r_inv[np.isinf(r_inv)] = 0.
+    r_mat_inv = np.diag(r_inv)
+    p = np.matmul(p.T, r_mat_inv)
+    mx = np.matmul(mx.toarray(), p)
+    mx = np.matmul(p.T, mx)
+    return mx
+
+
+def coarse_adj_normalize(adj):
+    adj += np.diag(np.ones(adj.shape[0]))
+    r_inv = np.power(adj.sum(1), -0.5).flatten()
+    r_inv[np.isinf(r_inv)] = 0.
+    r_mat_inv = np.diag(r_inv)
+    adj = np.matmul(r_mat_inv, adj)
+    adj = np.matmul(adj, r_mat_inv)
+    return adj
+
+
+def process_data(p=None):
+    name = 'ogbn_arxiv'
+    #dataset = Planetoid(root='./data/', name=name)
+    dataset = PygNodePropPredDataset(name='ogbn-arxiv')
+    data = dataset[0]
+    adj = sp.coo_matrix((np.ones(data.edge_index.shape[1]), (data.edge_index[0], data.edge_index[1])),
+                                shape=(data.y.shape[0], data.y.shape[0]),
+                                dtype=np.float32)
+    normalized_adj = adj_normalize(adj)
+    column_normalized_adj = column_normalize(adj)
+    sp.save_npz('./dataset/'+name+'/normalized_adj.npz', normalized_adj)
+    sp.save_npz('./dataset/' + name + '/column_normalized_adj.npz', column_normalized_adj)
+    c = 0.15
+    k1 = 15
+    k2 = 0
+    Samples = 8 # sampled subgraphs for each node
+    power_adj_list = [normalized_adj]
+    for m in range(5):
+        power_adj_list.append(power_adj_list[0]*power_adj_list[m])
+    torch.save(data.x, './dataset/' + name + '/x.pt')
+    torch.save(data.y, './dataset/' + name + '/y.pt')
+    torch.save(data.edge_index, './dataset/' + name + '/edge_index.pt')
+
+    #Sampling heuristics: 0,1,2,3
+    eigen_adj = sp.eye(adj.shape[0])
+    for _ in range(5):
+        eigen_adj = c * sp.eye(adj.shape[0]) + (1-c) * normalized_adj * eigen_adj
+    eigen_adj = eigen_adj.tocsr()
+    eigen_adj1 = power_adj_list[0].tocsr()
+    eigen_adj2 = power_adj_list[1].tocsr()
+    x = normalize(data.x, dim=1)
+    '''
+    print('Coarsening Graph.')
+    G = graphs.Graph(adj+adj.T)
+    C, Gc, _, _ = coarsen(G, K=10, r=0.9, method='algebraic_JC')
+    C = torch.tensor(C/C.sum(1), dtype=torch.float32)
+    C_chunk = torch.chunk(C, 100, dim=0)
+    super_node_feature = torch.cat([torch.matmul(c, data.x) for c in C_chunk], dim=0)
+    feature = torch.cat([data.x, super_node_feature])
+    node_supernode_dict = {}
+    for i in range(data.y.shape[0]):
+        node_supernode_dict[i] = torch.where(C[:, i] > 0)[0].item()
+    Coarse_adj = coarse_graph_adj(adj, C)
+    Coarse_graph_dim = Coarse_adj.shape[0]
+    normalized_coarse_graph = coarse_adj_normalize(Coarse_adj)
+    coarse_power_adj_list = [normalized_coarse_graph]
+    for m in range(5):
+        coarse_power_adj_list.append(np.matmul(normalized_coarse_graph, coarse_power_adj_list[m]))'''
+    feature = data.x
+
+    #create subgraph samples
+    data_list = []
+    for id in tqdm(range(data.y.shape[0])):
+        sub_data_list = []
+        s = eigen_adj[id].toarray()[0]
+        s[id] = -1000.0
+        top_neighbor_index = s.argsort()[-(k1+k2):]
+        # super_node_id = node_supernode_dict[id]
+
+        s = eigen_adj[id].toarray()[0]
+        s[id] = 0
+        s = np.maximum(s, 0)
+        if p is not None:
+            s1 = eigen_adj1[id].toarray()[0]
+            s2 = eigen_adj2[id].toarray()[0]
+            s3 = np.array(torch.matmul(x[id:id+1], x.transpose(1, 0)))[0]
+            s1[id] = 0
+            s2[id] = 0
+            s3[id] = 0
+            s1 = np.maximum(s1, 0)
+            s2 = np.maximum(s2, 0)
+            s3 = np.maximum(s3, 0)
+            s = p[0]*s/(s.sum()+1e-5) + p[1]*s1/(s1.sum()+1e-5) + p[2]*s2/(s2.sum()+1e-5) + p[3]*s3/(s3.sum()+1e-5)
+        sample_num1 = np.minimum(k1, (s > 0).sum())
+        sample_num2 = 0
+        #create subgraph samples for ensemble
+        for _ in range(Samples):
+            if sample_num1 > 0:
+                sample_index1 = np.random.choice(a=np.arange(data.y.shape[0]), size=sample_num1, replace=False, p=s/s.sum())
+            else:
+                sample_index1 = np.array([], dtype=int)
+            if sample_num2 > 0:
+                sample_index2 = np.random.choice(a=np.arange(Coarse_graph_dim), size=sample_num2, replace=False, p=Coarse_adj[super_node_id]/Coarse_adj[super_node_id].sum())
+            else:
+                sample_index2 = np.array([], dtype=int)
+
+            node_feature_id = torch.cat([torch.tensor([id, ]), torch.tensor(sample_index1, dtype=int),
+                                    torch.tensor(top_neighbor_index[: k1+k2-sample_num2-sample_num1], dtype=int)])
+
+            # super_node_list = np.concatenate([[super_node_id], sample_index2])
+            # node2supernode_list = np.array([node_supernode_dict[i.item()] for i in node_feature_id])
+            # all_node_list = np.concatenate([node2supernode_list, super_node_list])
+
+            attn_bias = torch.cat([torch.tensor(i[node_feature_id, :][:, node_feature_id].toarray(), dtype=torch.float32).unsqueeze(0) for i in power_adj_list])
+
+            # attn_bias_complem1 = torch.cat([torch.tensor(i[super_node_list, :][:, node2supernode_list], dtype=torch.float32).unsqueeze(0) for i in coarse_power_adj_list])
+            # attn_bias_complem2 = torch.cat([torch.tensor(i[all_node_list, :][:, super_node_list], dtype=torch.float32).unsqueeze(0) for i in coarse_power_adj_list])
+
+            # attn_bias = torch.cat([attn_bias, attn_bias_complem1], dim=1)
+            # attn_bias = torch.cat([attn_bias, attn_bias_complem2], dim=2)
+
+            attn_bias = attn_bias.permute(1, 2, 0)
+
+            # label = torch.cat([data.y[node_feature_id], torch.zeros(len(super_node_list))]).long()
+            # feature_id = torch.cat([node_feature_id, torch.tensor(super_node_list + data.y.shape[0], dtype=int)])
+
+            label = data.y[node_feature_id].long()
+            feature_id = node_feature_id
+            assert len(feature_id) == k1+k2+1
+            sub_data_list.append([attn_bias, feature_id, label])
+        data_list.append(sub_data_list)
+
+    torch.save(data_list, './dataset/'+name+'/data.pt')
+    torch.save(feature, './dataset/'+name+'/feature.pt')
+
+
+def node_sampling(p=None):
+    print('Sampling Nodes!')
+    name = 'cora'
+    edge_index = torch.load('./dataset/'+name+'/edge_index.pt')
+    data_x = torch.load('./dataset/'+name+'/x.pt')
+    data_y = torch.load('./dataset/'+name+'/y.pt')
+    adj = sp.coo_matrix((np.ones(edge_index.shape[1]), (edge_index[0], edge_index[1])),
+                                shape=(data_y.shape[0], data_y.shape[0]),
+                                dtype=np.float32)
+    normalized_adj = sp.load_npz('./dataset/'+name+'/normalized_adj.npz')
+    column_normalized_adj = sp.load_npz('./dataset/' + name + '/column_normalized_adj.npz')
+    c = 0.15
+    k1 = 14
+    k2 = 0
+    Samples = 8 # sampled subgraphs for each node
+    power_adj_list = [normalized_adj]
+    for m in range(5):
+        power_adj_list.append(power_adj_list[0]*power_adj_list[m])
+
+    eigen_adj = sp.eye(adj.shape[0])
+    for _ in range(5):
+        eigen_adj = c * sp.eye(adj.shape[0]) + (1 - c) * normalized_adj * eigen_adj
+    eigen_adj = eigen_adj.tocsr()
+    eigen_adj1 = power_adj_list[0].tocsr()
+    eigen_adj2 = power_adj_list[1].tocsr()
+    x = normalize(data_x, dim=1)
+    feature = data_x
+
+    #create subgraph samples
+    data_list = []
+    for id in range(data_y.shape[0]):
+        sub_data_list = []
+        s = eigen_adj[id]
+        s[id] = -1000.0
+        top_neighbor_index = s.argsort()[-(k1+k2):]
+        super_node_id = node_supernode_dict[id]
+
+        s = eigen_adj[id]
+        s[id] = 0
+        s = np.maximum(s, 0)
+        if p is not None:
+            s1 = eigen_adj1[id].toarray()[0]
+            s2 = eigen_adj2[id].toarray()[0]
+            s3 = np.array(torch.matmul(x[id:id+1], x.transpose(1, 0)))[0]
+            s1[id] = 0
+            s2[id] = 0
+            s3[id] = 0
+            s1 = np.maximum(s1, 0)
+            s2 = np.maximum(s2, 0)
+            s3 = np.maximum(s3, 0)
+            s = p[0]*s/(s.sum()+1e-5) + p[1]*s1/(s1.sum()+1e-5) + p[2]*s2/(s2.sum()+1e-5) + p[3]*s3/(s3.sum()+1e-5)
+        sample_num1 = np.minimum(k1, (s > 0).sum())
+        sample_num2 = np.minimum(k2, (Coarse_adj[super_node_id] > 0).sum())
+        # sample_num2 = 0
+        for _ in range(Samples):
+            if sample_num1 > 0:
+                sample_index1 = np.random.choice(a=np.arange(data_y.shape[0]), size=sample_num1, replace=False, p=s/s.sum())
+            else:
+                sample_index1 = np.array([], dtype=int)
+
+            if sample_num2 > 0:
+                sample_index2 = np.random.choice(a=np.arange(Coarse_graph_dim), size=sample_num2, replace=False,
+                                                 p=Coarse_adj[super_node_id]/Coarse_adj[super_node_id].sum())
+            else:
+                sample_index2 = np.array([], dtype=int)
+
+            node_feature_id = torch.cat([torch.tensor([id, ]), torch.tensor(sample_index1, dtype=int),
+                                         torch.tensor(top_neighbor_index[: k1 + k2 - sample_num2 - sample_num1],
+                                                      dtype=int)])
+
+            # super_node_list = np.concatenate([[super_node_id], sample_index2])
+            # node2supernode_list = np.array([node_supernode_dict[i.item()] for i in node_feature_id])
+            # all_node_list = np.concatenate([node2supernode_list, super_node_list])
+
+            attn_bias = torch.cat(
+                [torch.tensor(i[node_feature_id, :][:, node_feature_id].toarray(), dtype=torch.float32).unsqueeze(0) for
+                 i in power_adj_list])
+
+            # attn_bias_complem1 = torch.cat([torch.tensor(i[super_node_list, :][:, node2supernode_list], dtype=torch.float32).unsqueeze(0) for i in coarse_power_adj_list])
+            # attn_bias_complem2 = torch.cat([torch.tensor(i[all_node_list, :][:, super_node_list], dtype=torch.float32).unsqueeze(0) for i in coarse_power_adj_list])
+
+            # attn_bias = torch.cat([attn_bias, attn_bias_complem1], dim=1)
+            # attn_bias = torch.cat([attn_bias, attn_bias_complem2], dim=2)
+
+            attn_bias = attn_bias.permute(1, 2, 0)
+
+            # label = torch.cat([data.y[node_feature_id], torch.zeros(len(super_node_list))]).long()
+            # feature_id = torch.cat([node_feature_id, torch.tensor(super_node_list + data.y.shape[0], dtype=int)])
+
+            label = data.y[node_feature_id].long()
+            feature_id = node_feature_id
+            assert len(feature_id) == k1 + k2 + 1
+            sub_data_list.append([attn_bias, feature_id, label])
+        data_list.append(sub_data_list)
+
+    return data_list, feature
+
+
+if __name__ == '__main__':
+    process_data()
+
+
+
+
+File Path: splitters.py
+Content:
+import torch
+import random
+import numpy as np
+from itertools import compress
+from rdkit.Chem.Scaffolds import MurckoScaffold
+from collections import defaultdict
+from sklearn.model_selection import StratifiedKFold
+
+# splitter function
+
+def generate_scaffold(smiles, include_chirality=False):
+    """
+    Obtain Bemis-Murcko scaffold from smiles
+    :param smiles:
+    :param include_chirality:
+    :return: smiles of scaffold
+    """
+    scaffold = MurckoScaffold.MurckoScaffoldSmiles(
+        smiles=smiles, includeChirality=include_chirality)
+    return scaffold
+
+# # test generate_scaffold
+# s = 'Cc1cc(Oc2nccc(CCC)c2)ccc1'
+# scaffold = generate_scaffold(s)
+# assert scaffold == 'c1ccc(Oc2ccccn2)cc1'
+
+def scaffold_split(dataset, smiles_list, task_idx=None, null_value=0,
+                   frac_train=0.8, frac_valid=0.1, frac_test=0.1,
+                   return_smiles=False):
+    """
+    Adapted from https://github.com/deepchem/deepchem/blob/master/deepchem/splits/splitters.py
+    Split dataset by Bemis-Murcko scaffolds
+    This function can also ignore examples containing null values for a
+    selected task when splitting. Deterministic split
+    :param dataset: pytorch geometric dataset obj
+    :param smiles_list: list of smiles corresponding to the dataset obj
+    :param task_idx: column idx of the data.y tensor. Will filter out
+    examples with null value in specified task column of the data.y tensor
+    prior to splitting. If None, then no filtering
+    :param null_value: float that specifies null value in data.y to filter if
+    task_idx is provided
+    :param frac_train:
+    :param frac_valid:
+    :param frac_test:
+    :param return_smiles:
+    :return: train, valid, test slices of the input dataset obj. If
+    return_smiles = True, also returns ([train_smiles_list],
+    [valid_smiles_list], [test_smiles_list])
+    """
+    np.testing.assert_almost_equal(frac_train + frac_valid + frac_test, 1.0)
+
+    if task_idx != None:
+        # filter based on null values in task_idx
+        # get task array
+        y_task = np.array([data.y[task_idx].item() for data in dataset])
+        # boolean array that correspond to non null values
+        non_null = y_task != null_value
+        smiles_list = list(compress(enumerate(smiles_list), non_null))
+    else:
+        non_null = np.ones(len(dataset)) == 1
+        smiles_list = list(compress(enumerate(smiles_list), non_null))
+
+    # create dict of the form {scaffold_i: [idx1, idx....]}
+    all_scaffolds = {}
+    for i, smiles in smiles_list:
+        scaffold = generate_scaffold(smiles, include_chirality=True)
+        if scaffold not in all_scaffolds:
+            all_scaffolds[scaffold] = [i]
+        else:
+            all_scaffolds[scaffold].append(i)
+
+    # sort from largest to smallest sets
+    all_scaffolds = {key: sorted(value) for key, value in all_scaffolds.items()}
+    all_scaffold_sets = [
+        scaffold_set for (scaffold, scaffold_set) in sorted(
+            all_scaffolds.items(), key=lambda x: (len(x[1]), x[1][0]), reverse=True)
+    ]
+
+    # get train, valid test indices
+    train_cutoff = frac_train * len(smiles_list)
+    valid_cutoff = (frac_train + frac_valid) * len(smiles_list)
+    train_idx, valid_idx, test_idx = [], [], []
+    for scaffold_set in all_scaffold_sets:
+        if len(train_idx) + len(scaffold_set) > train_cutoff:
+            if len(train_idx) + len(valid_idx) + len(scaffold_set) > valid_cutoff:
+                test_idx.extend(scaffold_set)
+            else:
+                valid_idx.extend(scaffold_set)
+        else:
+            train_idx.extend(scaffold_set)
+
+    assert len(set(train_idx).intersection(set(valid_idx))) == 0
+    assert len(set(test_idx).intersection(set(valid_idx))) == 0
+
+    train_dataset = dataset[torch.tensor(train_idx)]
+    valid_dataset = dataset[torch.tensor(valid_idx)]
+    test_dataset = dataset[torch.tensor(test_idx)]
+
+    if not return_smiles:
+        return train_dataset, valid_dataset, test_dataset
+    else:
+        train_smiles = [smiles_list[i][1] for i in train_idx]
+        valid_smiles = [smiles_list[i][1] for i in valid_idx]
+        test_smiles = [smiles_list[i][1] for i in test_idx]
+        return train_dataset, valid_dataset, test_dataset, (train_smiles,
+                                                            valid_smiles,
+                                                            test_smiles)
+
+def random_scaffold_split(dataset, smiles_list, task_idx=None, null_value=0,
+                   frac_train=0.8, frac_valid=0.1, frac_test=0.1, seed=0):
+    """
+    Adapted from https://github.com/pfnet-research/chainer-chemistry/blob/master/chainer_chemistry/dataset/splitters/scaffold_splitter.py
+    Split dataset by Bemis-Murcko scaffolds
+    This function can also ignore examples containing null values for a
+    selected task when splitting. Deterministic split
+    :param dataset: pytorch geometric dataset obj
+    :param smiles_list: list of smiles corresponding to the dataset obj
+    :param task_idx: column idx of the data.y tensor. Will filter out
+    examples with null value in specified task column of the data.y tensor
+    prior to splitting. If None, then no filtering
+    :param null_value: float that specifies null value in data.y to filter if
+    task_idx is provided
+    :param frac_train:
+    :param frac_valid:
+    :param frac_test:
+    :param seed;
+    :return: train, valid, test slices of the input dataset obj
+    """
+
+    np.testing.assert_almost_equal(frac_train + frac_valid + frac_test, 1.0)
+
+    if task_idx != None:
+        # filter based on null values in task_idx
+        # get task array
+        y_task = np.array([data.y[task_idx].item() for data in dataset])
+        # boolean array that correspond to non null values
+        non_null = y_task != null_value
+        smiles_list = list(compress(enumerate(smiles_list), non_null))
+    else:
+        non_null = np.ones(len(dataset)) == 1
+        smiles_list = list(compress(enumerate(smiles_list), non_null))
+
+    rng = np.random.RandomState(seed)
+
+    scaffolds = defaultdict(list)
+    for ind, smiles in smiles_list:
+        scaffold = generate_scaffold(smiles, include_chirality=True)
+        scaffolds[scaffold].append(ind)
+
+    scaffold_sets = rng.permutation(list(scaffolds.values()))
+
+    n_total_valid = int(np.floor(frac_valid * len(dataset)))
+    n_total_test = int(np.floor(frac_test * len(dataset)))
+
+    train_idx = []
+    valid_idx = []
+    test_idx = []
+
+    for scaffold_set in scaffold_sets:
+        if len(valid_idx) + len(scaffold_set) <= n_total_valid:
+            valid_idx.extend(scaffold_set)
+        elif len(test_idx) + len(scaffold_set) <= n_total_test:
+            test_idx.extend(scaffold_set)
+        else:
+            train_idx.extend(scaffold_set)
+
+    train_dataset = dataset[torch.tensor(train_idx)]
+    valid_dataset = dataset[torch.tensor(valid_idx)]
+    test_dataset = dataset[torch.tensor(test_idx)]
+
+    return train_dataset, valid_dataset, test_dataset
+
+def random_split(dataset, task_idx=None, null_value=0,
+                   frac_train=0.8, frac_valid=0.1, frac_test=0.1, seed=0,
+                 smiles_list=None):
+    """
+
+    :param dataset:
+    :param task_idx:
+    :param null_value:
+    :param frac_train:
+    :param frac_valid:
+    :param frac_test:
+    :param seed:
+    :param smiles_list: list of smiles corresponding to the dataset obj, or None
+    :return: train, valid, test slices of the input dataset obj. If
+    smiles_list != None, also returns ([train_smiles_list],
+    [valid_smiles_list], [test_smiles_list])
+    """
+    np.testing.assert_almost_equal(frac_train + frac_valid + frac_test, 1.0)
+
+    if task_idx != None:
+        # filter based on null values in task_idx
+        # get task array
+        y_task = np.array([data.y[task_idx].item() for data in dataset])
+        non_null = y_task != null_value  # boolean array that correspond to non null values
+        idx_array = np.where(non_null)[0]
+        dataset = dataset[torch.tensor(idx_array)]  # examples containing non
+        # null labels in the specified task_idx
+    else:
+        pass
+
+    num_mols = len(dataset)
+    random.seed(seed)
+    all_idx = list(range(num_mols))
+    random.shuffle(all_idx)
+
+    train_idx = all_idx[:int(frac_train * num_mols)]
+    valid_idx = all_idx[int(frac_train * num_mols):int(frac_valid * num_mols)
+                                                   + int(frac_train * num_mols)]
+    test_idx = all_idx[int(frac_valid * num_mols) + int(frac_train * num_mols):]
+
+    assert len(set(train_idx).intersection(set(valid_idx))) == 0
+    assert len(set(valid_idx).intersection(set(test_idx))) == 0
+    assert len(train_idx) + len(valid_idx) + len(test_idx) == num_mols
+
+    train_dataset = dataset[torch.tensor(train_idx)]
+    valid_dataset = dataset[torch.tensor(valid_idx)]
+    test_dataset = dataset[torch.tensor(test_idx)]
+
+    if not smiles_list:
+        return train_dataset, valid_dataset, test_dataset
+    else:
+        train_smiles = [smiles_list[i] for i in train_idx]
+        valid_smiles = [smiles_list[i] for i in valid_idx]
+        test_smiles = [smiles_list[i] for i in test_idx]
+        return train_dataset, valid_dataset, test_dataset, (train_smiles,
+                                                            valid_smiles,
+                                                            test_smiles)
+
+
+def cv_random_split(dataset, fold_idx = 0,
+                   frac_train=0.9, frac_valid=0.1, seed=0,
+                 smiles_list=None):
+    """
+
+    :param dataset:
+    :param task_idx:
+    :param null_value:
+    :param frac_train:
+    :param frac_valid:
+    :param frac_test:
+    :param seed:
+    :param smiles_list: list of smiles corresponding to the dataset obj, or None
+    :return: train, valid, test slices of the input dataset obj. If
+    smiles_list != None, also returns ([train_smiles_list],
+    [valid_smiles_list], [test_smiles_list])
+    """
+
+    np.testing.assert_almost_equal(frac_train + frac_valid, 1.0)
+
+    skf = StratifiedKFold(n_splits=10, shuffle = True, random_state = seed)
+
+    labels = [data.y.item() for data in dataset]
+
+    idx_list = []
+
+    for idx in skf.split(np.zeros(len(labels)), labels):
+        idx_list.append(idx)
+    train_idx, val_idx = idx_list[fold_idx]
+
+    train_dataset = dataset[torch.tensor(train_idx)]
+    valid_dataset = dataset[torch.tensor(val_idx)]
+
+    return train_dataset, valid_dataset
+
+
+if __name__ == "__main__":
+    from loader import MoleculeDataset
+    from rdkit import Chem
+    import pandas as pd
+
+    # # test scaffold_split
+    dataset = MoleculeDataset('dataset/tox21', dataset='tox21')
+    smiles_list = pd.read_csv('dataset/tox21/processed/smiles.csv', header=None)[0].tolist()
+
+    train_dataset, valid_dataset, test_dataset = scaffold_split(dataset, smiles_list, task_idx=None, null_value=0, frac_train=0.8,frac_valid=0.1, frac_test=0.1)
+    # train_dataset, valid_dataset, test_dataset = random_scaffold_split(dataset, smiles_list, task_idx=None, null_value=0, frac_train=0.8,frac_valid=0.1, frac_test=0.1, seed = 0)
+    unique_ids = set(train_dataset.data.id.tolist() +
+                     valid_dataset.data.id.tolist() +
+                     test_dataset.data.id.tolist())
+    assert len(unique_ids) == len(dataset)  # check that we did not have any
+    # missing or overlapping examples
+
+    # test scaffold_split with smiles returned
+    dataset = MoleculeDataset('dataset/bbbp', dataset='bbbp')
+    smiles_list = pd.read_csv('dataset/bbbp/processed/smiles.csv', header=None)[
+        0].tolist()
+    train_dataset, valid_dataset, test_dataset, (train_smiles, valid_smiles,
+                                                 test_smiles) =  \
+        scaffold_split(dataset, smiles_list, task_idx=None, null_value=0,
+                       frac_train=0.8,frac_valid=0.1, frac_test=0.1,
+                       return_smiles=True)
+    assert len(train_dataset) == len(train_smiles)
+    for i in range(len(train_dataset)):
+        data_obj_n_atoms = train_dataset[i].x.size()[0]
+        smiles_n_atoms = len(list(Chem.MolFromSmiles(train_smiles[
+                                                         i]).GetAtoms()))
+        assert data_obj_n_atoms == smiles_n_atoms
+    assert len(valid_dataset) == len(valid_smiles)
+    for i in range(len(valid_dataset)):
+        data_obj_n_atoms = valid_dataset[i].x.size()[0]
+        smiles_n_atoms = len(list(Chem.MolFromSmiles(valid_smiles[
+                                                         i]).GetAtoms()))
+        assert data_obj_n_atoms == smiles_n_atoms
+    assert len(test_dataset) == len(test_smiles)
+    for i in range(len(test_dataset)):
+        data_obj_n_atoms = test_dataset[i].x.size()[0]
+        smiles_n_atoms = len(list(Chem.MolFromSmiles(test_smiles[
+                                                         i]).GetAtoms()))
+        assert data_obj_n_atoms == smiles_n_atoms
+
+    # test random_split
+    from loader import MoleculeDataset
+
+    dataset = MoleculeDataset('dataset/tox21', dataset='tox21')
+    train_dataset, valid_dataset, test_dataset = random_split(dataset, task_idx=None, null_value=0, frac_train=0.8,frac_valid=0.1, frac_test=0.1)
+    unique_ids = set(train_dataset.data.id.tolist() +
+                     valid_dataset.data.id.tolist() +
+                     test_dataset.data.id.tolist())
+    assert len(unique_ids) == len(dataset)  # check that we did not have any
+    # missing or overlapping examples
+
+    # test random_split with smiles returned
+    dataset = MoleculeDataset('dataset/bbbp', dataset='bbbp')
+    smiles_list = pd.read_csv('dataset/bbbp/processed/smiles.csv', header=None)[
+        0].tolist()
+    train_dataset, valid_dataset, test_dataset, (train_smiles, valid_smiles,
+                                                 test_smiles) = \
+        random_split(dataset, task_idx=None, null_value=0,
+                       frac_train=0.8, frac_valid=0.1, frac_test=0.1, seed=42,
+                       smiles_list=smiles_list)
+    assert len(train_dataset) == len(train_smiles)
+    for i in range(len(train_dataset)):
+        data_obj_n_atoms = train_dataset[i].x.size()[0]
+        smiles_n_atoms = len(list(Chem.MolFromSmiles(train_smiles[
+                                                         i]).GetAtoms()))
+        assert data_obj_n_atoms == smiles_n_atoms
+    assert len(valid_dataset) == len(valid_smiles)
+    for i in range(len(valid_dataset)):
+        data_obj_n_atoms = valid_dataset[i].x.size()[0]
+        smiles_n_atoms = len(list(Chem.MolFromSmiles(valid_smiles[
+                                                         i]).GetAtoms()))
+        assert data_obj_n_atoms == smiles_n_atoms
+    assert len(test_dataset) == len(test_smiles)
+    for i in range(len(test_dataset)):
+        data_obj_n_atoms = test_dataset[i].x.size()[0]
+        smiles_n_atoms = len(list(Chem.MolFromSmiles(test_smiles[
+                                                         i]).GetAtoms()))
+        assert data_obj_n_atoms == smiles_n_atoms
+
+
+
+Output:
+{
+    "experimental_code": "import torch\nimport torch.nn as nn\nimport torch.nn.functional as F\nimport numpy as np\nimport random\nfrom tqdm import tqdm\nimport scipy.sparse as sp\nfrom numpy.linalg import inv\nfrom torch.nn.functional import normalize\nimport pygsp as gsp\nfrom pygsp import graphs\nfrom sortedcontainers import SortedList\n\ndef get_reward(args, model, device, loader, p):\n    column_normalized_adj = sp.load_npz('./dataset/' + args.dataset_name + '/column_normalized_adj.npz')\n    normalized_adj = sp.load_npz('./dataset/'+args.dataset_name+'/normalized_adj.npz')\n    data_x = torch.load('./dataset/' + args.dataset_name + '/x.pt')\n    normalized_adj1 = normalized_adj*normalized_adj\n    eigen_adj = 0.15 * inv((sp.eye(normalized_adj.shape[0]) - (1 - 0.15) * column_normalized_adj).toarray())\n    eigen_adj1 = normalized_adj.toarray()\n    eigen_adj2 = normalized_adj1.toarray()\n    x = normalize(data_x, dim=1)\n    eigen_adj3 = np.array(torch.matmul(x, x.transpose(1, 0)))\n    r = [[], [], [], []]\n    reward = np.zeros(4)\n    model.eval()\n    n_node = 10\n    for step, batch in enumerate(tqdm(loader, desc=\"Iteration\")):\n        batch = batch.to(device)\n        with torch.no_grad():\n            scores = model(batch, get_score=True)\n        scores = scores[:, 1:n_node]\n        for i, score in enumerate(torch.split(scores, args.num_data_augment, dim=0)):\n            ids = batch.ids[i*args.num_data_augment:(i+1)*args.num_data_augment]\n            id = ids[0, 0].cpu().item()\n            ids = ids[:, 1:n_node]\n            s = eigen_adj[id]\n            s1 = eigen_adj1[id]\n            s2 = eigen_adj2[id]\n            s3 = eigen_adj3[id]\n            s[id], s1[id], s2[id], s3[id] = 0, 0, 0, 0\n            s = torch.tensor(np.maximum(s, 0)).to(device)\n            s = s/(s.sum()+1e-5)\n            s1 = torch.tensor(np.maximum(s1, 0)).to(device)\n            s1 = s1/(s1.sum()+1e-5)\n            s2 = torch.tensor(np.maximum(s2, 0)).to(device)\n            s2 = s2/(s2.sum()+1e-5)\n            s3 = torch.tensor(np.maximum(s3, 0)).to(device)\n            s3 = s3 / (s3.sum() + 1e-5)\n            phi = p[0]*s + p[1]*s1 + p[2]*s2 + p[3]*s3 + 1e-5\n            r[0].append(torch.sum(score * s[ids] / phi[ids]) / args.num_data_augment)\n            r[1].append(torch.sum(score * s1[ids] / phi[ids]) / args.num_data_augment)\n            r[2].append(torch.sum(score * s2[ids] / phi[ids]) / args.num_data_augment)\n            r[3].append(torch.sum(score * s3[ids] / phi[ids]) / args.num_data_augment)\n    reward[0] = torch.mean(torch.cat([i.unsqueeze(0) for i in r[0]])).cpu().numpy()\n    reward[1] = torch.mean(torch.cat([i.unsqueeze(0) for i in r[1]])).cpu().numpy()\n    reward[2] = torch.mean(torch.cat([i.unsqueeze(0) for i in r[2]])).cpu().numpy()\n    reward[3] = torch.mean(torch.cat([i.unsqueeze(0) for i in r[3]])).cpu().numpy()\n    return reward\n\n# Snippet from main_adaptive.py's main function showing adaptive sampling loop\n# ... (context before the loop)\n#     val_acc_list, test_acc_list = [], []\n#     sampling_weight = np.ones(4)\n#     weight_history = []\n#     p_min = 0.05\n#     p = (1 - 4 * p_min) * sampling_weight / sum(sampling_weight) + p_min\n#\n#     for epoch in range(1, args.epochs+1):\n#         # ... (training and evaluation calls)\n#         if epoch % args.weight_update_period == 0:\n#             r = get_reward(args, model, device, val_loader, p)\n#             sampling_weight = sampling_weight*np.exp(2.0*(r+0.01/p))\n#             p = (1 - 4 * p_min) * sampling_weight / sum(sampling_weight) + p_min\n#             weight_history.append(p)\n#             data_list, feature = node_sampling(p)\n#             train_dataset, valid_dataset, test_dataset = random_split(data_list, frac_train=0.6, frac_valid=0.2,\n#                                                                       frac_test=0.2, seed=args.seed)\n#             train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True,\n#                                       num_workers=args.num_workers,\n#                                       collate_fn=partial(collator, feature=feature, shuffle=True,\n#                                                          perturb=args.perturb_feature))\n#             val_loader = DataLoader(valid_dataset, batch_size=args.batch_size, shuffle=False,\n#                                     num_workers=args.num_workers,\n#                                     collate_fn=partial(collator, feature=feature, shuffle=False))\n#             test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False,\n#                                      num_workers=args.num_workers,\n#                                      collate_fn=partial(collator, feature=feature, shuffle=False))\n# ... (rest of main function)\n\ndef adj_normalize(mx):\n    mx = mx + sp.eye(mx.shape[0])\n    rowsum = np.array(mx.sum(1))\n    r_inv = np.power(rowsum, -0.5).flatten()\n    r_inv[np.isinf(r_inv)] = 0.\n    r_mat_inv = sp.diags(r_inv)\n    mx = r_mat_inv.dot(mx).dot(r_mat_inv)\n    return mx\n\ndef column_normalize(mx):\n    rowsum = np.array(mx.sum(1))\n    r_inv = np.power(rowsum, -1.0).flatten()\n    r_inv[np.isinf(r_inv)] = 0.\n    r_mat_inv = sp.diags(r_inv)\n    mx = mx.dot(r_mat_inv)\n    return mx\n\ndef coarse_graph_adj(mx, p):\n    p[p > 0] = 1.\n    p = np.array(p)\n    rowsum = p.sum(1)\n    r_inv = np.power(rowsum, -0.5).flatten()\n    r_inv[np.isinf(r_inv)] = 0.\n    r_mat_inv = np.diag(r_inv)\n    p = np.matmul(p.T, r_mat_inv)\n    mx = np.matmul(mx.toarray(), p)\n    mx = np.matmul(p.T, mx)\n    return mx\n\ndef coarse_adj_normalize(adj):\n    adj += np.diag(np.ones(adj.shape[0]))\n    r_inv = np.power(adj.sum(1), -0.5).flatten()\n    r_inv[np.isinf(r_inv)] = 0.\n    r_mat_inv = np.diag(r_inv)\n    adj = np.matmul(r_mat_inv, adj)\n    adj = np.matmul(adj, r_mat_inv)\n    return adj\n\ndef node_sampling(p=None):\n    name = 'cora'\n    edge_index = torch.load('./dataset/'+name+'/edge_index.pt')\n    data_x = torch.load('./dataset/'+name+'/x.pt')\n    data_y = torch.load('./dataset/'+name+'/y.pt')\n    adj = sp.coo_matrix((np.ones(edge_index.shape[1]), (edge_index[0], edge_index[1])),\n                                shape=(data_y.shape[0], data_y.shape[0]),\n                                dtype=np.float32)\n    normalized_adj = sp.load_npz('./dataset/'+name+'/normalized_adj.npz')\n    column_normalized_adj = sp.load_npz('./dataset/' + name + '/column_normalized_adj.npz')\n    c = 0.15\n    k1 = 14\n    k2 = 0\n    Samples = 8\n    power_adj_list = [normalized_adj]\n    for m in range(5):\n        power_adj_list.append(power_adj_list[0]*power_adj_list[m])\n\n    eigen_adj = c * inv((sp.eye(adj.shape[0]) - (1 - c) * column_normalized_adj).toarray())\n    eigen_adj1 = power_adj_list[0].toarray()\n    eigen_adj2 = power_adj_list[1].toarray()\n    x = normalize(data_x, dim=1)\n    eigen_adj3 = np.array(torch.matmul(x, x.transpose(1, 0)))\n\n    G = graphs.Graph(adj)\n    C, Gc, _, _ = coarsen(G, K=10, r=0.9, method='variation_neighborhood')\n    C = torch.tensor(C/C.sum(1), dtype=torch.float32)\n    super_node_feature = torch.matmul(C, data_x)\n    feature = torch.cat([data_x, super_node_feature])\n    node_supernode_dict = {}\n    for i in range(data_y.shape[0]):\n        node_supernode_dict[i] = torch.where(C[:, i] > 0)[0].item()\n    Coarse_adj = coarse_graph_adj(adj, C)\n    Coarse_graph_dim = Coarse_adj.shape[0]\n    normalized_coarse_graph = coarse_adj_normalize(Coarse_adj)\n    coarse_power_adj_list = [normalized_coarse_graph]\n    for m in range(5):\n        coarse_power_adj_list.append(np.matmul(normalized_coarse_graph, coarse_power_adj_list[m]))\n\n    data_list = []\n    for id in range(data_y.shape[0]):\n        sub_data_list = []\n        s = eigen_adj[id]\n        s[id] = -1000.0\n        top_neighbor_index = s.argsort()[-(k1+k2):]\n        super_node_id = node_supernode_dict[id]\n\n        s = eigen_adj[id]\n        s[id] = 0\n        s = np.maximum(s, 0)\n        if p is not None:\n            s1 = eigen_adj1[id]\n            s2 = eigen_adj2[id]\n            s3 = eigen_adj3[id]\n            s1[id] = 0\n            s2[id] = 0\n            s3[id] = 0\n            s1 = np.maximum(s1, 0)\n            s2 = np.maximum(s2, 0)\n            s3 = np.maximum(s3, 0)\n            s = p[0]*s/(s.sum()+1e-5) + p[1]*s1/(s1.sum()+1e-5) + p[2]*s2/(s2.sum()+1e-5) + p[3]*s3/(s3.sum()+1e-5)\n        sample_num1 = np.minimum(k1, (s > 0).sum())\n        sample_num2 = np.minimum(k2, (Coarse_adj[super_node_id] > 0).sum())\n        for _ in range(Samples):\n            if sample_num1 > 0:\n                sample_index1 = np.random.choice(a=np.arange(data_y.shape[0]), size=sample_num1, replace=False, p=s/s.sum())\n            else:\n                sample_index1 = np.array([], dtype=int)\n\n            if sample_num2 > 0:\n                sample_index2 = np.random.choice(a=np.arange(Coarse_graph_dim), size=sample_num2, replace=False,\n                                                 p=Coarse_adj[super_node_id]/Coarse_adj[super_node_id].sum())\n            else:\n                sample_index2 = np.array([], dtype=int)\n\n            node_feature_id = torch.cat([torch.tensor([id, ]), torch.tensor(sample_index1, dtype=int),\n                                    torch.tensor(top_neighbor_index[: k1 + k2 - sample_num2 - sample_num1],\n                                                      dtype=int)])\n\n            super_node_list = np.concatenate([[super_node_id], sample_index2])\n            node2supernode_list = np.array([node_supernode_dict[i.item()] for i in node_feature_id])\n            all_node_list = np.concatenate([node2supernode_list, super_node_list])\n\n            attn_bias = torch.cat(\n                [torch.tensor(i[node_feature_id, :][:, node_feature_id].toarray(), dtype=torch.float32).unsqueeze(0) for\n                 i in power_adj_list])\n\n            attn_bias_complem1 = torch.cat([torch.tensor(i[super_node_list, :][:, node2supernode_list], dtype=torch.float32).unsqueeze(0) for i in coarse_power_adj_list])\n            attn_bias_complem2 = torch.cat([torch.tensor(i[all_node_list, :][:, super_node_list], dtype=torch.float32).unsqueeze(0) for i in coarse_power_adj_list])\n\n            attn_bias = torch.cat([attn_bias, attn_bias_complem1], dim=1)\n            attn_bias = torch.cat([attn_bias, attn_bias_complem2], dim=2)\n\n            attn_bias = attn_bias.permute(1, 2, 0)\n\n            label = torch.cat([data_y[node_feature_id], torch.zeros(len(super_node_list))]).long()\n            feature_id = torch.cat([node_feature_id, torch.tensor(super_node_list + data_y.shape[0], dtype=int)])\n\n            sub_data_list.append([attn_bias, feature_id, label])\n        data_list.append(sub_data_list)\n\n    return data_list, feature\n\nclass MultiHeadAttention(nn.Module):\n    def __init__(self, hidden_size, attention_dropout_rate, num_heads, attn_bias_dim):\n        super(MultiHeadAttention, self).__init__()\n\n        self.num_heads = num_heads\n\n        self.att_size = att_size = hidden_size // num_heads\n        self.scale = att_size ** -0.5\n\n        self.linear_q = nn.Linear(hidden_size, num_heads * att_size)\n        self.linear_k = nn.Linear(hidden_size, num_heads * att_size)\n        self.linear_v = nn.Linear(hidden_size, num_heads * att_size)\n        self.linear_bias = nn.Linear(attn_bias_dim, num_heads)\n        self.att_dropout = nn.Dropout(attention_dropout_rate)\n\n        self.output_layer = nn.Linear(num_heads * att_size, hidden_size)\n\n    def forward(self, q, k, v, attn_bias=None, get_score=False):\n        orig_q_size = q.size()\n\n        d_k = self.att_size\n        d_v = self.att_size\n        batch_size = q.size(0)\n\n        q = self.linear_q(q).view(batch_size, -1, self.num_heads, d_k)\n        k = self.linear_k(k).view(batch_size, -1, self.num_heads, d_k)\n        v = self.linear_v(v).view(batch_size, -1, self.num_heads, d_v)\n        attn_bias = self.linear_bias(attn_bias).permute(0, 3, 1, 2)\n\n        q = q.transpose(1, 2)\n        v = v.transpose(1, 2)\n        k = k.transpose(1, 2).transpose(2, 3)\n\n        q = q * self.scale\n        x = torch.matmul(q, k)\n        if attn_bias is not None:\n            x = x + attn_bias\n\n        x = torch.softmax(x, dim=3)\n        if get_score:\n            score = x[:, :, 0, :] * torch.norm(v, dim=3)\n        x = self.att_dropout(x)\n        x = x.matmul(v)\n\n        x = x.transpose(1, 2).contiguous()\n        x = x.view(batch_size, -1, self.num_heads * d_v)\n\n        x = self.output_layer(x)\n\n        assert x.size() == orig_q_size\n        if get_score:\n            return x, score.mean(dim=1)\n        else:\n            return x\n\nclass EncoderLayer(nn.Module):\n    def __init__(self, hidden_size, ffn_size, dropout_rate, attention_dropout_rate, num_heads, attn_bias_dim):\n        super(EncoderLayer, self).__init__()\n\n        self.self_attention_norm = nn.LayerNorm(hidden_size)\n        self.self_attention = MultiHeadAttention(\n            hidden_size, attention_dropout_rate, num_heads, attn_bias_dim)\n        self.self_attention_dropout = nn.Dropout(dropout_rate)\n\n        self.ffn_norm = nn.LayerNorm(hidden_size)\n        self.ffn = FeedForwardNetwork(hidden_size, ffn_size, dropout_rate)\n        self.ffn_dropout = nn.Dropout(dropout_rate)\n\n\n    def forward(self, x, attn_bias=None, get_score=False):\n        y = self.self_attention_norm(x)\n        if get_score:\n            _, score = self.self_attention(y, y, y, attn_bias, get_score=True)\n            return score\n        y = self.self_attention(y, y, y, attn_bias)\n        y = self.self_attention_dropout(y)\n        x = x + y\n\n        y = self.ffn_norm(x)\n        y = self.ffn(y)\n        y = self.ffn_dropout(y)\n        x = x + y\n        return x\n\ndef init_params(module, n_layers):\n    if isinstance(module, nn.Linear):\n        module.weight.data.normal_(mean=0.0, std=0.02 / math.sqrt(n_layers))\n        if module.bias is not None:\n            module.bias.data.zero_()\n    if isinstance(module, nn.Embedding):\n        module.weight.data.normal_(mean=0.0, std=0.02)\n\nclass GT(nn.Module):\n    def __init__(\n        self,\n        n_layers,\n        num_heads,\n        input_dim,\n        hidden_dim,\n        output_dim,\n        attn_bias_dim,\n        dropout_rate,\n        intput_dropout_rate,\n        ffn_dim,\n        num_global_node,\n        attention_dropout_rate,\n    ):\n        super().__init__()\n\n        self.num_heads = num_heads\n        self.node_encoder = nn.Linear(input_dim, hidden_dim)\n        self.input_dropout = nn.Dropout(intput_dropout_rate)\n        encoders = [EncoderLayer(hidden_dim, ffn_dim, dropout_rate, attention_dropout_rate, num_heads, attn_bias_dim)\n                    for _ in range(n_layers)]\n        self.layers = nn.ModuleList(encoders)\n        self.n_layers = n_layers\n        self.final_ln = nn.LayerNorm(hidden_dim)\n        self.downstream_out_proj = nn.Linear(hidden_dim, output_dim)\n        self.hidden_dim = hidden_dim\n        self.num_global_node = num_global_node\n        self.graph_token = nn.Embedding(self.num_global_node, hidden_dim)\n        self.graph_token_virtual_distance = nn.Embedding(self.num_global_node, attn_bias_dim)\n        self.apply(lambda module: init_params(module, n_layers=n_layers))\n\n    def forward(self, batched_data, perturb=None, get_score=False):\n        attn_bias, x = batched_data.attn_bias, batched_data.x\n        n_graph, n_node = x.size()[:2]\n        graph_attn_bias = attn_bias.clone()\n        node_feature = self.node_encoder(x)\n        if perturb is not None:\n            node_feature += perturb\n\n        global_node_feature = self.graph_token.weight.unsqueeze(0).repeat(n_graph, 1, 1)\n        node_feature = torch.cat([node_feature, global_node_feature], dim=1)\n\n        graph_attn_bias = torch.cat([graph_attn_bias, self.graph_token_virtual_distance.weight.unsqueeze(0).unsqueeze(2).\n                                     repeat(n_graph, 1, n_node, 1)], dim=1)\n        graph_attn_bias = torch.cat(\n            [graph_attn_bias, self.graph_token_virtual_distance.weight.unsqueeze(0).unsqueeze(0).\n            repeat(n_graph, n_node+self.num_global_node, 1, 1)], dim=2)\n\n        output = self.input_dropout(node_feature)\n        if get_score:\n            for i, enc_layer in enumerate(self.layers):\n                if i == self.n_layers-1:\n                    score = enc_layer(output, graph_attn_bias, get_score=True)\n                else:\n                    output = enc_layer(output, graph_attn_bias)\n            return score\n        for enc_layer in self.layers:\n            output = enc_layer(output, graph_attn_bias)\n        output = self.final_ln(output)\n\n        output = self.downstream_out_proj(output[:, 0, :])\n        return F.log_softmax(output, dim=1)\n\ndef coarsen(G, K=10, r=0.5, max_levels=20, method='variation_edges', algorithm='greedy', Uk=None, lk=None, max_level_r=0.99):\n    r = np.clip(r, 0, 0.999)\n    G0 = G\n    N = G.N\n    n, n_target = N, np.ceil((1-r)*N)\n    C = sp.sparse.eye(N, format='csc')\n    Gc = G\n    Call, Gall = [], []\n    Gall.append(G)\n    for level in range(1,max_levels+1):\n        G = Gc\n        r_cur = np.clip(1-n_target/n, 0.0, max_level_r)\n        if 'variation' in method:\n            if level == 1:\n                if (Uk is not None) and (lk is not None) and (len(lk)>= K):\n                    mask = lk<1e-10; lk[mask] = 1; lsinv = lk**(-0.5); lsinv[mask] = 0\n                    B = Uk[:,:K] @ np.diag(lsinv[:K])\n                else:\n                    offset = 2*max(G.dw)\n                    T = offset*sp.sparse.eye(G.N, format='csc') - G.L\n                    lk, Uk = sp.sparse.linalg.eigsh(T, k=K, which='LM', tol=1e-5)\n                    lk = (offset-lk)[::-1]\n                    Uk = Uk[:,::-1]\n                    mask = lk<1e-10; lk[mask] = 1; lsinv = lk**(-0.5); lsinv[mask] = 0\n                    B = Uk @ np.diag(lsinv)\n                A = B\n            else:\n                B = iC.dot(B)\n                d, V = np.linalg.eig(B.T @ (G.L).dot(B))\n                mask = (d==0); d[mask] = 1; dinvsqrt = d**(-1/2); dinvsqrt[mask] = 0\n                A = B @ np.diag(dinvsqrt) @ V\n\n            if method == 'variation_edges':\n                coarsening_list = contract_variation_edges(G, K=K, A=A, r=r_cur, algorithm=algorithm)\n            else:\n                coarsening_list = contract_variation_linear(G, K=K, A=A, r=r_cur, mode=method)\n\n        else:\n            weights = get_proximity_measure(G, method, K=K)\n\n            if algorithm == 'optimal':\n                weights = -weights\n                if ('rss' not in method) : weights -= min(weights)\n                coarsening_list = matching_optimal(G, weights=weights, r=r_cur)\n\n            elif algorithm == 'greedy':\n                coarsening_list = matching_greedy(G, weights=weights, r=r_cur)\n\n        iC = get_coarsening_matrix(G, coarsening_list)\n\n        if iC.shape[1] - iC.shape[0] <= 2: break\n\n        C  = iC.dot(C)\n        Call.append(iC)\n\n        Wc = zero_diag(coarsen_matrix(G.W, iC))\n        Wc = (Wc + Wc.T) / 2\n        if not hasattr(G, 'coords'):\n            Gc = gsp.graphs.Graph(Wc)\n        else:\n            Gc = gsp.graphs.Graph(Wc, coords=coarsen_vector(G.coords, iC))\n        Gall.append(Gc)\n\n        n = Gc.N\n\n        if n <= n_target: break\n\n    return C, Gc, Call, Gall\n\ndef get_coarsening_matrix(G, partitioning):\n    C = sp.sparse.eye(G.N, format='lil')\n\n    rows_to_delete = []\n    for subgraph in partitioning:\n\n        nc = len(subgraph)\n\n        C[subgraph[0],subgraph] = 1/np.sqrt(nc)\n\n        rows_to_delete.extend(subgraph[1:])\n\n    C.rows = np.delete(C.rows, rows_to_delete)\n    C.data = np.delete(C.data, rows_to_delete)\n    C._shape = (G.N - len(rows_to_delete), G.N)\n\n    C = sp.sparse.csc_matrix(C)\n\n    return C\n\ndef contract_variation_linear(G, A=None, K=10, r=0.5, mode='neighborhood'):\n    N, deg, W_lil = G.N, G.dw, G.W.tolil()\n\n    if A is None:\n        lk, Uk = sp.sparse.linalg.eigsh(G.L, k=K, which='SM', tol=1e-3)\n        lk[0] = 1; lsinv = lk**(-0.5); lsinv[0] = 0; lk[0] = 0\n        D_lsinv = np.diag(lsinv)\n        A = Uk @ np.diag(lsinv)\n\n    def subgraph_cost(nodes):\n        nc = len(nodes)\n        ones = np.ones(nc)\n        W = W_lil[nodes,:][:,nodes]\n        L = np.diag(2*deg[nodes] - W.dot(ones)) - W\n        B = (np.eye(nc) - np.outer(ones, ones) / nc ) @ A[nodes,:]\n        return np.linalg.norm(B.T @ L @ B)/(nc-1)\n\n    class CandidateSet:\n        def __init__(self, candidate_list):\n            self.set  = candidate_list\n            self.cost = subgraph_cost(candidate_list)\n        def __lt__(self, other):\n            return self.cost < other.cost\n\n    family = []\n    W_bool = G.A + sp.sparse.eye(G.N, dtype=np.bool_, format='csr')\n    if 'neighborhood' in mode:\n        for i in range(N):\n            i_set = W_bool[i,:].indices\n            family.append(CandidateSet(i_set))\n\n    family = SortedList(family)\n    marked = np.zeros(G.N, dtype=np.bool_)\n\n    coarsening_list = []\n    n_reduce = np.floor(r*N)\n\n    while len(family)>0:\n\n        i_cset = family.pop(index=0)\n        i_set  = i_cset.set\n\n        i_marked = marked[i_set]\n\n        if not any(i_marked):\n\n            n_gain = len(i_set) - 1\n            if n_gain > n_reduce: continue\n\n            marked[i_set] = True\n            coarsening_list.append(i_set)\n            n_reduce -= n_gain\n\n            if n_reduce <= 0: break\n\n        else:\n            i_set = i_set[~i_marked]\n            if len(i_set) > 1:\n                i_cset.set = i_set\n                i_cset.cost = subgraph_cost(i_set)\n                family.add(i_cset)\n\n    return coarsening_list",
+    "experimental_info": "The Adaptive Node Sampling (ANS-GT) module optimizes node sampling by treating it as an adversary bandit problem, modifying the Exp4.P method. It adaptively assigns weights (p) to various sampling heuristics and combines their probabilities. Rewards are calculated based on attention weights and sampling probabilities, encouraging sampling strategies that yield more significant nodes. The four sampling heuristics used are: Personalized PageRank (PPR) with a teleport probability `c=0.15`, 1-hop neighbors, 2-hop neighbors, and KNN based on attribute similarity.The Hierarchical Graph Attention scheme combines fine-grained local attention (using ANS-GT) and coarse-grained global attention. Global attention utilizes the 'variation_neighborhood' graph coarsening algorithm from PyGSP to group nodes into super-nodes, reducing complexity and capturing long-range dependencies. The model integrates global nodes with learnable features (via `graph_token` embeddings) and employs proximity encoding for positional information (via `graph_token_virtual_distance` embeddings and `attn_bias_dim=6`).The experimental settings are as follows: The method is evaluated on the 'cora' dataset. The Graph Transformer model has `n_layers=4`, `num_heads=8`, `hidden_dim=128`, `ffn_dim=128`. Each node in the input graph is associated with `num_data_augment=8` sampled subgraphs. For sampling, `k1=14` local neighbors and `k2=0` global neighbors are considered. The model includes `num_global_node=1` global node. The training runs for `epochs=1000` with a `warmup_epochs=100` period. The learning rate (`peak_lr=2e-4`) decays to `end_lr=1e-9` with `weight_decay=0.01`. The `batch_size` is 32. The sampling weights for the heuristics are updated every `weight_update_period=10000` epochs based on the calculated rewards. Feature perturbation (`perturb_feature`) is set to `False`."
+}
