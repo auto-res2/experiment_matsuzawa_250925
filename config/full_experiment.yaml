@@ -1,0 +1,40 @@
+# config/full_experiment.yaml – static-benchmark (Experiment-1) configuration
+run_name: exp1_products_gat
+seed: 13
+
+description: |
+  Experiment-1 (static) – ogbn-products with 2-layer GAT under
+  10 GB memory / 0.3 kWh budget.  Follows Section 4.1 of the paper.
+
+dataset:
+  name: ogbn-products
+  root: data/ogb
+
+model:
+  name: GAT
+  params:
+    hidden_dim: 256
+    num_layers: 2
+    heads: 4
+    dropout: 0.4
+
+optim:
+  lr: 0.005
+  weight_decay: 1e-4
+
+sampler:
+  reservoir_size: 25000
+  window: 12
+  lambdas: [0.3, 0.3, 0.3]
+
+budget:
+  mem_cap_gb: 10
+  energy_cap_kwh: 0.3
+
+train:
+  epochs: 300
+  batch_size: 1024
+  patience: 50
+
+output:
+  dir: results/exp1

@@ -1,0 +1,41 @@
+# config/smoke_test.yaml
+run_name: smoke_test
+seed: 42
+
+description: |
+  End-to-end smoke test on a miniature subset of OGB-Products
+  (10 000 nodes) with a 2-layer GAT – validates full pipeline
+  in <30 s.
+
+dataset:
+  name: ogbn-products
+  root: data/ogb
+
+model:
+  name: GAT
+  params:
+    hidden_dim: 64
+    num_layers: 2
+    heads: 2
+    dropout: 0.6
+
+optim:
+  lr: 0.01
+  weight_decay: 0.0
+
+sampler:
+  reservoir_size: 1024
+  window: 4
+  lambdas: [0.3, 0.3, 0.3]
+
+budget:
+  mem_cap_gb: 0
+  energy_cap_kwh: 0
+
+train:
+  epochs: 3
+  batch_size: 256
+  patience: 5
+
+output:
+  dir: results/smoke
