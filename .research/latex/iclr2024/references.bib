@@ -5,3 +5,707 @@
   publisher = {GitHub},
   url       = {https://github.com/airas-org/airas}
 }
+
+% ===========================================
+% REQUIRED CITATIONS
+% These papers must be cited in the manuscript
+% ===========================================
+
+@article{author-year-adaptive,
+ title = {Adaptive Structural Fingerprints for Graph Attention Networks}
+}
+
+@article{author-year-dynamic,
+ title = {Dynamic Rescaling for Training GNNs}
+}
+
+@article{author-year-goat,
+ title = {GOAT: A Global Transformer on Large-scale Graphs}
+}
+
+@article{author-year-robust,
+ title = {Robust Graph Representation Learning via Neural Sparsification}
+}
+
+@article{baln-2022-layer,
+ abstract = {Graph Neural Networks (GNNs) have received significant attention recently,
+but training them at a large scale remains a challenge. Mini-batch training
+coupled with sampling is used to alleviate this challenge. However, existing
+approaches either suffer from the neighborhood explosion phenomenon or have
+poor performance. To address these issues, we propose a new sampling algorithm
+called LAyer-neighBOR sampling (LABOR). It is designed to be a direct
+replacement for Neighbor Sampling (NS) with the same fanout hyperparameter
+while sampling up to 7 times fewer vertices, without sacrificing quality. By
+design, the variance of the estimator of each vertex matches NS from the point
+of view of a single vertex. Moreover, under the same vertex sampling budget
+constraints, LABOR converges faster than existing layer sampling approaches and
+can use up to 112 times larger batch sizes compared to NS.},
+ arxiv_url = {https://arxiv.org/pdf/2210.13339v2.pdf},
+ author = {Muhammed Fatih Balın and Ümit V. Çatalyürek},
+ title = {Layer-Neighbor Sampling --- Defusing Neighborhood Explosion in GNNs},
+ year = {2022}
+}
+
+@article{chen-2021-accelerating,
+ abstract = {Communication overhead hinders the scalability of large-scale distributed
+training. Gossip SGD, where each node averages only with its neighbors, is more
+communication-efficient than the prevalent parallel SGD. However, its
+convergence rate is reversely proportional to quantity $1-\beta$ which measures
+the network connectivity. On large and sparse networks where $1-\beta \to 0$,
+Gossip SGD requires more iterations to converge, which offsets against its
+communication benefit. This paper introduces Gossip-PGA, which adds Periodic
+Global Averaging into Gossip SGD. Its transient stage, i.e., the iterations
+required to reach asymptotic linear speedup stage, improves from
+$\Omega(\beta^4 n^3/(1-\beta)^4)$ to $\Omega(\beta^4 n^3 H^4)$ for non-convex
+problems. The influence of network topology in Gossip-PGA can be controlled by
+the averaging period $H$. Its transient-stage complexity is also superior to
+Local SGD which has order $\Omega(n^3 H^4)$. Empirical results of large-scale
+training on image classification (ResNet50) and language modeling (BERT)
+validate our theoretical findings.},
+ arxiv_url = {https://arxiv.org/pdf/2105.09080v1.pdf},
+ author = {Yiming Chen and Kun Yuan and Yingya Zhang and Pan Pan and Yinghui Xu and Wotao Yin},
+ github_url = {https://github.com/NVIDIA/apex},
+ title = {Accelerating Gossip SGD with Periodic Global Averaging},
+ year = {2021}
+}
+
+@article{li-2020-sac,
+ abstract = {While the self-attention mechanism has been widely used in a wide variety of
+tasks, it has the unfortunate property of a quadratic cost with respect to the
+input length, which makes it difficult to deal with long inputs. In this paper,
+we present a method for accelerating and structuring self-attentions: Sparse
+Adaptive Connection (SAC). In SAC, we regard the input sequence as a graph and
+attention operations are performed between linked nodes. In contrast with
+previous self-attention models with pre-defined structures (edges), the model
+learns to construct attention edges to improve task-specific performances. In
+this way, the model is able to select the most salient nodes and reduce the
+quadratic complexity regardless of the sequence length. Based on SAC, we show
+that previous variants of self-attention models are its special cases. Through
+extensive experiments on neural machine translation, language modeling, graph
+representation learning and image classification, we demonstrate SAC is
+competitive with state-of-the-art models while significantly reducing memory
+cost.},
+ arxiv_url = {https://arxiv.org/pdf/2003.09833v3.pdf},
+ author = {Xiaoya Li and Yuxian Meng and Mingxin Zhou and Qinghong Han and Fei Wu and Jiwei Li},
+ title = {SAC: Accelerating and Structuring Self-Attention via Sparse Adaptive Connection},
+ year = {2020}
+}
+
+@article{liu-2020-bandit,
+ abstract = {Several sampling algorithms with variance reduction have been proposed for
+accelerating the training of Graph Convolution Networks (GCNs). However, due to
+the intractable computation of optimal sampling distribution, these sampling
+algorithms are suboptimal for GCNs and are not applicable to more general graph
+neural networks (GNNs) where the message aggregator contains learned weights
+rather than fixed weights, such as Graph Attention Networks (GAT). The
+fundamental reason is that the embeddings of the neighbors or learned weights
+involved in the optimal sampling distribution are changing during the training
+and not known a priori, but only partially observed when sampled, thus making
+the derivation of an optimal variance reduced samplers non-trivial. In this
+paper, we formulate the optimization of the sampling variance as an adversary
+bandit problem, where the rewards are related to the node embeddings and
+learned weights, and can vary constantly. Thus a good sampler needs to acquire
+variance information about more neighbors (exploration) while at the same time
+optimizing the immediate sampling variance (exploit). We theoretically show
+that our algorithm asymptotically approaches the optimal variance within a
+factor of 3. We show the efficiency and effectiveness of our approach on
+multiple datasets.},
+ arxiv_url = {https://arxiv.org/pdf/2006.05806v2.pdf},
+ author = {Ziqi Liu and Zhengwei Wu and Zhiqiang Zhang and Jun Zhou and Shuang Yang and Le Song and Yuan Qi},
+ github_url = {https://github.com/xavierzw/ogb-geniepath-bs},
+ title = {Bandit Samplers for Training Graph Neural Networks},
+ year = {2020}
+}
+
+@article{liu-2022-rsc,
+ abstract = {The training of graph neural networks (GNNs) is extremely time consuming
+because sparse graph-based operations are hard to be accelerated by hardware.
+Prior art explores trading off the computational precision to reduce the time
+complexity via sampling-based approximation. Based on the idea, previous works
+successfully accelerate the dense matrix based operations (e.g., convolution
+and linear) with negligible accuracy drop. However, unlike dense matrices,
+sparse matrices are stored in the irregular data format such that each
+row/column may have different number of non-zero entries. Thus, compared to the
+dense counterpart, approximating sparse operations has two unique challenges
+(1) we cannot directly control the efficiency of approximated sparse operation
+since the computation is only executed on non-zero entries; (2) sub-sampling
+sparse matrices is much more inefficient due to the irregular data format. To
+address the issues, our key idea is to control the accuracy-efficiency trade
+off by optimizing computation resource allocation layer-wisely and
+epoch-wisely. Specifically, for the first challenge, we customize the
+computation resource to different sparse operations, while limit the total used
+resource below a certain budget. For the second challenge, we cache previous
+sampled sparse matrices to reduce the epoch-wise sampling overhead. Finally, we
+propose a switching mechanisms to improve the generalization of GNNs trained
+with approximated operations. To this end, we propose Randomized Sparse
+Computation, which for the first time demonstrate the potential of training
+GNNs with approximated operations. In practice, rsc can achieve up to
+$11.6\times$ speedup for a single sparse operation and a $1.6\times$ end-to-end
+wall-clock time speedup with negligible accuracy drop.},
+ arxiv_url = {https://arxiv.org/pdf/2210.10737v2.pdf},
+ author = {Zirui Liu and Shengyuan Chen and Kaixiong Zhou and Daochen Zha and Xiao Huang and Xia Hu},
+ title = {RSC: Accelerate Graph Neural Networks Training via Randomized Sparse Computations},
+ year = {2022}
+}
+
+@article{mustafa-2023-are,
+ abstract = {While the expressive power and computational capabilities of graph neural
+networks (GNNs) have been theoretically studied, their optimization and
+learning dynamics, in general, remain largely unexplored. Our study undertakes
+the Graph Attention Network (GAT), a popular GNN architecture in which a node's
+neighborhood aggregation is weighted by parameterized attention coefficients.
+We derive a conservation law of GAT gradient flow dynamics, which explains why
+a high portion of parameters in GATs with standard initialization struggle to
+change during training. This effect is amplified in deeper GATs, which perform
+significantly worse than their shallow counterparts. To alleviate this problem,
+we devise an initialization scheme that balances the GAT network. Our approach
+i) allows more effective propagation of gradients and in turn enables
+trainability of deeper networks, and ii) attains a considerable speedup in
+training and convergence time in comparison to the standard initialization. Our
+main theorem serves as a stepping stone to studying the learning dynamics of
+positive homogeneous models with attention mechanisms.},
+ arxiv_url = {https://arxiv.org/pdf/2310.07235v2.pdf},
+ author = {Nimrah Mustafa and Aleksandar Bojchevski and Rebekka Burkholz},
+ github_url = {https://github.com/Diego999/pyGAT},
+ title = {Are GATs Out of Balance?},
+ year = {2023}
+}
+
+@article{mustafa-2024-gate,
+ abstract = {Graph Attention Networks (GATs) are designed to provide flexible neighborhood
+aggregation that assigns weights to neighbors according to their importance. In
+practice, however, GATs are often unable to switch off task-irrelevant
+neighborhood aggregation, as we show experimentally and analytically. To
+address this challenge, we propose GATE, a GAT extension that holds three major
+advantages: i) It alleviates over-smoothing by addressing its root cause of
+unnecessary neighborhood aggregation. ii) Similarly to perceptrons, it benefits
+from higher depth as it can still utilize additional layers for (non-)linear
+feature transformations in case of (nearly) switched-off neighborhood
+aggregation. iii) By down-weighting connections to unrelated neighbors, it
+often outperforms GATs on real-world heterophilic datasets. To further validate
+our claims, we construct a synthetic test bed to analyze a model's ability to
+utilize the appropriate amount of neighborhood aggregation, which could be of
+independent interest.},
+ arxiv_url = {https://arxiv.org/pdf/2406.00418v2.pdf},
+ author = {Nimrah Mustafa and Rebekka Burkholz},
+ title = {GATE: How to Keep Out Intrusive Neighbors},
+ year = {2024}
+}
+
+@article{shirzad-2024-even,
+ abstract = {Graph Transformers excel in long-range dependency modeling, but generally
+require quadratic memory complexity in the number of nodes in an input graph,
+and hence have trouble scaling to large graphs. Sparse attention variants such
+as Exphormer can help, but may require high-degree augmentations to the input
+graph for good performance, and do not attempt to sparsify an already-dense
+input graph. As the learned attention mechanisms tend to use few of these
+edges, such high-degree connections may be unnecessary. We show (empirically
+and with theoretical backing) that attention scores on graphs are usually quite
+consistent across network widths, and use this observation to propose a
+two-stage procedure, which we call Spexphormer: first, train a narrow network
+on the full augmented graph. Next, use only the active connections to train a
+wider network on a much sparser graph. We establish theoretical conditions when
+a narrow network's attention scores can match those of a wide network, and show
+that Spexphormer achieves good performance with drastically reduced memory
+requirements on various graph datasets.},
+ arxiv_url = {https://arxiv.org/pdf/2411.16278v1.pdf},
+ author = {Hamed Shirzad and Honghao Lin and Balaji Venkatachalam and Ameya Velingker and David Woodruff and Danica Sutherland},
+ github_url = {https://github.com/hamed1375/Sp_Exphormer},
+ title = {Even Sparser Graph Transformers},
+ year = {2024}
+}
+
+@article{yun-2020-connections,
+ abstract = {Recently, Transformer networks have redefined the state of the art in many
+NLP tasks. However, these models suffer from quadratic computational cost in
+the input sequence length $n$ to compute pairwise attention in each layer. This
+has prompted recent research into sparse Transformers that sparsify the
+connections in the attention layers. While empirically promising for long
+sequences, fundamental questions remain unanswered: Can sparse Transformers
+approximate any arbitrary sequence-to-sequence function, similar to their dense
+counterparts? How does the sparsity pattern and the sparsity level affect their
+performance? In this paper, we address these questions and provide a unifying
+framework that captures existing sparse attention models. We propose sufficient
+conditions under which we prove that a sparse attention model can universally
+approximate any sequence-to-sequence function. Surprisingly, our results show
+that sparse Transformers with only $O(n)$ connections per attention layer can
+approximate the same function class as the dense model with $n^2$ connections.
+Lastly, we present experiments comparing different patterns/levels of sparsity
+on standard NLP tasks.},
+ arxiv_url = {https://arxiv.org/pdf/2006.04862v2.pdf},
+ author = {Chulhee Yun and Yin-Wen Chang and Srinadh Bhojanapalli and Ankit Singh Rawat and Sashank J. Reddi and Sanjiv Kumar},
+ title = {O(n) Connections are Expressive Enough: Universal Approximability of Sparse Transformers},
+ year = {2020}
+}
+
+@article{zeng-2019-graphsaint,
+ abstract = {Graph Convolutional Networks (GCNs) are powerful models for learning
+representations of attributed graphs. To scale GCNs to large graphs,
+state-of-the-art methods use various layer sampling techniques to alleviate the
+"neighbor explosion" problem during minibatch training. We propose GraphSAINT,
+a graph sampling based inductive learning method that improves training
+efficiency and accuracy in a fundamentally different way. By changing
+perspective, GraphSAINT constructs minibatches by sampling the training graph,
+rather than the nodes or edges across GCN layers. Each iteration, a complete
+GCN is built from the properly sampled subgraph. Thus, we ensure fixed number
+of well-connected nodes in all layers. We further propose normalization
+technique to eliminate bias, and sampling algorithms for variance reduction.
+Importantly, we can decouple the sampling from the forward and backward
+propagation, and extend GraphSAINT with many architecture variants (e.g., graph
+attention, jumping connection). GraphSAINT demonstrates superior performance in
+both accuracy and training time on five large graphs, and achieves new
+state-of-the-art F1 scores for PPI (0.995) and Reddit (0.970).},
+ arxiv_url = {https://arxiv.org/pdf/1907.04931v4.pdf},
+ author = {Hanqing Zeng and Hongkuan Zhou and Ajitesh Srivastava and Rajgopal Kannan and Viktor Prasanna},
+ github_url = {https://github.com/GraphSAINT/GraphSAINT},
+ title = {GraphSAINT: Graph Sampling Based Inductive Learning Method},
+ year = {2019}
+}
+
+@article{zhang-2022-hierarchical,
+ abstract = {The Transformer architecture has achieved remarkable success in a number of
+domains including natural language processing and computer vision. However,
+when it comes to graph-structured data, transformers have not achieved
+competitive performance, especially on large graphs. In this paper, we identify
+the main deficiencies of current graph transformers:(1) Existing node sampling
+strategies in Graph Transformers are agnostic to the graph characteristics and
+the training process. (2) Most sampling strategies only focus on local
+neighbors and neglect the long-range dependencies in the graph. We conduct
+experimental investigations on synthetic datasets to show that existing
+sampling strategies are sub-optimal. To tackle the aforementioned problems, we
+formulate the optimization strategies of node sampling in Graph Transformer as
+an adversary bandit problem, where the rewards are related to the attention
+weights and can vary in the training procedure. Meanwhile, we propose a
+hierarchical attention scheme with graph coarsening to capture the long-range
+interactions while reducing computational complexity. Finally, we conduct
+extensive experiments on real-world datasets to demonstrate the superiority of
+our method over existing graph transformers and popular GNNs.},
+ arxiv_url = {https://arxiv.org/pdf/2210.03930v1.pdf},
+ author = {Zaixi Zhang and Qi Liu and Qingyong Hu and Chee-Kong Lee},
+ github_url = {https://github.com/zaixizhang/ANS-GT},
+ title = {Hierarchical Graph Transformer with Adaptive Node Sampling},
+ year = {2022}
+}
+
+% ===========================================
+% REFERENCE CANDIDATES
+% Additional reference papers for context
+% ===========================================
+
+@article{alon-2020-the,
+ abstract = {Since the proposal of the graph neural network (GNN) by Gori et al. (2005)
+and Scarselli et al. (2008), one of the major problems in training GNNs was
+their struggle to propagate information between distant nodes in the graph. We
+propose a new explanation for this problem: GNNs are susceptible to a
+bottleneck when aggregating messages across a long path. This bottleneck causes
+the over-squashing of exponentially growing information into fixed-size
+vectors. As a result, GNNs fail to propagate messages originating from distant
+nodes and perform poorly when the prediction task depends on long-range
+interaction. In this paper, we highlight the inherent problem of over-squashing
+in GNNs: we demonstrate that the bottleneck hinders popular GNNs from fitting
+long-range signals in the training data; we further show that GNNs that absorb
+incoming edges equally, such as GCN and GIN, are more susceptible to
+over-squashing than GAT and GGNN; finally, we show that prior work, which
+extensively tuned GNN models of long-range problems, suffers from
+over-squashing, and that breaking the bottleneck improves their
+state-of-the-art results without any tuning or additional weights. Our code is
+available at https://github.com/tech-srl/bottleneck/ .},
+ arxiv_url = {https://arxiv.org/pdf/2006.05205v4.pdf},
+ author = {Uri Alon and Eran Yahav},
+ title = {On the bottleneck of graph neural networks and its practical implications},
+ year = {2020}
+}
+
+@article{arora-2018-convergence,
+ abstract = {We analyze speed of convergence to global optimum for gradient descent
+training a deep linear neural network (parameterized as $x \mapsto W_N W_{N-1}
+\cdots W_1 x$) by minimizing the $\ell_2$ loss over whitened data. Convergence
+at a linear rate is guaranteed when the following hold: (i) dimensions of
+hidden layers are at least the minimum of the input and output dimensions; (ii)
+weight matrices at initialization are approximately balanced; and (iii) the
+initial loss is smaller than the loss of any rank-deficient solution. The
+assumptions on initialization (conditions (ii) and (iii)) are necessary, in the
+sense that violating any one of them may lead to convergence failure. Moreover,
+in the important case of output dimension 1, i.e. scalar regression, they are
+met, and thus convergence to global optimum holds, with constant probability
+under a random initialization scheme. Our results significantly extend previous
+analyses, e.g., of deep linear residual networks (Bartlett et al., 2018).},
+ arxiv_url = {https://arxiv.org/pdf/1810.02281v3.pdf},
+ author = {Sanjeev Arora and Nadav Cohen and Noah Golowich and Wei Hu},
+ title = {A convergence analysis of gradient descent for deep linear neural networks},
+ year = {2018}
+}
+
+@article{arora-2018-stronger,
+ abstract = {Deep nets generalize well despite having more parameters than the number of
+training samples. Recent works try to give an explanation using PAC-Bayes and
+Margin-based analyses, but do not as yet result in sample complexity bounds
+better than naive parameter counting. The current paper shows generalization
+bounds that're orders of magnitude better in practice. These rely upon new
+succinct reparametrizations of the trained net --- a compression that is
+explicit and efficient. These yield generalization bounds via a simple
+compression-based framework introduced here. Our results also provide some
+theoretical justification for widespread empirical success in compressing deep
+nets. Analysis of correctness of our compression relies upon some newly
+identified \textquotedblleft noise stability\textquotedblright properties of
+trained deep nets, which are also experimentally verified. The study of these
+properties and resulting generalization bounds are also extended to
+convolutional nets, which had eluded earlier attempts on proving
+generalization.},
+ arxiv_url = {https://arxiv.org/pdf/1802.05296v4.pdf},
+ author = {Sanjeev Arora and Rong Ge and Behnam Neyshabur and Yi Zhang},
+ title = {Stronger generalization bounds for deep nets via a compression approach},
+ year = {2018}
+}
+
+@article{author-year-generalization,
+ title = {Generalization of two-layer neural networks: An asymptotic viewpoint}
+}
+
+@article{author-year-new,
+ title = {A new model for learnig in graph domains}
+}
+
+@article{author-year-understanding,
+ title = {Understanding the difficulty of training deep feedforward neural networks}
+}
+
+@article{ba-2016-layer,
+ abstract = {Training state-of-the-art, deep neural networks is computationally expensive.
+One way to reduce the training time is to normalize the activities of the
+neurons. A recently introduced technique called batch normalization uses the
+distribution of the summed input to a neuron over a mini-batch of training
+cases to compute a mean and variance which are then used to normalize the
+summed input to that neuron on each training case. This significantly reduces
+the training time in feed-forward neural networks. However, the effect of batch
+normalization is dependent on the mini-batch size and it is not obvious how to
+apply it to recurrent neural networks. In this paper, we transpose batch
+normalization into layer normalization by computing the mean and variance used
+for normalization from all of the summed inputs to the neurons in a layer on a
+single training case. Like batch normalization, we also give each neuron its
+own adaptive bias and gain which are applied after the normalization but before
+the non-linearity. Unlike batch normalization, layer normalization performs
+exactly the same computation at training and test times. It is also
+straightforward to apply to recurrent neural networks by computing the
+normalization statistics separately at each time step. Layer normalization is
+very effective at stabilizing the hidden state dynamics in recurrent networks.
+Empirically, we show that layer normalization can substantially reduce the
+training time compared with previously published techniques.},
+ arxiv_url = {https://arxiv.org/pdf/1607.06450v1.pdf},
+ author = {Jimmy Lei Ba and Jamie Ryan Kiros and Geoffrey E. Hinton},
+ title = {Layer normalization},
+ year = {2016}
+}
+
+@article{balduzzi-2017-the,
+ abstract = {A long-standing obstacle to progress in deep learning is the problem of
+vanishing and exploding gradients. Although, the problem has largely been
+overcome via carefully constructed initializations and batch normalization,
+architectures incorporating skip-connections such as highway and resnets
+perform much better than standard feedforward architectures despite well-chosen
+initialization and batch normalization. In this paper, we identify the
+shattered gradients problem. Specifically, we show that the correlation between
+gradients in standard feedforward networks decays exponentially with depth
+resulting in gradients that resemble white noise whereas, in contrast, the
+gradients in architectures with skip-connections are far more resistant to
+shattering, decaying sublinearly. Detailed empirical evidence is presented in
+support of the analysis, on both fully-connected networks and convnets.
+Finally, we present a new "looks linear" (LL) initialization that prevents
+shattering, with preliminary experiments showing the new initialization allows
+to train very deep networks without the addition of skip-connections.},
+ arxiv_url = {https://arxiv.org/pdf/1702.08591v2.pdf},
+ author = {David Balduzzi and Marcus Frean and Lennox Leary and JP Lewis and Kurt Wan-Duo Ma and Brian McWilliams},
+ journal = {PMLR volume 70 (2017)},
+ title = {The shattered gradients problem: If resnets are the answer, then what is the question?},
+ year = {2017}
+}
+
+@article{bartlett-2018-gradient,
+ abstract = {We analyze algorithms for approximating a function $f(x) = \Phi x$ mapping
+$\Re^d$ to $\Re^d$ using deep linear neural networks, i.e. that learn a
+function $h$ parameterized by matrices $\Theta_1,...,\Theta_L$ and defined by
+$h(x) = \Theta_L \Theta_{L-1} ... \Theta_1 x$. We focus on algorithms that
+learn through gradient descent on the population quadratic loss in the case
+that the distribution over the inputs is isotropic.
+  We provide polynomial bounds on the number of iterations for gradient descent
+to approximate the least squares matrix $\Phi$, in the case where the initial
+hypothesis $\Theta_1 = ... = \Theta_L = I$ has excess loss bounded by a small
+enough constant. On the other hand, we show that gradient descent fails to
+converge for $\Phi$ whose distance from the identity is a larger constant, and
+we show that some forms of regularization toward the identity in each layer do
+not help.
+  If $\Phi$ is symmetric positive definite, we show that an algorithm that
+initializes $\Theta_i = I$ learns an $\epsilon$-approximation of $f$ using a
+number of updates polynomial in $L$, the condition number of $\Phi$, and
+$\log(d/\epsilon)$. In contrast, we show that if the least squares matrix
+$\Phi$ is symmetric and has a negative eigenvalue, then all members of a class
+of algorithms that perform gradient descent with identity initialization, and
+optionally regularize toward the identity in each layer, fail to converge.
+  We analyze an algorithm for the case that $\Phi$ satisfies $u^{\top} \Phi u >
+0$ for all $u$, but may not be symmetric. This algorithm uses two regularizers:
+one that maintains the invariant $u^{\top} \Theta_L \Theta_{L-1} ... \Theta_1 u
+> 0$ for all $u$, and another that "balances" $\Theta_1, ..., \Theta_L$ so that
+they have the same singular values.},
+ arxiv_url = {https://arxiv.org/pdf/1802.06093v4.pdf},
+ author = {Peter L. Bartlett and David P. Helmbold and Philip M. Long},
+ title = {Gradient descent with identity initialization efficiently learns positive definite linear transformations by deep residual networks},
+ year = {2018}
+}
+
+@article{bian-2020-rumor,
+ abstract = {Social media has been developing rapidly in public due to its nature of
+spreading new information, which leads to rumors being circulated. Meanwhile,
+detecting rumors from such massive information in social media is becoming an
+arduous challenge. Therefore, some deep learning methods are applied to
+discover rumors through the way they spread, such as Recursive Neural Network
+(RvNN) and so on. However, these deep learning methods only take into account
+the patterns of deep propagation but ignore the structures of wide dispersion
+in rumor detection. Actually, propagation and dispersion are two crucial
+characteristics of rumors. In this paper, we propose a novel bi-directional
+graph model, named Bi-Directional Graph Convolutional Networks (Bi-GCN), to
+explore both characteristics by operating on both top-down and bottom-up
+propagation of rumors. It leverages a GCN with a top-down directed graph of
+rumor spreading to learn the patterns of rumor propagation, and a GCN with an
+opposite directed graph of rumor diffusion to capture the structures of rumor
+dispersion. Moreover, the information from the source post is involved in each
+layer of GCN to enhance the influences from the roots of rumors. Encouraging
+empirical results on several benchmarks confirm the superiority of the proposed
+method over the state-of-the-art approaches.},
+ arxiv_url = {https://arxiv.org/pdf/2001.06362v1.pdf},
+ author = {Tian Bian and Xi Xiao and Tingyang Xu and Peilin Zhao and Wenbing Huang and Yu Rong and Junzhou Huang},
+ title = {Rumor detection on social media with bi-directional graph convolutional networks},
+ year = {2020}
+}
+
+@article{brody-2021-how,
+ abstract = {Graph Attention Networks (GATs) are one of the most popular GNN architectures
+and are considered as the state-of-the-art architecture for representation
+learning with graphs. In GAT, every node attends to its neighbors given its own
+representation as the query. However, in this paper we show that GAT computes a
+very limited kind of attention: the ranking of the attention scores is
+unconditioned on the query node. We formally define this restricted kind of
+attention as static attention and distinguish it from a strictly more
+expressive dynamic attention. Because GATs use a static attention mechanism,
+there are simple graph problems that GAT cannot express: in a controlled
+problem, we show that static attention hinders GAT from even fitting the
+training data. To remove this limitation, we introduce a simple fix by
+modifying the order of operations and propose GATv2: a dynamic graph attention
+variant that is strictly more expressive than GAT. We perform an extensive
+evaluation and show that GATv2 outperforms GAT across 11 OGB and other
+benchmarks while we match their parametric costs. Our code is available at
+https://github.com/tech-srl/how_attentive_are_gats . GATv2 is available as part
+of the PyTorch Geometric library, the Deep Graph Library, and the TensorFlow
+GNN library.},
+ arxiv_url = {https://arxiv.org/pdf/2105.14491v3.pdf},
+ author = {Shaked Brody and Uri Alon and Eran Yahav},
+ title = {How attentive are graph attention networks?},
+ year = {2021}
+}
+
+@article{burkholz-2018-initialization,
+ abstract = {Deep learning relies on good initialization schemes and hyperparameter
+choices prior to training a neural network. Random weight initializations
+induce random network ensembles, which give rise to the trainability, training
+speed, and sometimes also generalization ability of an instance. In addition,
+such ensembles provide theoretical insights into the space of candidate models
+of which one is selected during training. The results obtained so far rely on
+mean field approximations that assume infinite layer width and that study
+average squared signals. We derive the joint signal output distribution
+exactly, without mean field assumptions, for fully-connected networks with
+Gaussian weights and biases, and analyze deviations from the mean field
+results. For rectified linear units, we further discuss limitations of the
+standard initialization scheme, such as its lack of dynamical isometry, and
+propose a simple alternative that overcomes these by initial parameter sharing.},
+ arxiv_url = {https://arxiv.org/pdf/1806.06362v3.pdf},
+ author = {Rebekka Burkholz and Alina Dubatovka},
+ title = {Initialization of ReLUs for dynamical isometry},
+ year = {2018}
+}
+
+@article{cai-2020-graphnorm,
+ abstract = {Normalization is known to help the optimization of deep neural networks.
+Curiously, different architectures require specialized normalization methods.
+In this paper, we study what normalization is effective for Graph Neural
+Networks (GNNs). First, we adapt and evaluate the existing methods from other
+domains to GNNs. Faster convergence is achieved with InstanceNorm compared to
+BatchNorm and LayerNorm. We provide an explanation by showing that InstanceNorm
+serves as a preconditioner for GNNs, but such preconditioning effect is weaker
+with BatchNorm due to the heavy batch noise in graph datasets. Second, we show
+that the shift operation in InstanceNorm results in an expressiveness
+degradation of GNNs for highly regular graphs. We address this issue by
+proposing GraphNorm with a learnable shift. Empirically, GNNs with GraphNorm
+converge faster compared to GNNs using other normalization. GraphNorm also
+improves the generalization of GNNs, achieving better performance on graph
+classification benchmarks.},
+ arxiv_url = {https://arxiv.org/pdf/2009.03294v3.pdf},
+ author = {Tianle Cai and Shengjie Luo and Keyulu Xu and Di He and Tie-Yan Liu and Liwei Wang},
+ title = {Graphnorm: A principled approach to accelerating graph neural network training},
+ year = {2020}
+}
+
+@article{chen-2021-bag,
+ abstract = {Training deep graph neural networks (GNNs) is notoriously hard. Besides the
+standard plights in training deep architectures such as vanishing gradients and
+overfitting, it also uniquely suffers from over-smoothing, information
+squashing, and so on, which limits their potential power for encoding the
+high-order neighbor structure in large-scale graphs. Although numerous efforts
+are proposed to address these limitations, such as various forms of skip
+connections, graph normalization, and random dropping, it is difficult to
+disentangle the advantages brought by a deep GNN architecture from those
+"tricks" necessary to train such an architecture. Moreover, the lack of a
+standardized benchmark with fair and consistent experimental settings poses an
+almost insurmountable obstacle to gauge the effectiveness of new mechanisms. In
+view of those, we present the first fair and reproducible benchmark dedicated
+to assessing the "tricks" of training deep GNNs. We categorize existing
+approaches, investigate their hyperparameter sensitivity, and unify the basic
+configuration. Comprehensive evaluations are then conducted on tens of
+representative graph datasets including the recent large-scale Open Graph
+Benchmark, with diverse deep GNN backbones. We demonstrate that an organic
+combo of initial connection, identity mapping, group and batch normalization
+attains the new state-of-the-art results for deep GNNs on large datasets. Codes
+are available: https://github.com/VITA-Group/Deep_GCN_Benchmarking.},
+ arxiv_url = {https://arxiv.org/pdf/2108.10521v2.pdf},
+ author = {Tianlong Chen and Kaixiong Zhou and Keyu Duan and Wenqing Zheng and Peihao Wang and Xia Hu and Zhangyang Wang},
+ title = {Bag of tricks for training deeper graph neural networks: A comprehensive benchmark study},
+ year = {2021}
+}
+
+@article{cong-2021-provable,
+ abstract = {Graph Convolutional Networks (GCNs) are known to suffer from performance
+degradation as the number of layers increases, which is usually attributed to
+over-smoothing. Despite the apparent consensus, we observe that there exists a
+discrepancy between the theoretical understanding of over-smoothing and the
+practical capabilities of GCNs. Specifically, we argue that over-smoothing does
+not necessarily happen in practice, a deeper model is provably expressive, can
+converge to global optimum with linear convergence rate, and achieve very high
+training accuracy as long as properly trained. Despite being capable of
+achieving high training accuracy, empirical results show that the deeper models
+generalize poorly on the testing stage and existing theoretical understanding
+of such behavior remains elusive. To achieve better understanding, we carefully
+analyze the generalization capability of GCNs, and show that the training
+strategies to achieve high training accuracy significantly deteriorate the
+generalization capability of GCNs. Motivated by these findings, we propose a
+decoupled structure for GCNs that detaches weight matrices from feature
+propagation to preserve the expressive power and ensure good generalization
+performance. We conduct empirical evaluations on various synthetic and
+real-world datasets to validate the correctness of our theory.},
+ arxiv_url = {https://arxiv.org/pdf/2110.15174v1.pdf},
+ author = {Weilin Cong and Morteza Ramezani and Mehrdad Mahdavi},
+ title = {On provable benefits of depth in training graph convolutional networks},
+ year = {2021}
+}
+
+@article{dasoulas-2021-lipschitz,
+ abstract = {Attention based neural networks are state of the art in a large range of
+applications. However, their performance tends to degrade when the number of
+layers increases. In this work, we show that enforcing Lipschitz continuity by
+normalizing the attention scores can significantly improve the performance of
+deep attention models. First, we show that, for deep graph attention networks
+(GAT), gradient explosion appears during training, leading to poor performance
+of gradient-based training algorithms. To address this issue, we derive a
+theoretical analysis of the Lipschitz continuity of attention modules and
+introduce LipschitzNorm, a simple and parameter-free normalization for
+self-attention mechanisms that enforces the model to be Lipschitz continuous.
+We then apply LipschitzNorm to GAT and Graph Transformers and show that their
+performance is substantially improved in the deep setting (10 to 30 layers).
+More specifically, we show that a deep GAT model with LipschitzNorm achieves
+state of the art results for node label prediction tasks that exhibit
+long-range dependencies, while showing consistent improvements over their
+unnormalized counterparts in benchmark node classification tasks.},
+ arxiv_url = {https://arxiv.org/pdf/2103.04886v3.pdf},
+ author = {George Dasoulas and Kevin Scaman and Aladin Virmaux},
+ title = {Lipschitz normalization for self-attention layers with application to graph neural networks},
+ year = {2021}
+}
+
+@article{du-2018-algorithmic,
+ abstract = {We study the implicit regularization imposed by gradient descent for learning
+multi-layer homogeneous functions including feed-forward fully connected and
+convolutional deep neural networks with linear, ReLU or Leaky ReLU activation.
+We rigorously prove that gradient flow (i.e. gradient descent with
+infinitesimal step size) effectively enforces the differences between squared
+norms across different layers to remain invariant without any explicit
+regularization. This result implies that if the weights are initially small,
+gradient flow automatically balances the magnitudes of all layers. Using a
+discretization argument, we analyze gradient descent with positive step size
+for the non-convex low-rank asymmetric matrix factorization problem without any
+regularization. Inspired by our findings for gradient flow, we prove that
+gradient descent with step sizes $\eta_t = O\left(t^{-\left(
+\frac12+\delta\right)} \right)$ ($0<\delta\le\frac12$) automatically balances
+two low-rank factors and converges to a bounded global optimum. Furthermore,
+for rank-$1$ asymmetric matrix factorization we give a finer analysis showing
+gradient descent with constant step size converges to the global minimum at a
+globally linear rate. We believe that the idea of examining the invariance
+imposed by first order algorithms in learning homogeneous models could serve as
+a fundamental building block for studying optimization for learning deep
+models.},
+ arxiv_url = {https://arxiv.org/pdf/1806.00900v2.pdf},
+ author = {Simon S. Du and Wei Hu and Jason D. Lee},
+ title = {Algorithmic regularization in learning deep homogeneous models: Layers are automatically balanced},
+ year = {2018}
+}
+
+@article{eliasof-2021-pde,
+ abstract = {Graph neural networks are increasingly becoming the go-to approach in various
+fields such as computer vision, computational biology and chemistry, where data
+are naturally explained by graphs. However, unlike traditional convolutional
+neural networks, deep graph networks do not necessarily yield better
+performance than shallow graph networks. This behavior usually stems from the
+over-smoothing phenomenon. In this work, we propose a family of architectures
+to control this behavior by design. Our networks are motivated by numerical
+methods for solving Partial Differential Equations (PDEs) on manifolds, and as
+such, their behavior can be explained by similar analysis. Moreover, as we
+demonstrate using an extensive set of experiments, our PDE-motivated networks
+can generalize and be effective for various types of problems from different
+fields. Our architectures obtain better or on par with the current
+state-of-the-art results for problems that are typically approached using
+different architectures.},
+ arxiv_url = {https://arxiv.org/pdf/2108.01938v2.pdf},
+ author = {Moshe Eliasof and Eldad Haber and Eran Treister},
+ title = {Pde-gcn: Novel architectures for graph neural networks motivated by partial differential equations},
+ year = {2021}
+}
+
+@article{eliasof-2022-improving,
+ abstract = {Graph Neural Networks (GNNs) are limited in their propagation operators. In
+many cases, these operators often contain non-negative elements only and are
+shared across channels, limiting the expressiveness of GNNs. Moreover, some
+GNNs suffer from over-smoothing, limiting their depth. On the other hand,
+Convolutional Neural Networks (CNNs) can learn diverse propagation filters, and
+phenomena like over-smoothing are typically not apparent in CNNs. In this
+paper, we bridge these gaps by incorporating trainable channel-wise weighting
+factors $\omega$ to learn and mix multiple smoothing and sharpening propagation
+operators at each layer. Our generic method is called $\omega$GNN, and is easy
+to implement. We study two variants: $\omega$GCN and $\omega$GAT. For
+$\omega$GCN, we theoretically analyse its behaviour and the impact of $\omega$
+on the obtained node features. Our experiments confirm these findings,
+demonstrating and explaining how both variants do not over-smooth.
+Additionally, we experiment with 15 real-world datasets on node- and
+graph-classification tasks, where our $\omega$GCN and $\omega$GAT perform on
+par with state-of-the-art methods.},
+ arxiv_url = {https://arxiv.org/pdf/2210.17224v2.pdf},
+ author = {Moshe Eliasof and Lars Ruthotto and Eran Treister},
+ title = {Improving graph neural networks with learnable propagation operators},
+ year = {2022}
+}
+
+@article{eliasof-2022-pathgcn,
+ abstract = {Graph Convolutional Networks (GCNs), similarly to Convolutional Neural
+Networks (CNNs), are typically based on two main operations - spatial and
+point-wise convolutions. In the context of GCNs, differently from CNNs, a
+pre-determined spatial operator based on the graph Laplacian is often chosen,
+allowing only the point-wise operations to be learnt. However, learning a
+meaningful spatial operator is critical for developing more expressive GCNs for
+improved performance. In this paper we propose pathGCN, a novel approach to
+learn the spatial operator from random paths on the graph. We analyze the
+convergence of our method and its difference from existing GCNs. Furthermore,
+we discuss several options of combining our learnt spatial operator with
+point-wise convolutions. Our extensive experiments on numerous datasets suggest
+that by properly learning both the spatial and point-wise convolutions,
+phenomena like over-smoothing can be inherently avoided, and new
+state-of-the-art performance is achieved.},
+ arxiv_url = {https://arxiv.org/pdf/2207.07408v1.pdf},
+ author = {Moshe Eliasof and Eldad Haber and Eran Treister},
+ title = {pathgcn: Learning general graph spatial operators from paths},
+ year = {2022}
+}
