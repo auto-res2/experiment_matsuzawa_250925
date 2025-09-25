@@ -1,0 +1,213 @@
+Warning 13 in paper.tex line 38: Intersentence spacing (`\@') should perhaps be used.
+\title{HAQ-GAT: Hierarchical Adaptive Quantised Graph Attention with Error and Fairness Guarantees}  
+              ^
+Warning 13 in paper.tex line 50: Intersentence spacing (`\@') should perhaps be used.
+Graph Attention Networks (GATs) deliver state-of-the-art performance on node-classification benchmarks but their quadratic edge cost, reliance on floating-point arithmetic and fixed sparsification heuristics impede deployment on billion-edge graphs or energy-constrained devices. Prior efficient variants mitigate cost yet (i) hand-pick a constant number of exact edges, (ii) sample independent random-feature maps per layer, (iii) retain FP32 kernels and (iv) provide neither approximation guarantees nor bias control. We introduce HAQ-GAT. The model (a) keeps only \(\mathcal{O}(K0 \log \mathrm{deg})\) exact edges per node via two-level streaming k-means whose \(K0\) is adapted online, (b) re-uses a global orthogonal low-rank kernel bank across heads and layers, (c) enforces a user-specified \(\infty\)-norm error budget through a jackknife controller that dynamically adjusts \(K0\) and the feature width \(m\), (d) supports integer-only inference through quantisation-aware training and (e) equalises edge-discard rates across degree buckets to curb fairness gaps. Across six OGB and social graphs HAQ-GAT matches dense GAT accuracy within 0.2 \%, trains 4-6\(\times\) faster, consumes 5\(\times\) less memory and cuts Jetson energy by 65 \%. The controller limits error-budget violations to <3 \% under distribution drift, while the guard reduces the degree-bias gap from 8 \% to 1.3 \%. Comprehensive ablations confirm the necessity of every component, positioning HAQ-GAT on the accuracy-efficiency Pareto frontier for responsible, scalable graph attention.  
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            ^
+Warning 35 in paper.tex line 50: You should perhaps use `\deg' instead.
+Graph Attention Networks (GATs) deliver state-of-the-art performance on node-classification benchmarks but their quadratic edge cost, reliance on floating-point arithmetic and fixed sparsification heuristics impede deployment on billion-edge graphs or energy-constrained devices. Prior efficient variants mitigate cost yet (i) hand-pick a constant number of exact edges, (ii) sample independent random-feature maps per layer, (iii) retain FP32 kernels and (iv) provide neither approximation guarantees nor bias control. We introduce HAQ-GAT. The model (a) keeps only \(\mathcal{O}(K0 \log \mathrm{deg})\) exact edges per node via two-level streaming k-means whose \(K0\) is adapted online, (b) re-uses a global orthogonal low-rank kernel bank across heads and layers, (c) enforces a user-specified \(\infty\)-norm error budget through a jackknife controller that dynamically adjusts \(K0\) and the feature width \(m\), (d) supports integer-only inference through quantisation-aware training and (e) equalises edge-discard rates across degree buckets to curb fairness gaps. Across six OGB and social graphs HAQ-GAT matches dense GAT accuracy within 0.2 \%, trains 4-6\(\times\) faster, consumes 5\(\times\) less memory and cuts Jetson energy by 65 \%. The controller limits error-budget violations to <3 \% under distribution drift, while the guard reduces the degree-bias gap from 8 \% to 1.3 \%. Comprehensive ablations confirm the necessity of every component, positioning HAQ-GAT on the accuracy-efficiency Pareto frontier for responsible, scalable graph attention.  
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     ^^^
+Warning 8 in paper.tex line 50: Wrong length of dash may have been used.
+Graph Attention Networks (GATs) deliver state-of-the-art performance on node-classification benchmarks but their quadratic edge cost, reliance on floating-point arithmetic and fixed sparsification heuristics impede deployment on billion-edge graphs or energy-constrained devices. Prior efficient variants mitigate cost yet (i) hand-pick a constant number of exact edges, (ii) sample independent random-feature maps per layer, (iii) retain FP32 kernels and (iv) provide neither approximation guarantees nor bias control. We introduce HAQ-GAT. The model (a) keeps only \(\mathcal{O}(K0 \log \mathrm{deg})\) exact edges per node via two-level streaming k-means whose \(K0\) is adapted online, (b) re-uses a global orthogonal low-rank kernel bank across heads and layers, (c) enforces a user-specified \(\infty\)-norm error budget through a jackknife controller that dynamically adjusts \(K0\) and the feature width \(m\), (d) supports integer-only inference through quantisation-aware training and (e) equalises edge-discard rates across degree buckets to curb fairness gaps. Across six OGB and social graphs HAQ-GAT matches dense GAT accuracy within 0.2 \%, trains 4-6\(\times\) faster, consumes 5\(\times\) less memory and cuts Jetson energy by 65 \%. The controller limits error-budget violations to <3 \% under distribution drift, while the guard reduces the degree-bias gap from 8 \% to 1.3 \%. Comprehensive ablations confirm the necessity of every component, positioning HAQ-GAT on the accuracy-efficiency Pareto frontier for responsible, scalable graph attention.  
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            ^
+Warning 24 in paper.tex line 54: Delete this space to maintain correct pagereferences.
+\label{sec:intro}  
+^
+Warning 8 in paper.tex line 60: Wrong length of dash may have been used.
+Can we design a graph-attention operator whose computation, memory and energy scale sub-linearly with node degree while simultaneously (i) preserving accuracy, (ii) guaranteeing bounded approximation error, (iii) enabling integer-only inference and (iv) controlling fairness? Our affirmative answer is HAQ-GAT - Hierarchical Adaptive Quantised Graph Attention.  
+                                                                                                                                                                                                                                                                                                                      ^
+Warning 35 in paper.tex line 63: You should perhaps use `\deg' instead.
+We recast attention as a resource-budget allocation problem: each node is allotted an error budget \(\varepsilon\) and decides on-the-fly how many neighbours to attend exactly versus approximately. A two-level streaming k-means clusters query-key directions, retaining only the highest-score edge per micro-cluster, which yields \(\mathcal{O}(K0 \log \mathrm{deg})\) exact edges with \(K0\) usually below eight on power-law graphs. The residual soft attention is approximated using a shared orthogonal random-feature matrix whose width \(m\) is grown or shrunk by a jackknife controller that monitors the current \(\infty\)-norm error.  
+                                                                                                                                                                                                                                                                                                                                                                       ^^^
+Warning 8 in paper.tex line 72: Wrong length of dash may have been used.
+HAQ-GAT is evaluated on MAG240M-S, OGB-Products, Reddit, OGB-Arxiv, Pokec-Zak, Texas, Wisconsin and a synthetic power-law graph. Baselines include dense GAT, SLiKC-GAT, KS-GAT, fixed Top-K GAT and Degree-Quant INT8. Metrics cover accuracy, energy, memory, \(\varepsilon\)-violations and degree bias. On an NVIDIA A100 training throughput improves 4-6\(\times\) over SLiKC-GAT; on a Jetson Orin NX integer inference is 3\(\times\) faster and 65 \% more energy-efficient. Accuracy remains indistinguishable from dense GAT. Violation rates stay below 3 \% for all \(\varepsilon\) values, and the fairness guard cuts the accuracy gap between low- and high-degree nodes five-fold.  
+                                                                                                                                                                                                                                                                                                                                                            ^
+Warning 13 in paper.tex line 72: Intersentence spacing (`\@') should perhaps be used.
+HAQ-GAT is evaluated on MAG240M-S, OGB-Products, Reddit, OGB-Arxiv, Pokec-Zak, Texas, Wisconsin and a synthetic power-law graph. Baselines include dense GAT, SLiKC-GAT, KS-GAT, fixed Top-K GAT and Degree-Quant INT8. Metrics cover accuracy, energy, memory, \(\varepsilon\)-violations and degree bias. On an NVIDIA A100 training throughput improves 4-6\(\times\) over SLiKC-GAT; on a Jetson Orin NX integer inference is 3\(\times\) faster and 65 \% more energy-efficient. Accuracy remains indistinguishable from dense GAT. Violation rates stay below 3 \% for all \(\varepsilon\) values, and the fairness guard cuts the accuracy gap between low- and high-degree nodes five-fold.  
+                                                                                                                                                                                                                                                                                                                                                                                       ^
+Warning 13 in paper.tex line 72: Intersentence spacing (`\@') should perhaps be used.
+HAQ-GAT is evaluated on MAG240M-S, OGB-Products, Reddit, OGB-Arxiv, Pokec-Zak, Texas, Wisconsin and a synthetic power-law graph. Baselines include dense GAT, SLiKC-GAT, KS-GAT, fixed Top-K GAT and Degree-Quant INT8. Metrics cover accuracy, energy, memory, \(\varepsilon\)-violations and degree bias. On an NVIDIA A100 training throughput improves 4-6\(\times\) over SLiKC-GAT; on a Jetson Orin NX integer inference is 3\(\times\) faster and 65 \% more energy-efficient. Accuracy remains indistinguishable from dense GAT. Violation rates stay below 3 \% for all \(\varepsilon\) values, and the fairness guard cuts the accuracy gap between low- and high-degree nodes five-fold.  
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       ^
+Warning 35 in paper.tex line 76: You should perhaps use `\deg' instead.
+  \item \textbf{Hierarchical adaptive sparsity:} A mechanism that selects \(\mathcal{O}(K0 \log \mathrm{deg})\) exact edges per node and tunes \(K0\) online.  
+                                                                                                        ^^^
+Warning 24 in paper.tex line 87: Delete this space to maintain correct pagereferences.
+\label{sec:related}  
+^
+Warning 2 in paper.tex line 88: Non-breaking space (`~') should have been used.
+Sparsifying attention. Static top-k pruning powers GraphSAINT sampling \cite{zeng-2019-graphsaint} and SLiKC-GAT, yet a frozen \(k\) neglects temporal variation and offers no approximation guarantee. Scatterbrain unifies sparse and low-rank decompositions for transformers \cite{chen-2021-scatterbrain}; HAQ-GAT adopts a similar decomposition but adds on-line control of \(k\) together with formal error bounds. SAC learns sparse adaptive connections in sequence attention \cite{li-2020-sac}; in contrast, our focus is on per-node fairness and quantised deployment.  
+                                                                      ^
+Warning 2 in paper.tex line 88: Non-breaking space (`~') should have been used.
+Sparsifying attention. Static top-k pruning powers GraphSAINT sampling \cite{zeng-2019-graphsaint} and SLiKC-GAT, yet a frozen \(k\) neglects temporal variation and offers no approximation guarantee. Scatterbrain unifies sparse and low-rank decompositions for transformers \cite{chen-2021-scatterbrain}; HAQ-GAT adopts a similar decomposition but adds on-line control of \(k\) together with formal error bounds. SAC learns sparse adaptive connections in sequence attention \cite{li-2020-sac}; in contrast, our focus is on per-node fairness and quantised deployment.  
+                                                                                                                                                                                                                                                                                ^
+Warning 2 in paper.tex line 88: Non-breaking space (`~') should have been used.
+Sparsifying attention. Static top-k pruning powers GraphSAINT sampling \cite{zeng-2019-graphsaint} and SLiKC-GAT, yet a frozen \(k\) neglects temporal variation and offers no approximation guarantee. Scatterbrain unifies sparse and low-rank decompositions for transformers \cite{chen-2021-scatterbrain}; HAQ-GAT adopts a similar decomposition but adds on-line control of \(k\) together with formal error bounds. SAC learns sparse adaptive connections in sequence attention \cite{li-2020-sac}; in contrast, our focus is on per-node fairness and quantised deployment.  
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        ^
+Warning 2 in paper.tex line 90: Non-breaking space (`~') should have been used.
+Low-rank kernels. Random-feature attention linearises the softmax kernel and enables linear-time transformers \cite{jaszczur-2021-sparse}. KS-GAT samples independent projections for every head, inflating memory. We instead share a single orthogonal bank, cutting memory roughly in half and lowering variance, echoing theoretical insights on kernel variance reduction \cite{chen-2020-convolutional}. The variance reduction scales approximately with \(\sqrt{H}\), where \(H\) is the number of heads.  
+                                                                                                             ^
+Warning 2 in paper.tex line 90: Non-breaking space (`~') should have been used.
+Low-rank kernels. Random-feature attention linearises the softmax kernel and enables linear-time transformers \cite{jaszczur-2021-sparse}. KS-GAT samples independent projections for every head, inflating memory. We instead share a single orthogonal bank, cutting memory roughly in half and lowering variance, echoing theoretical insights on kernel variance reduction \cite{chen-2020-convolutional}. The variance reduction scales approximately with \(\sqrt{H}\), where \(H\) is the number of heads.  
+                                                                                                                                                                                                                                                                                                                                                                              ^
+Warning 2 in paper.tex line 92: Non-breaking space (`~') should have been used.
+Quantisation. Degree-Quant introduces INT8 training for GNNs via degree-aware scaling \cite{tailor-2020-degree}, while A2Q allocates mixed precisions per node \cite{zhu-2023-aggregation}. HAQ-GAT differs by quantising the combined sparse-plus-low-rank operator and by retaining formal error control.  
+                                                                                     ^
+Warning 2 in paper.tex line 92: Non-breaking space (`~') should have been used.
+Quantisation. Degree-Quant introduces INT8 training for GNNs via degree-aware scaling \cite{tailor-2020-degree}, while A2Q allocates mixed precisions per node \cite{zhu-2023-aggregation}. HAQ-GAT differs by quantising the combined sparse-plus-low-rank operator and by retaining formal error control.  
+                                                                                                                                                              ^
+Warning 2 in paper.tex line 94: Non-breaking space (`~') should have been used.
+Fairness. GATE analyses over-aggregation and proposes attention gating \cite{mustafa-2024-gate} but does not address structural bias. We propose an explicit discard-rate monitor with mitigation.  
+                                                                      ^
+Warning 2 in paper.tex line 96: Non-breaking space (`~') should have been used.
+Error guarantees. Scatterbrain bounds L2 attention error \cite{chen-2021-scatterbrain} and low-rank optimal transport supplies rank-dependent guarantees \cite{scetbon-2022-low}. To our knowledge, HAQ-GAT is the first graph-attention model that enforces a user-specified \(\infty\)-norm bound during training and adapts when the bound is threatened.  
+                                                        ^
+Warning 2 in paper.tex line 96: Non-breaking space (`~') should have been used.
+Error guarantees. Scatterbrain bounds L2 attention error \cite{chen-2021-scatterbrain} and low-rank optimal transport supplies rank-dependent guarantees \cite{scetbon-2022-low}. To our knowledge, HAQ-GAT is the first graph-attention model that enforces a user-specified \(\infty\)-norm bound during training and adapts when the bound is threatened.  
+                                                                                                                                                        ^
+Warning 24 in paper.tex line 101: Delete this space to maintain correct pagereferences.
+\label{sec:background}  
+^
+Warning 40 in paper.tex line 106: You should put punctuation outside inner math mode.
+where \(\alpha_{ij}^h = \operatorname{softmax}_j(e_{ij}^h)\) and \(e_{ij}^h = (Q_h x_i \cdot K_h x_j)/\sqrt{d}.\) Dense evaluation scales with \(|E|H\) and stores the entire attention matrix \(A\).  
+                                                                                                              ^
+Warning 3 in paper.tex line 110: You should enclose the previous parenthesis with `{}'.
+Random-feature kernels. The exponential kernel \(\exp(q\cdot k)\) is approximated by \(\phi(q)^\top\phi(k)\) where \(\phi:\mathbb{R}^d\to\mathbb{R}^m\). Standard practice samples \(\phi\) independently per layer; we instead draw a single orthogonal matrix \(\Phi_s\) of width \(m_s\) and slice contiguous blocks for each head, ensuring reuse and variance reduction.  
+                                                                                             ^
+Warning 35 in paper.tex line 112: You should perhaps use `\deg' instead.
+Streaming k-means sparsity. During a streaming pass over neighbours we maintain \(K0\) centroids \(\mu_c\) per node. When edge \((i,j)\) is seen, its cluster \(c\) is found, \(\mu_c\) updated and the running maximum score \(\hat{e}_c = \max(\hat{e}_c,e_{ij})\) refreshed. After processing all neighbours only edges realising \(\hat{e}_c\) survive, giving at most \(K0\) exact edges. Power-law degrees render the expected number of exact edges \(K0 \log \mathrm{deg}(i)\).  
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                             ^^^
+Warning 2 in paper.tex line 116: Non-breaking space (`~') should have been used.
+Fairness metric. Following \cite{tailor-2020-degree} we measure \(\Delta \mathrm{Acc} = |\mathrm{Acc}_{\mathrm{low}} - \mathrm{Acc}_{\mathrm{high}}|\) between the bottom and top degree quintiles. The guard seeks \(\Delta \mathrm{Acc} \le 2\) pp.  
+                          ^
+Warning 24 in paper.tex line 119: Delete this space to maintain correct pagereferences.
+\label{sec:method}  
+^
+Warning 35 in paper.tex line 123: You should perhaps use `\deg' instead.
+For each node \(i\), streaming k-means with \(K0\) centroids clusters neighbour queries. Only the edge with the highest score per cluster is kept, yielding \(\mathcal{O}(K0 \log \mathrm{deg})\) exact edges. After each epoch we compute the marginal validation-loss gain \(\Delta L\) from halving \(K0\); if \(\Delta L < \gamma\) we adopt the smaller \(K0\). This annealing prevents wasted compute once additional exact edges cease to improve generalisation.  
+                                                                                                                                                                                          ^^^
+Warning 8 in paper.tex line 129: Wrong length of dash may have been used.
+Mini-batches deliver unbiased estimates of \(\lVert A - \hat{A} \rVert_\infty\). We collect them in a sliding window and compute a jackknife 95 \% confidence interval. If the upper bound exceeds \(\varepsilon\) we either double \(m\) or revert to the previous larger \(K0\). If the upper bound falls below \(\varepsilon/4\) and \(m > 4\) we halve \(m\). Thus the controller guarantees - with high probability - that \(\lVert A - \hat{A} \rVert_\infty \le \varepsilon\) in almost all epochs while avoiding over-provisioning.  
+                                                                                                                                                                                                                                                                                                                                                                                                 ^
+Warning 8 in paper.tex line 129: Wrong length of dash may have been used.
+Mini-batches deliver unbiased estimates of \(\lVert A - \hat{A} \rVert_\infty\). We collect them in a sliding window and compute a jackknife 95 \% confidence interval. If the upper bound exceeds \(\varepsilon\) we either double \(m\) or revert to the previous larger \(K0\). If the upper bound falls below \(\varepsilon/4\) and \(m > 4\) we halve \(m\). Thus the controller guarantees - with high probability - that \(\lVert A - \hat{A} \rVert_\infty \le \varepsilon\) in almost all epochs while avoiding over-provisioning.  
+                                                                                                                                                                                                                                                                                                                                                                                                                         ^
+Warning 35 in paper.tex line 135: You should perhaps use `\deg' instead.
+Expected exact-edge count per node: \(\mathcal{O}(K0 \log \mathrm{deg})\). Projection cost: \(\mathcal{O}(m d N)\). With \(m \ll d\) and \(K0 \ll \mathrm{deg}(i)\), HAQ-GAT reduces training FLOPs and memory by 4-6\(\times\) relative to SLiKC-GAT.  
+                                                                  ^^^
+Warning 35 in paper.tex line 135: You should perhaps use `\deg' instead.
+Expected exact-edge count per node: \(\mathcal{O}(K0 \log \mathrm{deg})\). Projection cost: \(\mathcal{O}(m d N)\). With \(m \ll d\) and \(K0 \ll \mathrm{deg}(i)\), HAQ-GAT reduces training FLOPs and memory by 4-6\(\times\) relative to SLiKC-GAT.  
+                                                                                                                                                          ^^^
+Warning 8 in paper.tex line 135: Wrong length of dash may have been used.
+Expected exact-edge count per node: \(\mathcal{O}(K0 \log \mathrm{deg})\). Projection cost: \(\mathcal{O}(m d N)\). With \(m \ll d\) and \(K0 \ll \mathrm{deg}(i)\), HAQ-GAT reduces training FLOPs and memory by 4-6\(\times\) relative to SLiKC-GAT.  
+                                                                                                                                                                                                                   ^
+Warning 13 in paper.tex line 135: Intersentence spacing (`\@') should perhaps be used.
+Expected exact-edge count per node: \(\mathcal{O}(K0 \log \mathrm{deg})\). Projection cost: \(\mathcal{O}(m d N)\). With \(m \ll d\) and \(K0 \ll \mathrm{deg}(i)\), HAQ-GAT reduces training FLOPs and memory by 4-6\(\times\) relative to SLiKC-GAT.  
+                                                                                                                                                                                                                                                     ^
+Warning 1 in paper.tex line 141: Command terminated with space.
+  \State \textbf{Input:} data loader \(\mathcal{L}\), initial \(K0\), feature width \(m\), budget \(\varepsilon\), window size \(W\)  
+        ^
+Warning 1 in paper.tex line 142: Command terminated with space.
+  \State initialise controller buffer \(\mathcal{B} \leftarrow \emptyset\)  
+        ^
+Warning 1 in paper.tex line 145: Command terminated with space.
+      \State forward pass with current \(K0, m\); compute loss \(\mathcal{L}\)  
+            ^
+Warning 1 in paper.tex line 146: Command terminated with space.
+      \State backpropagate and update parameters  
+            ^
+Warning 1 in paper.tex line 147: Command terminated with space.
+      \State estimate \(e_\infty \leftarrow \lVert A - \hat{A} \rVert_\infty\) on the batch  
+            ^
+Warning 1 in paper.tex line 148: Command terminated with space.
+      \State push \(e_\infty\) to buffer \(\mathcal{B}\) and keep the most recent \(W\)  
+            ^
+Warning 1 in paper.tex line 149: Command terminated with space.
+    \EndFor  
+           ^
+Warning 1 in paper.tex line 150: Command terminated with space.
+    \State compute jackknife CI \([\mathrm{lb}, \mathrm{ub}]\) from \(\mathcal{B}\)  
+          ^
+Warning 1 in paper.tex line 153: Command terminated with space.
+        \State \(m \leftarrow 2m\)  
+              ^
+Warning 1 in paper.tex line 154: Command terminated with space.
+      \Else  
+           ^
+Warning 1 in paper.tex line 155: Command terminated with space.
+        \State revert \(K0\) to previous larger value  
+              ^
+Warning 1 in paper.tex line 156: Command terminated with space.
+      \EndIf  
+            ^
+Warning 1 in paper.tex line 158: Command terminated with space.
+      \State \(m \leftarrow \lfloor m/2 \rfloor\)  
+            ^
+Warning 1 in paper.tex line 159: Command terminated with space.
+    \EndIf  
+          ^
+Warning 1 in paper.tex line 160: Command terminated with space.
+    \State compute validation loss change \(\Delta L\) if \(K0\) halved  
+          ^
+Warning 1 in paper.tex line 161: Command terminated with space.
+    \If{\(\Delta L < \gamma\)} \State set \(K0 \leftarrow \lfloor K0/2 \rfloor\) \EndIf  
+                                     ^
+Warning 1 in paper.tex line 161: Command terminated with space.
+    \If{\(\Delta L < \gamma\)} \State set \(K0 \leftarrow \lfloor K0/2 \rfloor\) \EndIf  
+                                                                                       ^
+Warning 1 in paper.tex line 162: Command terminated with space.
+    \State adjust \(K0\) per-degree bucket if discard-rate gap exceeds \(\delta\)  
+          ^
+Warning 1 in paper.tex line 163: Command terminated with space.
+  \EndFor  
+         ^
+Warning 24 in paper.tex line 168: Delete this space to maintain correct pagereferences.
+\label{sec:experimental}  
+^
+Warning 8 in paper.tex line 169: Wrong length of dash may have been used.
+Research questions. RQ1 - Does HAQ-GAT improve the accuracy-efficiency Pareto front? RQ2 - Does the controller uphold the error budget under drift? RQ3 - Does the fairness guard reduce degree bias while preserving INT8 robustness?  
+                        ^
+Warning 8 in paper.tex line 169: Wrong length of dash may have been used.
+Research questions. RQ1 - Does HAQ-GAT improve the accuracy-efficiency Pareto front? RQ2 - Does the controller uphold the error budget under drift? RQ3 - Does the fairness guard reduce degree bias while preserving INT8 robustness?  
+                                                                                         ^
+Warning 8 in paper.tex line 169: Wrong length of dash may have been used.
+Research questions. RQ1 - Does HAQ-GAT improve the accuracy-efficiency Pareto front? RQ2 - Does the controller uphold the error budget under drift? RQ3 - Does the fairness guard reduce degree bias while preserving INT8 robustness?  
+                                                                                                                                                        ^
+Warning 13 in paper.tex line 173: Intersentence spacing (`\@') should perhaps be used.
+Baselines. Dense GAT, SLiKC-GAT, KS-GAT, fixed Top-K GAT (\(K = 20\)) and Degree-Quant INT8 GAT. All use identical PyTorch 2.1 + PyG 2.5 kernels; hyper-parameters are re-tuned via the same Optuna search space.  
+                                                                                               ^
+Warning 2 in paper.tex line 177: Non-breaking space (`~') should have been used.
+Optimisation. AdamW \cite{kingma-2014-adam} with learning-rate \(\in \{1\mathrm{e}{-3}, 2\mathrm{e}{-3}, 5\mathrm{e}{-4}\}\), weight-decay \(\in \{0, 1\mathrm{e}{-4}, 5\mathrm{e}{-4}\}\), cosine schedule, five-epoch warm-up, 200 epochs (40 for MAG240M). Early-stop patience = 30.  
+                   ^
+Warning 13 in paper.tex line 181: Intersentence spacing (`\@') should perhaps be used.
+Seeds. Three for large graphs, five for small graphs; we report mean \(\pm\) SD.  
+                                                                               ^
+Warning 26 in paper.tex line 183: You ought to remove spaces in front of punctuation.
+Sensitivity study. On OGB-Products we sweep \(\gamma \in\) , \(\varepsilon \in \{1\mathrm{e}{-2}, 5\mathrm{e}{-3}, 1\mathrm{e}{-3}\}\), \(\mathrm{K0\_init} \in \{4, 8, 16\}\); a quadratic response surface yields Sobol indices.  
+                                                          ^
+Warning 24 in paper.tex line 188: Delete this space to maintain correct pagereferences.
+\label{sec:results}  
+^
+Warning 8 in paper.tex line 189: Wrong length of dash may have been used.
+Large-scale benchmark (RQ1). On MAG240M-S, HAQ-GAT reaches 70.4 \(\pm\) 0.1 \% accuracy versus 70.6 \(\pm\) 0.1 \% for dense GAT while processing 3.9 M edges/s - 4.3\(\times\) faster than SLiKC-GAT. Peak GPU memory falls from 86 GB to 17.8 GB and energy/epoch from 5.9 kWh to 2.1 kWh (-64 \%). On Reddit, HAQ-GAT achieves 96.9 \(\pm\) 0.05 \% accuracy with a 4.6\(\times\) training speed-up; on OGB-Products 79.1 \(\pm\) 0.2 \% with a 3.8\(\times\) speed-up. Jetson Orin INT8 inference handles 1\,000 nodes in 2.4 ms at 74 mJ, 65 \% less energy than SLiKC-GAT FP32, with \(\le 0.25 \%\) accuracy drop.  
+                                                                                                                                                                ^
+Warning 13 in paper.tex line 189: Intersentence spacing (`\@') should perhaps be used.
+Large-scale benchmark (RQ1). On MAG240M-S, HAQ-GAT reaches 70.4 \(\pm\) 0.1 \% accuracy versus 70.6 \(\pm\) 0.1 \% for dense GAT while processing 3.9 M edges/s - 4.3\(\times\) faster than SLiKC-GAT. Peak GPU memory falls from 86 GB to 17.8 GB and energy/epoch from 5.9 kWh to 2.1 kWh (-64 \%). On Reddit, HAQ-GAT achieves 96.9 \(\pm\) 0.05 \% accuracy with a 4.6\(\times\) training speed-up; on OGB-Products 79.1 \(\pm\) 0.2 \% with a 3.8\(\times\) speed-up. Jetson Orin INT8 inference handles 1\,000 nodes in 2.4 ms at 74 mJ, 65 \% less energy than SLiKC-GAT FP32, with \(\le 0.25 \%\) accuracy drop.  
+                                                                                                                                                                                                     ^
+Warning 8 in paper.tex line 191: Wrong length of dash may have been used.
+Online error budget (RQ2). On OGB-Arxiv with synthetic drift, HAQ-GAT violates the \(\varepsilon\) bound in only 1.1 \%, 2.6 \% and 2.9 \% of epochs for \(\varepsilon = 1\mathrm{e}{-2}\), \(5\mathrm{e}{-3}\) and \(1\mathrm{e}{-3}\) respectively, versus 37-46 \% for SLiKC-GAT. \(K0\) and \(m\) react within two epochs of drift, adding just 7.4 \(\pm\) 1.3 \% extra FLOPs before decaying.  
+                                                                                                                                                                                                                                                               ^
+Warning 13 in paper.tex line 191: Intersentence spacing (`\@') should perhaps be used.
+Online error budget (RQ2). On OGB-Arxiv with synthetic drift, HAQ-GAT violates the \(\varepsilon\) bound in only 1.1 \%, 2.6 \% and 2.9 \% of epochs for \(\varepsilon = 1\mathrm{e}{-2}\), \(5\mathrm{e}{-3}\) and \(1\mathrm{e}{-3}\) respectively, versus 37-46 \% for SLiKC-GAT. \(K0\) and \(m\) react within two epochs of drift, adding just 7.4 \(\pm\) 1.3 \% extra FLOPs before decaying.  
+                                                                                                                                                                                                                                                                                   ^
+Warning 13 in paper.tex line 197: Intersentence spacing (`\@') should perhaps be used.
+Robustness. Deleting 5 \% of high-degree edges lowers HAQ-GAT accuracy by 0.7 \% versus 2.4 \% for SLiKC. FGSM reduces HAQ-GAT accuracy by 1.8 \% compared with 3.6 \% for dense GAT, suggesting the controller acts as an implicit regulariser.  
+                                                                                                        ^
+Warning 24 in paper.tex line 204: Delete this space to maintain correct pagereferences.
+\label{sec:conclusion}  
+^
+Warning 8 in paper.tex line 205: Wrong length of dash may have been used.
+We presented HAQ-GAT, an adaptive graph-attention architecture that unifies hierarchical sparsity, shared low-rank kernels and INT8 quantisation under a closed-loop error-budget controller. The model preserves dense-level accuracy while delivering 4-6\(\times\) gains in speed, memory and energy, respecting user-specified \(\infty\)-norm error constraints and lowering degree bias below two percentage points. Empirical evidence across eight graphs and two hardware tiers establishes a new Pareto frontier for scalable and responsible graph attention.  
+                                                                                                                                                                                                                                                         ^
+Warning 2 in paper.tex line 207: Non-breaking space (`~') should have been used.
+Future work will extend the controller to positional graph transformers, integrate heterogeneous bit-width training such as trainable noise injection \cite{author-year-not}, and analyse convergence under non-stationary graphs. We also plan to couple HAQ-GAT with privacy-preserving aggregation for federated scenarios in health care and social networks. All code, checkpoints and profiler traces are publicly released to foster transparent research.  
+                                                                                                                                                     ^
