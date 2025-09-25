@@ -1,0 +1,9 @@
+# Production ShiftTrack-ImageNet configuration
+dataset: imagenet
+# adapt the path to your local storage of ShiftTrack-ImageNet organised as ImageFolder
+dataset_root: /data/shifttrack-imagenet
+batch_size: 32
+model_name: timm/resnet50.a1_in1k
+block_size: 16
+alpha_max: 0.05
+ema: 0.99

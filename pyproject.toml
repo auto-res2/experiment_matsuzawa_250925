@@ -1,1 +1,21 @@
-# Please list the required python packages.
+[project]
+name = "curvtrack-exp"
+version = "0.1.0"
+description = "Re-factored CurvTrack test-time adaptation experiments"
+authors = [ {name = "Researcher"} ]
+readme = "README.md"
+license = {text = "MIT"}
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project.dependencies]
+# NOTE: kept in array style per instructions
+dependencies = [
+  "torch>=2.0.0",
+  "timm>=0.9.0",
+  "torchvision>=0.15.0",
+  "PyYAML>=6.0",
+  "uv<0.4.0",  # runtime wrapper used in CLI examples
+]

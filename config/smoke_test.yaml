@@ -1,0 +1,6 @@
+# Quick sanity run on CIFAR-10 (tiny)
+dataset: cifar10
+batch_size: 64
+model_name: resnet18.a1_in1k  # small backbone for speed
+block_size: 16
+smoke_test_pass_threshold: 0.25  # 25 % top-1 on CIFAR-10 val
