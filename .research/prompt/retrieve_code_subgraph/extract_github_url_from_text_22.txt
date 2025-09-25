@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+EcoTTA consists of two main components. First, it employs a memory-efficient architecture where the original pre-trained network is largely frozen, and lightweight meta networks are attached to its encoder. The encoder is divided into K parts, with shallow layers partitioned more densely. Each meta network comprises a batch normalization layer and a convolution block (Conv-BN-ReLU). Before deployment, these meta networks are warmed up on the source dataset for a small number of epochs using cross-entropy loss, with the original networks frozen. During test-time adaptation, only these lightweight meta networks are updated, eliminating the need to store large intermediate activations for the frozen original networks during backpropagation. Second, a self-distilled regularization loss is introduced, formulated as L1 loss (||˜xk - xk||1). This loss ensures that the output (˜xk) of each meta network group does not significantly deviate from the output (xk) of the corresponding part of the frozen original network. This process leverages the source knowledge preserved in the original networks to prevent catastrophic forgetting and error accumulation. The overall loss function combines an unsupervised adaptation loss (entropy minimization for confident samples) and this self-distilled regularization.
+
+# GitHub URLs List
+['https://github.com/shachoi/RobustNet', 'https://github.com/DequanWang/tent', 'https://github.com/vita-epfl/ttt-plus-plus', 'https://github.com/qinenergy/cotta', 'https://github.com/mr-eggplant/EATA', 'https://github.com/TaesikGong/NOTE', 'https://github.com/TaesikGong/NOTE', 'https://github.com/mit-han-lab/tinyml', 'https://github.com/ASU-ESIC-FAN-Lab/RepNet', 'https://github.com/mit-han-lab/tinyml', 'https://github.com/pytorch/vision']
+Output:
+{
+    "index": 3
+}
