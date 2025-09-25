@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+FeCAM utilizes an optimal Bayesian classifier that minimizes the anisotropic Mahalanobis distance to classify features based on class prototypes. Instead of assuming isotropic (spherical) feature distributions like the Euclidean metric, FeCAM models the feature covariance relations for each class. Key techniques employed to enhance and stabilize this Mahalanobis-based classification include: 1) **Covariance Matrix Approximation**: It can use either a common covariance matrix for all seen classes or, more effectively, a separate covariance matrix (Σy) for each individual class. 2) **Correlation Matrix Normalization**: To make class-specific covariance matrices comparable, their diagonal elements are normalized to 1, addressing the varying scales and variances between old and new class feature distributions. 3) **Covariance Shrinkage**: A shrinkage method (Σs = Σ + γ1V1I + γ2V2(1 − I)) is applied to ensure the covariance matrices are full-rank and invertible, especially when the number of samples is less than the feature dimensions. 4) **Tukey's Ladder of Powers Transformation**: Feature vectors are transformed (ϕ(x)λ for λ≠0, log(ϕ(x)) for λ=0) to reduce skewness and make their distributions more Gaussian-like, improving covariance estimation. This transformation is applied to features before computing covariance matrices. The entire process forms a no-training, Bayes classifier.
+
+# GitHub URLs List
+['https://github.com/dipamgoswami/FeCAM']
+Output:
+{
+    "index": 0
+}
