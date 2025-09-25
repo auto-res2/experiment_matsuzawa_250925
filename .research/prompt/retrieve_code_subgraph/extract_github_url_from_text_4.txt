@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The proposed approach, FeCAM, operates with a frozen feature extractor (e.g., ResNet-18 or pre-trained ViT-B/16) after the initial task, focusing on adapting the classifier to new classes. It leverages prototypical networks, where test image features are classified based on their Mahalanobis distance to class prototypes (mean feature vectors), replacing the commonly used Euclidean distance. FeCAM models class-wise feature distributions as multivariate normal distributions and employs an optimal Bayesian classifier formulation. Key techniques integrated to improve and stabilize Mahalanobis-based classification include: 1) **Covariance Matrix Approximation**, which computes a separate covariance matrix (Σy) for each class or a common matrix (Σ1:t) for all seen classes; 2) **Correlation Matrix Normalization**, applied to make diagonal elements of covariance matrices equal to 1, ensuring comparability across classes; 3) **Covariance Shrinkage**, which regularizes the covariance matrix to guarantee invertibility, especially when the number of samples is less than the feature dimensions; and 4) **Tukey’s Ladder of Powers Transformation**, which transforms feature vectors (e.g., ϕ(x)^λ) to reduce skewness and promote more Gaussian-like distributions before covariance matrix computation.
+
+# GitHub URLs List
+['https://github.com/dipamgoswami/FeCAM']
+Output:
+{
+    "index": 0
+}
