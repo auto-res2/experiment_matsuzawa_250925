@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The core methodology involves formulating the sampling variance optimization as an adversary bandit problem, where rewards are related to node embeddings and learned weights that vary during training. Instead of directly computing an intractable optimal sampling distribution, the proposed algorithms maintain nonparametric estimates of the sampler. Two specific bandit algorithms are introduced: GNN-BS and GNN-BS.M. GNN-BS operates in an adversary Multi-Armed Bandit (MAB) setting, where it samples one neighbor and repeats this k times, updating the sampler using the EXP3 algorithm. The reward for picking a neighbor is defined as the negative derivative of the effective variance, proportional to (alpha_ij^2 / q_ij^2) * ||h_j||^2. GNN-BS.M is designed for the adversary MAB with multiple plays setting, using the DepRound sampler to select a k-element subset of neighbors once. It uses an approximated effective variance (derived via Jensen's inequality) and updates the sampler using EXP3.M. The reward for selecting a subset of neighbors is derived as the sum of (alpha_ij / q_ij^2) * ||h_j||^2 for neighbors in the sampled subset. For attentive GNNs, where attention values (alpha_ij) are learned and cannot be fully evaluated with sampled neighborhoods, the algorithms use 'adjusted feedback attention values' (alpha'_ij) as an approximation based on sampled unnormalized attentions. The theoretical analysis demonstrates that the regret with respect to the variance of their estimators asymptotically approximates the optimal sampler within a factor of 3.
+
+# GitHub URLs List
+['https://github.com/matenure/FastGCN', 'https://github.com/huangwb/AS-GCN', 'https://github.com/xavierzw/ogb-geniepath-bs']
+Output:
+{
+    "index": 1
+}
