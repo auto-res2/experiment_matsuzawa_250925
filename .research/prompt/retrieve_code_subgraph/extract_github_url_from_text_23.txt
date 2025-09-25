@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The core methodology involves maintaining nonparametric estimates of the sampler and iteratively updating it towards optimal variance, acquiring partial knowledge from sampled neighbors. The optimization of samplers is formulated as an adversary bandit problem, where the regret is defined as the gap between the expected loss under the current policy and the optimal policy. Rewards are defined as the negative derivatives of the sampling variance. Two bandit algorithms are proposed: GNN-BS (Graph Neural Networks with Bandit Sampler) uses the adversary Multi-Armed Bandit (MAB) setting, where a single neighbor is sampled and the process is repeated 'k' times, with the sampler updated by EXP3. GNN-BS.M (Graph Neural Networks with Multiple Plays Bandit Sampler) uses the adversary MAB with multiple plays setting, employing an efficient k-combination sampler (DepRound) to sample a k-element subset of neighbors at once, with updates via EXP3.M. For attentive GNNs, the paper extends the algorithms by defining adjusted feedback attention values, which approximate true attention values using unnormalized attentions from sampled neighborhoods.
+
+# GitHub URLs List
+['https://github.com/matenure/FastGCN', 'https://github.com/huangwb/AS-GCN', 'https://github.com/xavierzw/ogb-geniepath-bs']
+Output:
+{
+    "index": 2
+}
