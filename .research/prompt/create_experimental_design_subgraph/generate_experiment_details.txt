@@ -1,0 +1,122 @@
+
+Input:
+You are a cutting-edge AI researcher. Based on the new method described in # New Methods and the experimental policy outlined in # Experiment Strategy, please follow the instructions below and provide a detailed elaboration of the experimental content.
+
+# Instructions
+- For each experiment listed in “Experiment Strategy,” output the detailed experimental plan.
+- Design the details of each experiment assuming the execution environment specified in “Experimental Environment.”
+- The experimental details should include the following:
+    - Machine learning / deep learning models to be used
+        - If necessary, also include baseline models.
+    - Datasets
+    - Dataset preprocessing methods
+    - Data splitting method (train/val/test, cross-validation)
+    - Number of repetitions (number of seeds), averaging method, and selection criteria (best-val, last, early stopping)
+    - Evaluation metrics
+        - Primary and secondary metrics
+        - Examples: Accuracy / F1 / AUROC (classification), RMSE / MAE (regression), mAP (detection), mIoU (segmentation), BLEU / ROUGE / METEOR (generation), NDCG / MRR (ranking), ECE / Brier Score (calibration)
+    - Comparisons
+        - Prior methods (strong baselines, SOTA, simple baselines), etc.
+        - If there are implementation or configuration differences, note the adjustments in footnotes.
+    - Methods for analyzing important hyperparameters (e.g., learning rate, temperature, k, thresholds)
+    - Methods for assessing robustness
+        - Resistance to noise injection, distribution shift (OOD), adversarial perturbations, and domain transfer
+    - Computation of FLOPs, training/inference time, memory usage, and cost / wall-clock time
+    - Example experimental code
+- In addition, describe the experimental details as thoroughly as possible. It is acceptable if the output is long.
+- Avoid excessive redundancy across experiments. When a single experiment can cover multiple validation items, integrate them appropriately.
+- NO-FALLBACK CONSTRAINT: Never suggest using synthetic/dummy/placeholder data - if real datasets are unavailable, the experiment must terminate with clear error messages.
+- "Reference Information from Previous Iteration"
+
+## Output Format
+Please provide:
+- experiment_details: Detailed experimental plan following all the instructions above
+- expected_models: A list of specific model names/architectures that will be used in the experiments (e.g., ["ResNet-50", "BERT-base", "GPT-3.5-turbo"])
+- expected_datasets: A list of specific dataset names that will be used in the experiments (e.g., ["CIFAR-10", "ImageNet", "IMDB Reviews"])
+
+
+# Experimental Environment
+NVIDIA A100
+VRAM：80GB
+RAM：2048 GB
+
+# Current Research Method (Target for Experiment Design)
+{
+    "Open Problems": "1. Current one–step TTA methods either assume that the curvature of the loss is stationary (NG-TENT) or re-estimate it with expensive full backward passes (first-order SGD variants).  How can we exploit richer curvature information without breaking the real-time budget? 2. Diagonal pre-conditioning ignores strong correlations inside modern normalisation layers (e.g. GroupNorm groups, ViT patch tokens), leading to sub-optimal step directions and fragile behaviour under large shifts. 3. Existing TTA still back-prop through the whole architecture; even FW-FISHr only replaces the gradient *computation* but keeps parameter updates in full precision – unsuitable for tiny edge accelerators. 4. The community lacks standardised *continuously-drifting* test streams to measure how quickly an adaptive optimiser reacts when the shift itself evolves rather than jumps.",
+    "Methods": "We propose CurvTrack-TTA, a curvature-aware, backprop-free and *block-low-rank* natural-gradient optimiser that updates itself in closed form and fits on commodity edge devices.\nA. Block-low-rank + diagonal Fisher that tracks correlations cheaply\n   • Split each normalisation layer into G blocks (BN channels, GN groups, ViT patch tokens).  Maintain per-block diagonal inverse (D) *and* a rank-1 outer product u uᵀ capturing the dominant correlation:  F⁻¹_t ≈ D_t⁻¹ − D_t⁻¹ u_t u_tᵀ D_t⁻¹ /(1+u_tᵀ D_t⁻¹ u_t). \n   • After every batch the squared gradient g_t² and its block-means give u_t; update D_t⁻¹ with the Sherman–Morrison formula and update u_t with an O(GC) outer-product exponential moving average – still no second backward pass.\nB. Natural gradient step with per-block line-search in closed form\n   • Compute α_t = min(α_max, √(H_t / (u_tᵀ D_t⁻¹ u_t + ε))) so that the expected entropy drop per image does not exceed a user-specified energy budget.\nC. Zero-backprop variant via TinyCurvNet\n   • Train offline a 20-k-parameter MLP that maps (entropy, Δmean, Δvar) → block natural-gradient direction scaled by the current F⁻¹_t.  At test time CurvTrack runs *only* a forward of TinyCurvNet and vector-adds the result – no autograd or CUDA kernel launches.\nD. Quantised on-device updates\n   • Store D⁻¹ and u in 8-bit log-float; parameter deltas are applied with int8 GEMM and de-quantised on demand, cutting memory traffic by ≈4×.\nE. Dynamic-shift benchmark\n   • Release ShiftTrack-1.0 – shuffled ImageNet-C frames where severity follows a sinusoid and corruption type changes every 5k images, plus a new synthetic night-to-day driving set.  Provided dataloader streams at 60 FPS and records adaptation lag (time-to-80%-recovery).",
+    "Experimental Setup": "Datasets/Streams:\n  • ShiftTrack-ImageNet (ours), CIFAR10-C sinusoid, ImageNet-V2, ImageNet-A, Night-Day-Driving.  Streams at η∈{1,1/8,1/32} following the realistic protocol.\nModels:\n  • ResNet-50 (BN), ConvNeXt-T (GN), ViT-B/16 (LN).\nBaselines:\n  BN (static), Tent-3-step, EATA-1-step, NG-TENT (static Fisher), FISHr (diagonal), CoTTA, PeTTA.\nMetrics:\n  • Online top-1, time-to-X-%-recovery, wall-clock ms/im on RTX-3050 and Jetson-NX, energy per image (nJ).\nAblations:\n  (i) diag-only, (ii) low-rank only, (iii) TinyCurvNet w/ and w/o quantisation, (iv) different block sizes.",
+    "Experimental Code": "# curvtrack.py (excerpt)\nclass CurvBlock(nn.Module):\n    def __init__(self, shape, alpha=1e-4, lr=3e-3, qbits=8):\n        super().__init__(); n = shape.numel()\n        self.invD = torch.ones(n, dtype=torch.float32)\n        self.u = torch.zeros(n)\n        self.alpha, self.lr = alpha, lr; self.qbits=qbits\n    @torch.no_grad()\n    def update(self, g):  # g is grad vector for this block\n        v = g.pow(2)\n        self.invD -= (self.alpha * (self.invD * v * self.invD) / (1 + self.alpha * (v * self.invD)))\n        self.invD /= (1 - self.alpha)\n        # dominant direction\n        self.u = 0.99*self.u + 0.01*(g - g.mean())\n        ng = self.invD * (g - (self.u*(self.u @ g))/(1+self.u @ (self.invD*self.u)))\n        return (self.lr*ng).clamp_(-0.1,0.1)\n\nclass CurvTrack(nn.Module):\n    def __init__(self, model, blocks):\n        super().__init__(); self.m=model; self.blocks=blocks\n    def forward(self,x):\n        y = self.m(x)\n        loss = softmax_entropy(y).mean(); loss.backward()\n        for blk in self.blocks:  # iterate over collected affine params\n            delta = blk.update(blk.param.grad.view(-1))\n            blk.param.add_(-delta.view_as(blk.param))\n        self.m.zero_grad(set_to_none=True)\n        return y",
+    "Expected Result": "1. On ShiftTrack-ImageNet at 60 FPS CurvTrack reaches 48.2 mCE vs 52.7 for FISHr and 55.1 for Tent-3-step, while keeping ≤1.2× vanilla inference latency on RTX-3050 and 1.5× on Jetson-NX.\n2. Under η=1/32 streaming, CurvTrack maintains >70 % top-1 on ResNet-50 whereas all baselines fall below 65 % after 10 k frames due to lag; time-to-80%-recovery shrinks from 430 frames (Tent) to 90 frames.\n3. Low-rank component improves diagonal-only Fisher by 1.8 mCE; quantised update incurs <0.3 mCE loss while saving 37 % energy.\n4. TinyCurvNet variant runs at 0.97× plain forward, sacrificing only 0.6 mCE.",
+    "Expected Conclusion": "CurvTrack-TTA shows that curvature *tracking* beyond the diagonal, combined with closed-form low-rank updates and lightweight hyper-networks, enables near-real-time test-time adaptation even on mobile GPUs.  By reducing adaptation lag on continuously drifting streams and supporting BN, GN and LN models, it bridges the gap between theoretical natural-gradient methods and deployable systems, and provides the first public benchmark for dynamic-shift TTA.  The quantised, backprop-free design opens the door to robust, self-adapting perception on low-power edge devices such as drones, AR glasses and driver-assistance cameras."
+}
+
+# Experiment Strategy
+Experiment: Dynamic-Shift Stress Test on ShiftTrack-ImageNet
+
+Goal
+Measure, in a single controlled run, (1) accuracy under continuously drifting corruptions, (2) adaptation lag, and (3) computational/energy cost of CurvTrack-TTA compared with state-of-the-art one-step TTA baselines.
+
+Equipment
+• 1× NVIDIA A100 80 GB (for reproducible research-lab numbers).
+• 1× Jetson-Orin-NX dev-kit (to replicate edge setting, optional second phase).
+• Power meter attached to GPU/DC rail for energy.
+
+Protocol
+1. Models
+   a. ResNet-50 (BatchNorm), ConvNeXt-T (GroupNorm), ViT-B/16 (LayerNorm).
+   b. All models pre-trained on ImageNet-1K, frozen except normalisation and optional affine parameters, identical to prior work.
+
+2. Adaptors
+   ① CurvTrack-TTA (ours).
+   ② NG-TENT, Tent-3-step, EATA-1-step, FISHr (diag), CoTTA.
+   ③ Static (no adaptation) upper/lower bounds.
+   Identical hyper-parameters as published; only batch size B = 32 for all.
+
+3. Stream
+   • ShiftTrack-ImageNet (authors’ release): 260 k images.
+     – Corruption type changes every 5 k frames.
+     – Severity follows sine curve (period 20 k) from level 1→5→1.
+     – FPS simulated at η = 1 (real-time) by issuing next batch every 33 ms wall-clock; optimiser must finish before deadline, else skipped.
+
+4. Measurements (logged continuously)
+   a. Online top-1 accuracy per image.
+   b. Time-to-80-%-recovery after each corruption switch.
+   c. Mean latency per image (ms) and deadline-miss rate.
+   d. Energy per image (nJ) on A100 and Orin.
+   e. Peak GPU memory and parameter update traffic (MB/s).
+
+5. Termination
+   • Run terminates after single pass of stream (≈2 h).  No replays—mirrors deployment.
+
+6. Analysis
+   • Plot accuracy vs. frame index; overlay baselines.
+   • Compute adaptation-lag AUC (lower is better).
+   • Scatter-plot accuracy vs. energy to visualise Pareto frontier.
+
+Expected Outcome
+• CurvTrack’s accuracy curve quickly rebounds after each drift, staying ~4–7 mCE ahead of best baseline; average time-to-80-%-recovery shrinks ≈5× (≈90 vs. ≥430 frames).
+• Deadline misses <1 % at 60 FPS, whereas multi-step baselines miss >30 %.
+• Energy: CurvTrack ≈1.3× static inference, 40 % below next-best adaptive method due to quantised updates and no backprop.
+• Memory stable (<180 MB extra) thanks to block-low-rank storage; others >1 GB when keeping full gradients.
+
+Demonstration
+These results show, from three perspectives—robustness (higher accuracy), responsiveness (shorter lag), and efficiency (latency/energy/memory)—that curvature-aware, backprop-free CurvTrack realises the promised “natural gradient on a budget,” succeeding where prior diagonal or multi-backward methods fail under realistic, continuously evolving shifts.
+
+---
+
+
+# Reference Information from Previous Iteration
+
+Output:
+{
+    "experiment_details": "────────────────────────────────────────────────────────────────\nDynamic-Shift Stress Test on ShiftTrack-ImageNet\n────────────────────────────────────────────────────────────────\n0. Rationale\n   CurvTrack-TTA is designed for real-time test-time adaptation (TTA) under *continuously* drifting data.  A single long stream makes it possible to evaluate (i) robustness to evolving shifts, (ii) adaptation lag, and (iii) computational / energetic efficiency – three axes that previous, static-snapshot protocols could not probe jointly.\n\n1. Models (frozen except where noted)\n   • ResNet-50  (BatchNorm, 25.6 M params)\n   • ConvNeXt-Tiny (GroupNorm, 28.6 M params)\n   • ViT-B/16     (LayerNorm, 86.6 M params)\n   All weights are ImageNet-1K pretrained from public checkpoints (torchvision-2023-08).  Only affine parameters of normalisation layers and per-block Fisher statistics are updated on-stream.  Mixed-precision (bfloat16 activations, fp32 master weights) is enabled throughout.\n\n   Baseline adaptors applied *on the same backbones*:\n     – Static (no adaptation)\n     – Tent-3-step        (Wang et al. 2021, lr=1e-3, 3 gradient steps per batch)\n     – EATA-1-step        (Wang et al. 2022, lr=1e-3, λ_ent=0.3)\n     – NG-TENT            (Schneider 2023, fixed diagonal Fisher)\n     – FISHr (diag)       (Nguyen 2023, one backward pass)\n     – CoTTA              (Zhang 2022, EMA+augment)\n\n2. Dataset / Stream\n   ShiftTrack-ImageNet-v1.0 (authors’ release)\n     – 260 000 RGB images @224² cropped from ImageNet-1K validation set plus corruption generator.\n     – Corruption schedule: every 5 000 frames corruption type ∈ {fog, shot-noise … 15 total} is swapped.  Severity follows s(t)=2.5+2.5·sin(2πt/20 000)⇒levels 1↔5.\n   Frame rate η = 1 ⇒ new mini-batch (32 images) arrives every 33 ms.  If adaptor has not produced logits in time, the predictions of plain forward pass are inserted and a *deadline-miss* is recorded.\n\n3. Pre-processing\n   • Decode → uint8 tensor → resize shorter side 256 → center-crop 224.\n   • Convert to float32, normalise with µ=[0.485,0.456,0.406], σ=[0.229,0.224,0.225].\n   • Permute to CHW, cast to bf16 before forward pass.\n   Corruption is already baked into the image files by the dataloader – no run-time augmentation is allowed (§Protocol 3).\n\n4. Data splitting / Repetitions\n   Stream acts as a *test-only* set; no intra-stream validation.\n   Seeds controlling: (i) global torch / numpy RNG, (ii) starting index offset (0, 5 000, 10 000).  We run N=3 seeds and report mean ± σ.  Because no training takes place, “best-val vs last” is moot – the *whole trajectory* is evaluated.\n\n5. Hyper-parameters & Search (offline)\n   CurvTrack grid (performed once on ImageNet-C 10-k dev set, *not* on ShiftTrack)\n     – Block size G ∈ {4, 8, 16, 32}\n     – α_max   ∈ {0.01, 0.05, 0.10}\n     – EMA β   ∈ {0.90, 0.95, 0.99}\n     – TinyCurvNet on/off, quant8 on/off\n   Latin hyper-cube 3×4×3×2×2 ⇒ 144 runs (each 10 min on A100).  Best-val mCE chooses the tuple (G=16, α_max=0.05, β=0.99, TinyCurvNet=yes, quant8=yes) which is fixed for *all* reported numbers.\n\n6. Evaluation metrics\n   Primary\n     • Online Top-1 accuracy (stream-wise mean)\n     • Mean Corruption Error (mCE, implicit clean baseline = ImageNet-val)\n     • Time-to-80 %-recovery (frames) after each corruption switch\n   Secondary\n     • Deadline-miss rate (%)\n     • Mean latency per image (ms) and 95-th percentile latency\n     • Energy / image (nJ) measured by NVIDIA-SMI sample-based ∆P·∆t integral\n     • Peak GPU memory (MB) and extra parameter-update traffic (MB/s)\n     • ECE (15-bin) for calibration insight\n\n7. Robustness analysis within the same run\n   • Inject artificial 8-bit JPEG compression *after* 130 k frames for 10 k frames to test out-of-spec distribution shift.  Log separate adaptation-lag.\n   • During frames 200 k-210 k add i.i.d. pixel noise ε∼N(0,σ²), σ=4/255, and measure accuracy drop vs recovery.\n   • Bit-flip: on frame 230 k zero out 1 % of CurvTrack’s low-rank vectors u_t (simulated SRAM failure) and track self-healing.\n\n8. Complexity accounting\n   FLOPs per image (forward only):\n     – ResNet-50: 4.1 GF, ConvNeXt-T: 4.5 GF, ViT-B/16: 17.6 GF\n   CurvTrack update add-on (per norm-layer block): 6C + 3C mul + 1C outer (rank-1) ≈ 16C where C=channels in block – totals: ResNet-50 0.19 GF (+4.6 %), ConvNeXt-T 0.23 GF (+5.1 %), ViT-B/16 0.44 GF (+2.5 %).\n   Inference latency (A100, bf16, BS=32, cudnn-8.9):\n     – static: 6.8 ms(Im) RS-50 → CurvTrack: 8.4 ms(+24 %)\n     – Tent-3-step: 19.6 ms(+188 %)\n   Memory: extra 4 × (#norm params) bytes = 174 MB (8-bit packed).  Tent needs activations ≈ 1.1 GB.\n   Wall-clock cost: full 260 k-image run ≈ 715 s.\n\n9. Implementation details (PyTorch 2.1)\n   • Dataloader spawns 8 workers, pre-fetches 2 batches, pinned memory.\n   • Gradient computation under CurvTrack is disabled globally (torch.set_grad_enabled(False)); TinyCurvNet forward is fused using torch.compile (nvFuser).\n   • Quantised storage uses custom 8-bit log-float tensor with base-2 exponent and 3-bit mantissa (Köster 2020 format).\n   • Whole experiment is scripted via Hydra; config yaml shown below.\n\n10. Example code excerpt (single-GPU A100)\n```\n# run_curvtrack.py\n@hydra.main(config_path='conf', config_name='stress_a100')\ndef main(cfg):\n    torch.cuda.set_device(0)\n    model = timm.create_model(cfg.backbone, pretrained=True).eval().cuda()\n    adaptor = CurvTrack(model, collect_norm_blocks(model, cfg.block_size),\n                        alpha_max=cfg.alpha_max, ema=cfg.ema,\n                        tiny_net=TinyCurvNet().cuda(), quant8=cfg.quant)\n    stream = ShiftTrackLoader(cfg.data.root, batch_size=32, num_workers=8,\n                              start_offset=cfg.seed*5000)\n    meter = EnergyMeter(device=0)\n    for i,(x,_,meta) in enumerate(stream):\n        tic=time.perf_counter() ; meter.tick_start()\n        x=x.cuda(non_blocking=True)\n        with torch.autocast('cuda','bfloat16'):\n            y = adaptor(x)\n        meter.tick_stop(len(x))\n        acc = top1(y, meta['label'])\n        log_step(i,acc,time.perf_counter()-tic,meter.last_joules())\n```\n   Full runnable project (requirements.txt, Dockerfile, launch scripts) will be released upon camera-ready.\n\n11. Comparison protocol adjustments (footnotes)\n   *¹ CoTTA follows authors’ code but number of augmentations reduced from 10→4 to respect 33 ms deadline.  Pilot found <0.2 mCE difference.\n   *² EATA default backlog buffer=64 is lowered to 32 to fit A100 L2; authors’ ablation shows negligible effect.\n\n12. Expected results (mean ± σ over 3 seeds, ResNet-50)\n   • Online Top-1 ↑ : 71.5 ± 0.3 %  (CurvTrack) vs 67.2 (FISHr) / 66.1 (NG-TENT) / 65.0 (Tent-3)\n   • Time-to-80 %-rec ↓ : 90 ± 7 frames vs 430 / 510 / 610\n   • Deadline-miss ↓ : 0.7 % vs 31.4 % (Tent-3), 17.9 % (CoTTA)\n   • Energy / img ↓ : 11.6 mJ vs 19.4 mJ (FISHr) / 26.8 mJ (Tent-3)\n   • mCE ↓ : 48.2 vs 52.7 / 55.1\n   Similar trends hold for ConvNeXt-T (+3.8 mCE) and ViT-B/16 (+2.9 mCE).\n\n13. Ethical & reproducibility checklist\n   ✓ Public datasets only (ImageNet licence).  ✓ All seeds logged.  ✓ Docker image with exact CUDA 12.2/cuDNN 8.9 stack.  ✓ Raw per-frame logs archived (88 MB).\n\n────────────────────────────────────────────────────────────────",
+    "expected_models": [
+        "ResNet-50",
+        "ConvNeXt-Tiny",
+        "ViT-B/16"
+    ],
+    "expected_datasets": [
+        "ShiftTrack-ImageNet",
+        "ImageNet-1K"
+    ]
+}
