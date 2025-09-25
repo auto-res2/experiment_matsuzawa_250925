@@ -1,0 +1,89 @@
+
+Input:
+
+# Instructions
+You are an automated fact checker. Your task is to determine two facts based on the provided paper content:
+1.  Was an experiment actually executed and results reported?
+2.  Are the main results reported as being better than a baseline?
+
+Based on your analysis, provide a boolean value for `was_experiment_executed` and `is_better_than_baseline`.
+
+## Review Criteria
+
+### was_experiment_executed (bool)
+- Look for evidence of experiment execution. This could be logs, output figures, tables with numerical results, or explicit statements that an experiment was run and produced results.
+- If there is clear evidence of execution and reported results, this is true.
+- If the paper only describes the experimental setup but shows no results, this is false.
+
+### is_better_than_baseline (bool)
+- Look for a comparison against a baseline method or result.
+- The paper must explicitly state or show in a table/figure that the proposed method outperforms the baseline on a key metric.
+- If no baseline is mentioned, or if the results are not better, this is false.
+
+## Paper Content:
+
+
+**Title:** Temporal-Adaptive Diversity and Power-Aware Sampling for Budget-Constrained Graph Attention Training
+
+
+**Abstract:** Training attention-based graph neural networks on billion-edge graphs is now limited as much by energy and memory budgets as by statistical variance. Existing samplers minimise variance inside each mini-batch but neglect redundancy across time and across workers; importance scores arrive one iteration late, and determinantal point-process (DPP) similarity kernels become a new bottleneck. We introduce TADP-HABLS, a drop-in sampler that unifies variance, temporal diversity and full-system energy into a single online objective. A sliding-window reservoir DPP maximises novelty over the last W batches with O(K d²) cost and a provable 1 – 1/e coverage guarantee. A lightweight two-layer GRU predicts one-step-ahead attention weights, eliminating stale importance. CountSketch combined with random Fourier features compresses embeddings eight-fold, enabling 100 k-node DPP kernels on one GPU. Finally, a constrained Lagrangian balances an accuracy proxy, variance, redundancy and Joule cost under global GPU-memory caps, while a unified meter logs GPU, CPU, DRAM and PCIe power. Experiments on six static and dynamic benchmarks, three hardware regimes and seven strong baselines show that TADP-HABLS strictly dominates every prior Pareto point, delivering up to +0.9 percentage-point accuracy while halving energy and cutting neighbour overlap by 57 %. Module-wise ablations confirm that every component is necessary.
+
+
+**Introduction:** Graph Attention Networks (GAT) [brody-2021-how] and their transformer descendants have become core primitives in chemistry, recommendation and social media analytics, yet mini-batch training on graphs with 10⁸–10⁹ edges remains challenging. The dominant research line designs samplers that reduce the variance of stochastic gradients computed within a single batch, for example LABOR and HABLS [baln-2022-layer] or BanditSampler [liu-2020-bandit]. Unfortunately, these samplers overlook two phenomena that dominate in large-scale practice. First, successive batches as well as parallel workers often visit highly overlapping neighbourhoods, wasting compute and widening confidence intervals. Second, practitioners increasingly care about energy and memory budgets: a model may be refused deployment if it exceeds a fixed Joule cap even when its training time is acceptable.  
+Three obstacles prevent today’s samplers from meeting these emerging constraints. 1) Importance scores—whether attention weights or gradient norms—are obtained during the forward pass that just ended, therefore they are already stale when the next batch is sampled; the effect is amplified on dynamic graphs. 2) Diversity-promoting samplers such as k-DPPs need a similarity kernel whose construction becomes the new wall-clock and memory bottleneck at 10⁶ nodes or beyond. 3) Energy accounting usually stops at the GPU, so published “green AI” numbers are not comparable across machines with different CPU or PCIe usage.  
+We answer these obstacles with Temporal-Adaptive, Diversity-and-Power-Aware Hierarchical ABLS (TADP-HABLS). Our design goals are: drop-in integration with PyTorch-Geometric or DGL data loaders; provable temporal coverage; negligible compute overhead; and automatic adaptation to user-specified memory and energy caps. Concretely, TADP-HABLS contributes:  
+• A single constrained objective that combines an accuracy proxy, variance, redundancy and energy, optimised by dual ascent to yield automatically tuned fan-outs and target diversity levels.  
+• SW-DPP, a sliding-window reservoir that maximises novelty across W recent batches with O(K d²) complexity and a 1 – 1/e coverage guarantee.  
+• A two-layer GRU predictor that eliminates one-iteration staleness and reduces cache bias to O(β² t).  
+• CountSketch plus random Fourier features that slash kernel construction time eight-fold and memory sixteen-fold for 100 k-node reservoirs.  
+• JEPE and JEPTA, the first metrics that aggregate GPU, CPU, DRAM and PCIe power for fair cross-system comparisons.  
+• Extensive evaluation on six benchmarks, three hardware regimes and seven baselines demonstrating a consistent shift of the accuracy–energy Pareto front: up to +0.9 pp accuracy while halving energy and lowering gradient variance by 15 %.  
+Looking ahead, our results hint that coverage-style objectives and full-system energy accounting will be essential for resource-aware training on trillion-edge dynamic graphs.
+
+
+**Related Work:** Variance-reduced samplers. BanditSampler [liu-2020-bandit] and its extensions optimise a surrogate variance objective within each batch; temporal redundancy therefore remains uncontrolled. LABOR and HABLS [baln-2022-layer] share this limitation and further ignore energy consumption. GraphSAINT [zeng-2019-graphsaint] samples entire sub-graphs, which improves within-batch connectivity but increases overlap between successive iterations; our sliding window addresses exactly this redundancy with an explicit DPP objective. Adaptive Node Sampling for graph transformers [zhang-2022-hierarchical] casts selection as a contextual bandit but again optimises within a single forward pass and assumes unlimited power.  
+Diversity mechanisms in attention. Sparse transformers retain expressiveness with O(n) edges [yun-2020-connections], while two-stage sparsification can eliminate redundant attention connections [shirzad-2024-even]. We adapt these insights to DPP kernels, enabling diversity at node scale rather than edge scale.  
+Energy and communication. Periodic global averaging improves the energy efficiency of distributed SGD [chen-2021-accelerating], yet it focuses on dense models and measures only network and GPU wattage. RSC accelerates sparse GNNs through approximate computation [liu-2022-rsc] but neither tracks full-system power nor addresses diversity. JEPE closes this gap.  
+Temporal importance prediction. SAC smooths attention in sequence models [li-2020-sac]; we import the idea to graphs and combine it with a constrained optimisation framework. None of the above works jointly considers temporal diversity, full-system energy, kernel scalability and automatic budget tuning, positioning TADP-HABLS as complementary rather than incremental.
+
+
+**Background:** Problem setting. Let G = (V,E) with |V|≫10⁶ and node features X. An attention-based GNN produces layer-wise embeddings h^ℓ by weighted message passing. Training proceeds on mini-batches B_t⊂V sampled by strategy S under a memory cap M̂, an energy cap Ê and a target batch size K. The learning objective is to minimise expected loss L while controlling (i) the variance Var[L̂(B_t)], (ii) temporal redundancy R = E[ Jaccard(B_t,B_{t-1}) ] and (iii) energy J = E[ Joule(B_t) ]. Conventional samplers minimise Var but ignore R and J.  
+Determinantal point processes. A fixed-size k-DPP defined by a positive semi-definite similarity matrix K selects subset S with probability proportional to det(K_S). Greedy selection costs O(k |V|) and guarantees at least 1 – 1/e of optimal coverage, making DPPs attractive for diversity promotion.  
+Sketching for kernels. CountSketch projects w-dimensional vectors to m ≪ w while preserving inner products in expectation. When combined with random Fourier features for cosine similarity, one obtains an unbiased kernel approximation whose Frobenius error decays as O(1/√m).  
+Temporal correlation. Empirically, node embeddings drift slowly relative to the training step, so Nyström sketches computed at step t remain usable for the next W iterations. Attention coefficients exhibit first-order temporal correlation that a two-state GRU can capture; we exploit both properties in SW-DPP and the look-ahead predictor.
+
+
+**Method:** Unified objective. We maximise  E[Â] – λ₁ Var – λ₂ R – λ₃ J  subject to total memory ≤ M̂ and total energy ≤ Ê. Dual variables λ are updated at each epoch via λ←max(0, λ+γ·violation). The inner loop adjusts per-layer fan-outs and DPP size k.  
+M1 – Sliding-window DPP (SW-DPP). We retain Nyström sketches Φ_t of the last W batches in a size-K reservoir. For the next batch we concatenate Φ̄ = ⊕_{t∈window} Φ_t ⊕ Φ_curr, build kernel K = Φ̄ᵀΦ̄/d in O(K d²) and run greedy k-DPP, which guarantees 1 – 1/e coverage of unseen high-attention vertices across the window.  
+M2 – One-step look-ahead predictor. For each candidate node j we construct features f_j = [ current attention α_{ij}^t, gradient norm |g_j|, degree deg(j) ]. A two-layer GRU outputs α̂_{ij}^{t+1}. The bandit reward becomes r_j = -|g_j|² ( β α̂^{t+1} + (1-β) α^t ), reducing stale-importance error from O(1) to O(β² t).  
+M3 – Kernel compression. Node embeddings are CountSketched to 256 dimensions and passed through sine/cosine random features; empirically ‖K̂–K‖_F / ‖K‖_F ≤ 2 %, while kernel build time and memory fall by factors of 8 and 16 respectively at K = 100 k.  
+M4 – Dual-objective tuner. Projected gradient ascent increases fan-outs until either the GPU-memory or energy constraint becomes tight; λ grow or shrink so that both constraints remain active yet satisfied.  
+M5 – Full-system meter. NVML, Intel RAPL and DCGM counters sampled at 1 Hz yield JEPE (joule per epoch) and JEPTA (joule × area under training accuracy).  
+Implementation. Core pseudocode for SW-DPP and the GRU predictor is published under CC-BY-SA; the sampler adds fewer than 50 lines to a standard PyTorch-Geometric DataLoader.
+
+
+**Experimental Setup:** Datasets. Static: ogbn-products, ogbn-papers100M, Friendster. Dynamic: Reddit-Temporal, Yelp-Timeline. Heterophilic control: MolPCBA.  
+Models. 2-layer GAT, 4-layer GATv2, 8-layer Graph Transformer, 3-layer GeniePath.  
+Hardware. Single 80 GB A100, 4 × A100 cluster, and CPU-only Xeon IceLake to demonstrate portability.  
+Baselines. Node sampling with 25 neighbours (NS-25), LABOR, HABLS, DPA-HABLS, GraphSAINT-rw, RSC [liu-2022-rsc] and five ablations that disable one module at a time (–M1 … –M5).  
+Metrics. Primary: test accuracy (products) or AUROC (papers100M, Friendster). Secondary: wall-clock, JEPE, JEPTA, gradient variance, inter-batch Jaccard, peak GPU memory.  
+Protocol. Five random seeds, early stopping patience 50. Budget grid: memory {6, 10, 14 GB} × energy {0.3, 0.6 kWh} ⇒ 30 runs per dataset. Hyper-parameters λ₁…λ₃ ∈ {0.1, 0.3, 1.0}, β ∈ {0.3, 0.5, 0.7} tuned once on ogbn-products and then frozen.  
+Streaming setting. 100 k micro-batches over 48 h on four GPUs; gradients synchronised every eight micro-batches. Concept drift injected at t = 30 h by swapping 20 % of node features.  
+Scalability benchmark. Synthetic 1 B-node power-law graph, reservoir sizes {10 k, 50 k, 100 k}, sketch dimensions {128, 256, 512}. Baselines: exact cosine (fits only at 10 k), and Nyström kernels.  
+All code, logs and power traces are released for reproduction.
+
+
+**Results:** Experiment 1: Budget–Pareto study on static graphs. At the 10 GB / 0.3 kWh point on ogbn-products, TADP-HABLS attains 83.8 ± 0.2 % test accuracy versus 82.9 ± 0.3 % for DPA-HABLS, while consuming 1.42 ± 0.05 kJ versus 2.29 ± 0.07 kJ. Across all 27 (budget, dataset) combinations every baseline point is strictly dominated: on average +0.7 pp accuracy and –38 % JEPE relative to DPA-HABLS, –55 % versus NS-25. Under the tight 6 GB cap accuracy retains 95 % (products) and 93 % (papers100M) of the 14 GB score; baselines lose 7–12 %. Ablations show –M1 doubles inter-batch Jaccard (0.18→0.40) and costs 1.1 pp accuracy; –M4 raises energy by 18 %.  
+Experiment 2: Streaming temporal graphs. On Reddit-Temporal the inter-GPU neighbour overlap stays ≤ 0.19 for the full 48 h with TADP-HABLS; HABLS drifts from 0.22 to 0.47 after 12 h; GraphSAINT stabilises at 0.51. Coverage of new high-attention vertices per window averages 64.3 %, matching the 1 – 1/e theoretical bound. The look-ahead GRU removes 21.7 % of the forward-pass latency, keeping throughput within 1.8 % of GraphSAINT, whereas HABLS slows by 24 % after 30 k steps. Area under the accuracy-time curve is +1.3 % in the first 15 k batches and final accuracy is +0.8 pp over HABLS, +1.6 pp over GraphSAINT. Energy per processed edge falls by 35 % versus GraphSAINT and 18 % versus HABLS.  
+Experiment 3: Kernel compression micro-benchmark. For K = 100 k and sketch dimension 256, compressed kernels build in 39 ms using 1.10 GB, compared with 331 ms and 17.5 GB for Nyström; the exact cosine kernel does not fit on an A100 at this size. Relative Frobenius error is 1.9 % and k-DPP acceptance rate 95.9 % (-0.5 pp versus Nyström). Measured build times follow t(K) ≈ a K^{1.06}, confirming near-linear scaling.  
+Limitations. (1) Dual-ascent stability depends on the step size γ; aggressive γ can cause oscillation under rapid concept drift. (2) CountSketch introduces small bias when feature norms vary widely. (3) The SW-DPP reservoir stores W × K sketches, so W must shrink under extreme memory caps.
+
+
+**Conclusion:** TADP-HABLS is the first sampler that simultaneously optimises statistical variance, temporal diversity and full-system energy for graph attention training. Sliding-window DPPs enforce exploration with provable guarantees; a GRU predictor removes stale importance; CountSketch compression unlocks hundred-thousand-node kernels on a single GPU; and a dual-ascent tuner automatically balances accuracy, redundancy and Joule cost. Across six benchmarks and multiple hardware regimes the method shifts the accuracy–energy Pareto front, often halving energy and memory at equal or better accuracy. Future work will extend the unified objective to communication cost in distributed settings and will adapt the window size online to concept drift, paving the way for resource-aware GNNs on trillion-edge dynamic graphs.
+
+
+Output:
+{
+    "was_experiment_executed": true,
+    "is_better_than_baseline": true
+}
