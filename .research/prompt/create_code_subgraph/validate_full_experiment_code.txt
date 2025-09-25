@@ -1,0 +1,308 @@
+
+Input:
+You are an AI code reviewer specializing in machine learning experiment validation.
+
+Analyze the provided experiment code and determine if it implements a production-ready experiment for the Current Research Method using relevant External Resources (not synthetic/placeholder data).
+
+# Instructions
+
+## Validation Criteria
+Check if the generated code meets ALL of the following requirements:
+
+1. Real Data Usage: Uses actual datasets (from External Resources when relevant), not synthetic/dummy/placeholder data
+2. Dual Configuration System:
+   - `smoke_test_yaml`: Quick validation configuration with reduced resources (minimal epochs, smaller datasets)
+   - `full_experiment_yaml`: Complete production configuration matching ALL experimental design specifications
+3. Production-Ready Full Experiment: The `--full-experiment` mode must implement the complete experimental design with:
+   - All specified datasets from External Resources
+   - Correct parameter ranges and layer counts as described in experimental details
+   - Full training epochs and comprehensive evaluation metrics
+4. Complete Implementation: Contains full training loops, evaluation metrics, and result saving with no omitted components
+5. Command Line Interface: Properly supports both `--smoke-test` and `--full-experiment` flags with appropriate configuration loading
+6. No Placeholders: Contains no placeholder comments, TODO items, approximations, or incomplete implementations
+
+## Output Format
+Respond with a JSON object containing:
+- `is_full_experiment_ready`: boolean - true if ALL criteria are met, false otherwise
+- `full_experiment_issue`: string - specific issues found if any criteria are not met, focusing on production-readiness of the `--full-experiment` mode
+
+# Current Research Method
+{
+    "Open Problems": "1. Even in SLiKC-GAT, Top-K is hand-picked and remains fixed across epochs and layers; real graphs exhibit heavy-tailed edge–importance that varies during training.\n2. Random-feature kernels are sampled independently per head/layer → unnecessary memory and no cross-layer variance control.\n3. Current design is FP32: energy and memory again inflate on edge devices; quantisation for mixed sparse+kernel operators is unsolved.\n4. No guarantee that the chosen K+m pair keeps the total approximation error below a user-specified ε across epochs, thus limiting adoption in safety-critical domains.\n5. Social audits (fairness/robustness) are missing: skipping low-attention edges can amplify degree bias, harming minority nodes.",
+    "Methods": "We propose HAQ-GAT (Hierarchical, Adaptive, Quantised Graph Attention).\nA. Hierarchical adaptive sparsity\n   • Replace static Top-K with a 2-level scheme.  Each node first forms K₀ « deg(i) micro-clusters via streaming k-means on query/key directions.  Inside every cluster c we keep only the edge j* with max e_{ij}.  Expected edges/node ≈ K₀ log deg.\n   • K₀ is annealed per layer and epoch by keeping a running estimate of the marginal gain ΔL on validation loss when increasing K₀; stop when ΔL < γ.\nB. Shared low-rank kernel bank\n   • Draw one orthogonal RF matrix Φₛ of size d×mₛ at start; every head uses sub-blocks Φₛ[:, p:p+m].  Re-orthogonalise monthly with Oja updates using activations – halves memory and reduces variance by ≈√H.\nC. Error-budget controller\n   • Maintain an online Jackknife CI of ‖Â−A‖∞.  If CI upper-bound > ε raise m or K₀; if < ε/4 shrink.  Guarantees probabilistic error ≤ ε by construction.\nD. QAT-friendly operators\n   • Derive integer-only code paths for (i) Φ x (unsigned int8 with per-channel scales) and (ii) sparse-plus-low-rank accumulation using block-INT8 accumulate + FP16 normaliser.  Straight-through Degree-Quant for gradients.\nE. Fairness guard\n   • Track per-degree edge-discard rates; if high-degree nodes receive disproportionately more exact edges, increase K₀ for low-degree buckets until rates balance within δ.",
+    "Experimental Setup": "Datasets: OGB-Arxiv, OGB-Products, MAG240M-S, Reddit, Pokec-Zak (privacy), Texas/Wisconsin (heterophily).\nBaselines: (1) SLiKC-GAT, (2) KS-GAT, (3) Sparse-only Top-K, (4) Dense GAT, (5) Degree-Quant INT8 GAT.\nMetrics: acc/F1, wall-clock, peak MEM, energy (nvidia-smi), ε-bound violations, fairness metric ΔAcc between bottom/top degree quintiles, carbon (CodeCarbon).\nAblations: disable hierarchy, disable shared Φ, disable QAT, varying ε∈{1e-2,5e-3,1e-3}.\nHardware: A100 for training, Jetson Orin for edge inference.\n5 seeds.",
+    "Experimental Code": "# pseudo-snippet\ndef adaptive_step(state, loss_val):\n    if loss_val - state.prev_loss < state.gamma:\n        state.K0 = max(2, state.K0//2)\n    ci = jackknife_CI(state.att_error_hist)\n    if ci.high > state.eps:  state.m*=2\n    elif ci.high < state.eps/4 and state.m>4: state.m//=2\n\nclass HAQGATConv(MessagePassing):\n    def forward(self,x,edge_index):\n        q,k = self.qkv(x)\n        K0=self.state.K0\n        clusters = streaming_kmeans(q[edge_index[0]],K0,edge_index[0])\n        sel = select_max_per_cluster(clusters,q,k,edge_index)\n        # low-rank part\n        phi = self.shared_phi(q)\n        ... # int8 path\n",
+    "Expected Result": "• Same accuracy as dense GAT (≤0.2%) with 4–6× speed-up vs SLiKC on MAG240M.\n• INT8 inference cuts memory by 3.8× and energy by 65% on Jetson.\n• Error controller keeps ‖Â−A‖∞ ≤ ε with <3% violations.\n• Fairness guard reduces degree-bias gap from 8% (SLiKC) to 1.5% without hurting overall accuracy.",
+    "Expected Conclusion": "HAQ-GAT turns graph attention into a controllable resource-budget problem.  By hierarchically adapting which edges are exact, re-using a global kernel basis, and quantising all math, it delivers state-of-the-art efficiency while providing formal error and fairness guarantees—a step towards responsible, deployable attentive GNNs on billion-edge graphs and low-carbon devices."
+}
+
+# Experimental Design
+
+## Experiment Strategy
+────────────────────────────────
+Experiment 1: Large-scale Accuracy–Efficiency Benchmark
+────────────────────────────────
+Goal
+• Show that HAQ-GAT occupies a superior Pareto point (accuracy vs speed/memory/energy) compared with dense and existing sparse GAT variants.
+
+Protocol
+1. Datasets: MAG240M-S (1.9 B edges), OGB-Products, Reddit.
+2. Models: HAQ-GAT, Dense GAT, SLiKC-GAT, KS-GAT, Sparse Top-K, INT8 Degree-Quant GAT.
+3. Hardware: single A100-80 GB for training; inference also timed on Jetson-Orin NX.
+4. Train 3 runs/seed, identical optimiser & schedule.
+5. Log every epoch: val acc, wall-clock, GPU-MEM, nvidia-smi energy draw.
+6. For each inference checkpoint record:       
+   – latency & throughput (A100 + Orin)     
+   – peak RAM/VRAM     
+   – CodeCarbon CO₂.
+
+Expected Demonstration
+• HAQ-GAT matches dense GAT within ±0.2 % accuracy while being ≥4× faster and ≥5× lighter on MAG240M.
+• INT8 path keeps ≤0.3 % accuracy loss but cuts Orin energy ≥60 % and RAM ≥3.5× vs FP32 SLiKC.
+• Pareto front plot should place HAQ-GAT strictly top-right (best accuracy, lowest cost).
+
+────────────────────────────────
+Experiment 2: Online Error-Budget & Adaptive Sparsity Study
+────────────────────────────────
+Goal
+• Verify that the error-budget controller keeps ‖Â−A‖∞ below user-supplied ε and that K₀ & m adapt to data dynamics with minimal overhead.
+
+Protocol
+1. Use OGB-Arxiv plus a synthetic, time-evolving graph where edge weights drift every 10 epochs.
+2. Run HAQ-GAT under ε∈{1e-2,5e-3,1e-3}.  Track per-epoch:          
+   – empirical ‖Â−A‖∞ and Jackknife CI     
+   – K₀, m, exact-edge ratio     
+   – ΔL validation loss when K₀ is changed.
+3. Comparison: same model but with fixed Top-K as in SLiKC (matched initial K).
+4. Report violation rate (% epochs where error>ε) and cumulative FLOPs.
+
+Expected Demonstration
+• HAQ-GAT keeps CI upper-bound ≤ε in >97 % epochs for all ε values; SLiKC violates >35 % at ε≤5e-3.
+• When graph drifts, K₀ and m rise automatically, then decay once stable—showing adaptability with ≤8 % extra FLOPs compared to fixed-K baseline that must be over-provisioned by 2× to achieve same bound.
+• Validation loss ΔL curves flatten exactly at γ threshold, confirming stopping rule.
+
+────────────────────────────────
+Experiment 3: Fairness & Quantisation Robustness on Degree-Imbalanced Graphs
+────────────────────────────────
+Goal
+• Show that the built-in fairness guard alleviates degree bias and that INT8 training/inference remain robust on heterophilous, degree-skewed graphs.
+
+Protocol
+1. Datasets: Pokec-Zak (privacy, high skew), Texas & Wisconsin (heterophily), plus a generated power-law graph (α=2.5).
+2. Train three variants:      
+   a) HAQ-GAT (full)      
+   b) HAQ-GAT w/o fairness guard      
+   c) SLiKC-GAT.
+3. Metrics per degree quintile: accuracy/F1, average # precise edges, and discard-rate gap.  Fairness metric = |Acc_lowQ – Acc_highQ|.
+4. Run each variant in INT8 and FP32; compare accuracy drop and gradient stability (κ-value of second-order gradients).
+
+Expected Demonstration
+• Full HAQ-GAT reduces fairness gap to ≤1.5 % (vs 8 % SLiKC; 5 % without guard) without hurting macro accuracy.
+• Precise-edge allocation histogram shows re-balancing toward low-degree nodes after guard kicks in.
+• INT8 version preserves ≥99 % of FP32 accuracy across all graphs; κ indicates no gradient explosion/vanishing, proving QAT path is numerically stable.
+
+────────────────────────────────
+Combined Outcome
+Together the three experiments exhibit: (1) superior real-world efficiency, (2) provable adaptive control of approximation error, and (3) responsible behaviour w.r.t. fairness and low-precision deployment—validating the holistic effectiveness of HAQ-GAT.
+
+## Experiment Details
+────────────────────────────────────────────
+EXPERIMENT 1 – LARGE-SCALE ACCURACY/EFFICIENCY BENCHMARK
+────────────────────────────────────────────
+Goal
+    Quantify the Pareto-front (accuracy-vs-cost) of HAQ-GAT compared with dense and existing sparse GAT variants on billion-edge scale graphs.
+
+1. Models
+    Main:   • HAQ-GAT (ours, full stack)
+    Baselines:
+        – Dense GAT (PyG implementation, 8 heads, hidden=256)*
+        – SLiKC-GAT†
+        – KS-GAT (kernel-sparsity, 2023)†
+        – Sparse Top-K GAT (K=20) – matches GraphSAINT top-k routine
+        – INT8 Degree-Quant GAT (vector-wise int8 quantisation, no sparsity)
+    *All baselines re-implemented in PyTorch 2.1 + PyG 2.5 for identical kernels.
+    †Official authors’ hyper-parameters were re-tuned on validation split using the same search space listed below.
+
+2. Datasets
+    • MAG240M-S (OGB, 1.9 B edges, 244 M nodes, 768-d feats)
+    • OGB-Products (2.4 M nodes, 61 M edges, 100-d feats)
+    • Reddit (232 K nodes, 11 M edges, 602-d feats)
+
+3. Dataset Pre-processing
+    a. Feature normalisation: per-feature z-score.
+    b. Dimensionality squeeze (MAG240M only): random-projection to 256-d (orthogonal matrix, seed-sync across models) to fit into A100 memory while keeping information.*
+    c. Add self-loops, coalesce duplicate edges.
+    *Dense GAT requires this to fit 80 GB; we apply the same projection to every model to keep things fair.
+
+4. Data Splits
+    • Use official OGB train/valid/test node indices.
+    • Reddit: 60/20/20 random split, stratified by label, identical across seeds.
+
+5. Optimiser & Schedule (shared)
+    – AdamW, base-LR∈{1e-3,2e-3,5e-4}, weight-decay∈{0,1e-4,5e-4}, dropout∈{0,0.2,0.4}.  20-trial Optuna search per model+dataset.
+    – Cosine with 5-epoch warm-up, 200 total epochs (MAG240M 40), early-stop patience 30.
+    – Three seeds {1,2,3} ⇒ 3× trials retained per model.
+    – Check-pointing best-val-acc.
+
+6. Primary & Secondary Metrics
+    Primary:   • Node classification Accuracy (Micro) on test.
+    Secondary: • Macro-F1, • Peak GPU-MEM (MB), • Wall-clock train-time/epoch (s), • Total train-energy (kJ via nvidia-smi –q –d POWER), • Inference latency (ms/node) and throughput (kNodes/s) on A100 & Jetson Orin NX (INT8 + FP32 paths), • CodeCarbon CO₂-eq (g), • Theoretical and empirical FLOPs.
+
+7. Repetitions & Aggregation
+    – Report mean±std over seeds.  For each seed the best-val checkpoint is evaluated on test and efficiency measured on that frozen model.
+
+8. Robustness Add-on (covers all experiments once)
+    – Add Gaussian noise σ∈{0.01,0.05} to 10 % of node features at inference; measure ΔAcc.
+
+9. Hyper-parameter Sensitivity (HAQ-GAT only)
+    – One-at-a-time sweep: {γ∈[10⁻⁴ … 10⁻²], ε∈{1e-2,5e-3,1e-3}, K₀_init∈{4,8,16}} on OGB-Products.
+    – Plot surface ΔAcc vs FLOPs.
+
+10. Resource Profiling
+    – Use PyTorch-Profiler to record CUDA kernel time, forward/backward memory.
+    – ptflops to compute theoretical FLOPs.  CUDA events for wall-clock.
+
+11. Example Code Snippet
+    ```python
+    profiler = torch.profiler.profile(activities=[
+        torch.profiler.ProfilerActivity.CUDA,
+        torch.profiler.ProfilerActivity.CPU],
+        record_shapes=True)
+    with profiler:
+        out = model(data.x, data.edge_index)
+    profiler.export_chrome_trace('trace.json')
+    ```
+
+12. Expected Outcome Plot
+    – Scatter Acc(%) vs Normalised-Cost (energy×mem×time).  95 % CIs shown; HAQ-GAT should lead the Pareto frontier.
+
+────────────────────────────────────────────
+EXPERIMENT 2 – ONLINE ERROR-BUDGET & ADAPTIVE SPARSITY
+────────────────────────────────────────────
+Goal
+    Validate that HAQ-GAT respects user error bound ε while adapting K₀ & m under temporal graph drift.
+
+1. Data
+    • OGB-Arxiv (time-stamped).  Augment with synthetic drift: every 10 epochs add ±5 % random perturbation to 20 % edge weights (drawn from N(0,0.1)).
+
+2. Models & Variants
+    a) HAQ-GAT with controller, ε∈{1e-2,5e-3,1e-3}
+    b) Fixed-K SLiKC-GAT (K set so that initial ∥Â−A∥∞≈ε)
+
+3. Split & Training
+    – Chronological split: 1991-2008 train, 2009-2011 val, 2012-2013 test.
+    – 5 seeds.
+
+4. Logged Quantities per Epoch
+    • ∥Â−A∥∞ (empirical), Jackknife 95 % CI, K₀, m, exact-edge ratio, validation loss, cumulative FLOPs.
+
+5. Violation Metric
+    – Violation rate = |{epochs: upper-CI>ε}| / total.
+
+6. Controller Overhead
+    – Extra FLOPs (%) vs baseline per epoch.
+
+7. Evaluation & Visualisation
+    – Plot K₀ & m over epochs showing spikes when drift injected.
+    – Heat-map ε vs violation-rate vs FLOPs.
+
+8. Example Controller Hook
+    ```python
+    ci_low, ci_high = jackknife_CI(err_history)
+    if ci_high > eps:
+        state.m *= 2
+    ```
+
+────────────────────────────────────────────
+EXPERIMENT 3 – FAIRNESS & QUANTISATION ROBUSTNESS
+────────────────────────────────────────────
+Goal
+    Demonstrate mitigation of degree bias and stability of INT8 training/inference.
+
+1. Data Sets
+    • Pokec-Zak (347 K nodes, 30 M edges, privacy-sensitive labels)
+    • Texas (183 nodes), Wisconsin (251) – heterophilous WebKB
+    • Synthetic power-law (α=2.5, 100 K nodes, 2 M edges) generated with NetworkX powerlaw_cluster_graph.
+
+2. Models
+    a) HAQ-GAT (full)
+    b) HAQ-GAT – Fairness-Guard OFF
+    c) SLiKC-GAT
+
+3. Training Details
+    – Same optimiser grid as Exp-1.  Seeds {1,2,3,4,5} (small graphs are cheap).
+    – INT8 QAT: quant-aware training for last 30 % epochs, then export INT8.
+
+4. Metrics
+    Primary:   • Node accuracy/F1.
+    Fairness:  • Degree-gap = |Acc_low-quintile – Acc_high-quintile|.
+    Secondary: • # precise edges per node quintile, • Discard-rate gap, • κ-value (ratio of largest to smallest non-zero eigen-values of Hessian; stability proxy).
+    Quant-robustness: • ΔAcc_FP32→INT8 (%), • Gradient-scale ratio (max/min) across layers.
+
+5. Robustness Stress
+    – Feature noise σ=0.05, structure noise: randomly delete 5 % edges of high-degree nodes only, test repeat.
+
+6. Early-Stopping
+    – Patience 100; report last epoch (small graphs converge quickly).
+
+7. Example Metric Extraction
+    ```python
+    def degree_quintile_mask(deg):
+        q = torch.quantile(deg.float(), torch.arange(0,1.1,0.2))
+        return [ (deg>=q[i]) & (deg<q[i+1]) for i in range(5) ]
+    ```
+
+────────────────────────────────────────────
+COMMON SECTIONS (applies to all experiments)
+────────────────────────────────────────────
+Hardware/Software
+    – NVIDIA A100 80 GB, CUDA 12.2, cuDNN 8.9; CPU AMD EPYC 7763, 2 TB RAM.
+    – Python 3.10, PyTorch 2.1, DGL 1.1 + PyG 2.5, Intel MKL 2023, NVML for power.
+    – Jetson Orin NX (8 GB) running TensorRT 8.6.1 for INT8 deployment.
+
+Compute Foot-print Reporting
+    – Training: peak GPU-MEM via torch.cuda.max_memory_allocated().
+    – Inference: averaged over 100 runs with batch-size 16 K nodes.
+
+Hyper-parameter Analysis Methods
+    – For each sweep we fit a second-order response surface and compute Sobol importance indices to rank LR, γ, ε, K₀_init.
+
+Robustness (shared)
+    – Noise: Gaussian feature noise and edge-drop.
+    – OOD: evaluate on random-walk subgraphs unseen during training (Products).
+    – Adversarial: FGSM on node features (ϵ=0.05) and Nettack structural attacks (5 changes/node).
+
+Failure Policy (NO-FALLBACK)
+    – Any dataset download failure triggers `raise RuntimeError("Dataset unavailable – aborting experiment as per NO-FALLBACK")`.
+
+────────────────────────────────────────────
+
+
+
+# Generated Experiment Code Files
+{"evaluate_py": "\"\"\"\nevaluate.py \u2013 universal evaluation (fairness + figures)\n\"\"\"\nfrom __future__ import annotations\n\nimport json\nfrom pathlib import Path\nfrom typing import Dict, Any\n\nimport matplotlib as mpl\nmpl.use(\"Agg\")\nimport matplotlib.pyplot as plt\nimport seaborn as sns\nimport torch\nfrom sklearn.metrics import accuracy_score, f1_score, confusion_matrix\nfrom torch_geometric.utils import degree\n\n__all__ = [\"evaluate_model\"]\n\n\ndef degree_quintile_masks(deg: torch.Tensor):\n    q = torch.quantile(deg.float(), torch.arange(0,1.1,0.2, device=deg.device))\n    return [(deg\u003e=q[i]) \u0026 (deg\u003c(q[i+1] if i\u003c4 else deg.max()+1)) for i in range(5)]\n\n\ndef evaluate_model(model: torch.nn.Module, data, device: torch.device, out_dir: Path,\n                   prefix=\"eval\") -\u003e Dict[str,Any]:\n    model.eval();  data = data.to(device)\n    with torch.no_grad():\n        out = model(data.x, data.edge_index)\n    y_true = data.y.cpu();  y_pred = out.argmax(-1).cpu()\n    acc = accuracy_score(y_true, y_pred)\n    macro_f1 = f1_score(y_true, y_pred, average=\"macro\")\n    # degree fairness ---------------------------------------------------\n    deg = degree(data.edge_index[0]).cpu()\n    quint_acc = [accuracy_score(y_true[m], y_pred[m]) for m in degree_quintile_masks(deg)]\n    fairness_gap = abs(quint_acc[0]-quint_acc[-1])\n    # confusion matrix figure ------------------------------------------\n    cm = confusion_matrix(y_true, y_pred)\n    plt.figure(figsize=(4,3))\n    sns.heatmap(cm, annot=True, fmt=\"d\", cmap=\"Blues\", cbar=False)\n    plt.ylabel(\"True\"); plt.xlabel(\"Pred\")\n    out_dir.mkdir(parents=True, exist_ok=True)\n    fig_name = f\"{prefix}_cm.pdf\";  plt.savefig(out_dir/fig_name, bbox_inches=\"tight\"); plt.close()\n    res = {\"accuracy\":acc, \"macro_f1\":macro_f1, \"fairness_gap\":fairness_gap,\n           \"quintile_acc\":quint_acc, \"figures\":[fig_name]}\n    with open(out_dir/f\"{prefix}_metrics.json\", \"w\", encoding=\"utf-8\") as fp:\n        json.dump(res, fp, indent=2)\n    print(json.dumps(res, indent=2))\n    return res\n", "full_experiment_yaml": "# specialised full experiment (Reddit comments)\ndescription: \"HAQ-GAT accuracy/efficiency benchmark on Reddit Comments graph\"\nrun_id: \"reddit_comments_run\"\n\ndataset:\n  name: \"HuggingFaceGECLM/REDDIT_comments\"\n  # preprocessing\n  standardise: true\n  project_dim: 256\n\nmodel:\n  hidden_dim: 256\n  num_layers: 4\n  heads: 8\n  K0_init: 16\n  m_init: 32\n  gamma: 0.0005\n  eps: 0.005\n  int8: false\n\ntraining:\n  epochs: 50\n  batch_size: 4096\n  lr: 0.002\n  weight_decay: 0.0001\n  dropout: 0.2\n", "main_py": "\"\"\"\nmain.py \u2013 CLI entry-point\n\"\"\"\nfrom __future__ import annotations\n\nimport argparse, json, time\nfrom pathlib import Path\n\nimport torch, yaml\nfrom .train import run_training, Trainer\nfrom .evaluate import evaluate_model\n\nROOT = Path(__file__).resolve().parent.parent\nCONFIG_DIR = ROOT/\"config\"; CONFIG_DIR.mkdir(exist_ok=True)\nRESULTS_DIR = ROOT/\"results\"; RESULTS_DIR.mkdir(exist_ok=True)\n\n\ndef _parse():\n    p = argparse.ArgumentParser()\n    g = p.add_mutually_exclusive_group(required=True)\n    g.add_argument(\"--smoke-test\", action=\"store_true\")\n    g.add_argument(\"--full-experiment\", action=\"store_true\")\n    return p.parse_args()\n\n\ndef _load_cfg(path: Path):\n    with open(path,\"r\",encoding=\"utf-8\") as fp: return yaml.safe_load(fp)\n\n\ndef main():\n    args = _parse()\n    cfg_path = CONFIG_DIR/(\"smoke_test.yaml\" if args.smoke_test else \"full_experiment.yaml\")\n    cfg = _load_cfg(cfg_path)\n    device = torch.device(\"cuda\" if torch.cuda.is_available() else \"cpu\")\n    run_id = cfg.get(\"run_id\", f\"run_{int(time.time())}\")\n    out_dir = RESULTS_DIR/run_id\n    print(json.dumps({\"config\":str(cfg_path),\"run_id\":run_id}, indent=2))\n    # ------------------------- train ----------------------------------\n    res_train = run_training(cfg, device, out_dir)\n    # ------------------------- eval  ----------------------------------\n    trainer_eval = Trainer(cfg, device)\n    best_path = out_dir/\"best_model.pt\"\n    if best_path.exists():\n        trainer_eval.model.load_state_dict(torch.load(best_path, map_location=device))\n    res_eval = evaluate_model(trainer_eval.model, trainer_eval.data, device, out_dir)\n    # ------------------------- merge \u0026 save ---------------------------\n    all_res = {**res_train, **res_eval, \"run_id\":run_id}\n    with open(out_dir/\"combined_results.json\", \"w\", encoding=\"utf-8\") as fp:\n        json.dump(all_res, fp, indent=2)\n    print(json.dumps(all_res, indent=2))\n\nif __name__ == \"__main__\":\n    main()\n", "preprocess_py": "\"\"\"\npreprocess.py \u2013 generic graph pre-processing\n\"\"\"\nfrom __future__ import annotations\n\nimport torch\nfrom sklearn.random_projection import GaussianRandomProjection\nfrom torch_geometric.utils import add_self_loops, coalesce\n\n__all__ = [\"preprocess_graph\"]\n\n\ndef _standardise(x: torch.Tensor):\n    return (x - x.mean(0, keepdim=True)) / (x.std(0, keepdim=True)+1e-6)\n\n\ndef _random_proj(x: torch.Tensor, out_dim: int, seed: int = 42):\n    rp = GaussianRandomProjection(out_dim, random_state=seed)\n    return torch.from_numpy(rp.fit_transform(x.cpu().numpy()).astype(\"float32\")).to(x.device)\n\n\ndef preprocess_graph(data, cfg_dataset):\n    if cfg_dataset.get(\"standardise\", True):\n        data.x = _standardise(data.x)\n    proj_dim = cfg_dataset.get(\"project_dim\")\n    if proj_dim and data.x.size(1) \u003e proj_dim:\n        data.x = _random_proj(data.x, proj_dim)\n    data.edge_index, _ = add_self_loops(data.edge_index)\n    data.edge_index = coalesce(data.edge_index)[0]\n    return data\n", "pyproject_toml": "[build-system]\nrequires = [\"setuptools\u003e=61.0\"]\nbuild-backend = \"setuptools.build_meta\"\n\n[project]\nname = \"haq_gat_experiments\"\nversion = \"0.2.0\"\nrequires-python = \"\u003e=3.10\"\ndependencies = [\n  \"torch\u003e=2.1\",\n  \"torch_geometric\u003e=2.5.0\",\n  \"torch-scatter\u003e=2.1.2\",\n  \"datasets\u003e=2.14\",\n  \"huggingface-hub\u003e=0.17\",\n  \"networkx\u003e=3.1\",\n  \"numpy\u003e=1.23\",\n  \"scikit-learn\u003e=1.3\",\n  \"matplotlib\u003e=3.8\",\n  \"seaborn\u003e=0.13\",\n  \"tqdm\u003e=4.66\",\n  \"pyyaml\u003e=6.0\",\n  \"codecarbon\u003e=2.3\",\n]\n\n[tool.setuptools.packages.find]\nwhere = [\"src\"]\n", "smoke_test_yaml": "# quick smoke test (synthetic) stays unchanged\ndescription: \"Smoke-test synthetic graph\"\nrun_id: \"smoke\"\n\ndataset:\n  name: \"SYNTHETIC_SMOKE\"\n  feat_dim: 32\n  standardise: true\n\nmodel:\n  hidden_dim: 64\n  num_layers: 2\n  heads: 4\n  K0_init: 8\n  m_init: 16\n  gamma: 0.001\n  eps: 0.01\n  int8: false\n\ntraining:\n  epochs: 5\n  batch_size: 256\n  lr: 0.001\n  weight_decay: 0.0\n  dropout: 0.1\n", "train_py": "\"\"\"\ntrain.py \u2013 Specialised training logic with real datasets\n=======================================================\nThe *common-core* implementation is now fully specialised:\n\u2022   PLACEHOLDER dataset loader replaced with real Hugging-Face datasets\n    \u2013   HuggingFaceGECLM/REDDIT_comments  (\"reddit_comments\")\n    \u2013   Allen-UQ/texas_all_nodes          (\"texas\")\n    \u2013   Allen-UQ/wisconsin_all_nodes      (\"wisconsin\")\n    plus fall-back to OGB (arxiv / products / mag240m-s).\n\u2022   Pre-processing hooks wired-in (standardise + random projection).\n\u2022   Best checkpoint saved to \u003cout_dir\u003e/best_model.pt so that `main.py`\n    can reload it for the evaluation phase.\n\u2022   Training loop fixed to use the correct seed-node slice returned by\n    PyG\u2019s `NeighborLoader` (`out[:batch.batch_size]`).\n\"\"\"\nfrom __future__ import annotations\n\nimport json\nimport math\nimport os\nimport time\nfrom pathlib import Path\nfrom typing import Dict, Any, List, Tuple\n\nimport matplotlib as mpl\nmpl.use(\"Agg\")\nimport matplotlib.pyplot as plt\nimport networkx as nx\nimport numpy as np\nimport torch\nimport torch.nn as nn\nimport torch.nn.functional as F\nfrom dataclasses import dataclass\nfrom datasets import load_dataset\nfrom sklearn.metrics import f1_score\nfrom torch_geometric.data import Data\nfrom torch_geometric.loader import NeighborLoader\nfrom torch_geometric.nn import MessagePassing\nfrom torch_geometric.utils import add_self_loops, degree, coalesce\n\n# local utilities\nfrom .preprocess import preprocess_graph\n\n######################################################################\n#  Shared Random Feature Bank\n######################################################################\nclass SharedRFBank(nn.Module):\n    def __init__(self, in_dim: int, total_m: int, seed: int = 42):\n        super().__init__()\n        torch.manual_seed(seed)\n        phi = torch.randn(in_dim, total_m)\n        q, _ = torch.linalg.qr(phi)\n        self.register_buffer(\"phi\", q)\n        self.total_m = total_m\n        self.in_dim = in_dim\n\n    def get_sub_block(self, start: int, m: int):\n        return self.phi[:, start : start + m]\n\n    @torch.no_grad()\n    def oja_update(self, activations: torch.Tensor, lr: float = 1e-3):\n        cols = torch.randint(0, self.total_m, (min(32, self.total_m),), device=activations.device)\n        sub = self.phi[:, cols]\n        h = activations @ sub\n        delta = (activations.T @ h) / activations.size(0)\n        sub_new = sub + lr * (delta - sub * torch.diagonal(sub.T @ delta))\n        q, _ = torch.linalg.qr(sub_new)\n        self.phi[:, cols] = q\n\n######################################################################\n# Streaming k-means (one-shot, per batch)\n######################################################################\nclass StreamingKMeans:\n    @staticmethod\n    def run(keys: torch.Tensor, key_index: torch.Tensor, K0: int) -\u003e torch.Tensor:\n        device = keys.device\n        d = keys.size(1)\n        B = key_index.max().item() + 1\n        # initial centres  ------------------------------------------------\n        rand_rows = torch.randint(0, keys.size(0), (B, K0), device=device)\n        centres = keys[rand_rows]          # [B,K0,d]\n        # single Lloyd iteration -----------------------------------------\n        dists = ((keys.unsqueeze(1) - centres[key_index]) ** 2).sum(-1)    # [E,K0]\n        cluster_id = dists.argmin(1)\n        # update centres --------------------------------------------------\n        for b in range(B):\n            mask = key_index == b\n            if not mask.any():\n                continue\n            cid = cluster_id[mask]\n            for k in range(K0):\n                m = cid == k\n                if m.any():\n                    centres[b, k] = keys[mask][m].mean(0)\n        return cluster_id\n\n######################################################################\n# HAQ-GAT convolution\n######################################################################\nclass HAQGATConv(MessagePassing):\n    def __init__(self, in_dim: int, out_dim: int, heads: int, shared_rf_bank: SharedRFBank,\n                 state: \"ControllerState\", dropout: float = 0.0):\n        super().__init__(aggr=\"add\", node_dim=0)\n        self.heads = heads\n        self.head_dim = out_dim // heads\n        self.state = state\n        self.dropout = nn.Dropout(dropout)\n        # linear projections\n        self.lin_q = nn.Linear(in_dim, out_dim, bias=False)\n        self.lin_k = nn.Linear(in_dim, out_dim, bias=False)\n        self.lin_v = nn.Linear(in_dim, out_dim, bias=False)\n        self.lin_o = nn.Linear(out_dim, out_dim, bias=False)\n        # RF-bank\n        self.rf_bank = shared_rf_bank\n        # int8 scales (learnt during QAT)\n        self.register_buffer(\"scale_q\", torch.ones(out_dim))\n        self.register_buffer(\"scale_k\", torch.ones(out_dim))\n        self.register_buffer(\"scale_v\", torch.ones(out_dim))\n\n    # fake quant (symmetric int8)\n    def _fq(self, x: torch.Tensor, scale: torch.Tensor):\n        q = torch.clamp(torch.round(x / scale).to(torch.int8), -128, 127)\n        return q.float() * scale\n\n    def forward(self, x: torch.Tensor, edge_index: torch.Tensor):\n        N, H, Dh, int8 = x.size(0), self.heads, self.head_dim, self.state.int8_mode\n        src, dst = edge_index\n        # ---------------------------------- projections -----------------\n        if int8:\n            q = self._fq(self.lin_q(x), self.scale_q)\n            k = self._fq(self.lin_k(x), self.scale_k)\n            v = self._fq(self.lin_v(x), self.scale_v)\n        else:\n            q, k, v = self.lin_q(x), self.lin_k(x), self.lin_v(x)\n        q, k, v = [t.view(N, H, Dh) for t in (q, k, v)]\n        q_i, k_j, v_j = q[dst], k[src], v[src]\n        # --------------- hierarchical sparsity --------------------------\n        K0 = self.state.K0\n        cluster_id = StreamingKMeans.run(k_j.mean(1), dst, K0)\n        uniq_key = dst * K0 + cluster_id\n        score = (q_i * k_j).sum(-1) / math.sqrt(Dh)           # [E,H]\n        score_mean = score.mean(1)\n        max_score, arg_idx = torch.ops.torch_scatter.scatter_max(score_mean, uniq_key)\n        keep = torch.zeros_like(score_mean, dtype=torch.bool)\n        keep[arg_idx] = True\n        # exact edges -----------------------------------------------------\n        alpha = torch.exp(score[keep])\n        dst_exact = dst[keep]\n        denom = torch.ops.torch_scatter.scatter_add(alpha, dst_exact, dim=0,\n                                                    out=torch.zeros(N, H, device=x.device))\n        alpha = alpha / (denom[dst_exact] + 1e-6)\n        m_exact = alpha.unsqueeze(-1) * v_j[keep]\n        out_exact = torch.ops.torch_scatter.scatter_add(m_exact, dst_exact, dim=0,\n                                                        out=torch.zeros(N, H, Dh, device=x.device))\n        # low-rank kernel  -----------------------------------------------\n        m_param = self.state.m\n        rf_out = torch.zeros_like(out_exact)\n        ptr = 0\n        for h in range(H):\n            phi = self.rf_bank.get_sub_block(ptr, m_param);  ptr += m_param\n            w = phi[:Dh]\n            fq, fk = (q[:, h] @ w, k[:, h] @ w)             # [N,m]\n            zq = torch.cat([torch.cos(fq), torch.sin(fq)], 1)\n            zk = torch.cat([torch.cos(fk), torch.sin(fk)], 1)\n            prod = (zq[dst] * zk[src]).sum(1, keepdim=True)   # [E,1]\n            num = torch.ops.torch_scatter.scatter_add(prod * v_j[:, h, :], dst, dim=0,\n                                                       out=torch.zeros(N, Dh, device=x.device))\n            den = torch.ops.torch_scatter.scatter_add(prod, dst, dim=0,\n                                                       out=torch.zeros(N, 1, device=x.device))\n            rf_out[:, h] = num / (den + 1e-6)\n        out = (out_exact + rf_out).view(N, -1)\n        out = self.lin_o(out)\n        return self.dropout(out)\n\n######################################################################\n# Controller state   (shared across layers)\n######################################################################\n@dataclass\nclass ControllerState:\n    K0: int\n    m: int\n    gamma: float\n    eps: float\n    int8_mode: bool = False\n    att_error_hist: List[float] = None\n    prev_val_loss: float = 1e9\n\n    def __post_init__(self):\n        self.att_error_hist = self.att_error_hist or []\n\n######################################################################\n# Full HAQ-GAT network\n######################################################################\nclass HAQGAT(nn.Module):\n    def __init__(self, num_features: int, hidden_dim: int, num_classes: int,\n                 num_layers: int, heads: int, state: ControllerState,\n                 dropout: float = 0.0):\n        super().__init__()\n        self.state = state\n        self.dropout = nn.Dropout(dropout)\n        self.rf_bank = SharedRFBank(hidden_dim, total_m=1024)\n        self.layers = nn.ModuleList()\n        d_in = num_features\n        for i in range(num_layers):\n            d_out = hidden_dim if i \u003c num_layers - 1 else num_classes\n            h = heads if i \u003c num_layers - 1 else 1\n            self.layers.append(\n                HAQGATConv(d_in, d_out, h, self.rf_bank, state, dropout))\n            d_in = d_out\n\n    def forward(self, x: torch.Tensor, edge_index: torch.Tensor):\n        for i, layer in enumerate(self.layers):\n            x = layer(x, edge_index)\n            if i \u003c len(self.layers) - 1:\n                x = F.relu(x)\n                x = self.dropout(x)\n        return x\n\n######################################################################\n# Jack-knife CI helper\n######################################################################\nimport numpy as np\n\ndef jackknife_ci(arr: List[float]):\n    arr = np.asarray(arr, dtype=np.float32)\n    n = len(arr)\n    if n \u003c 2:\n        return 0.0, 0.0\n    jack = np.array([arr.mean() - (arr[i] - arr.mean()) / (n - 1) for i in range(n)])\n    se = jack.std(ddof=1) * math.sqrt(n - 1)\n    return float(jack.mean() - 1.96 * se), float(jack.mean() + 1.96 * se)\n\n######################################################################\n# Trainer\n######################################################################\nclass Trainer:\n    def __init__(self, cfg: Dict[str, Any], device: torch.device):\n        self.cfg = cfg\n        self.device = device\n        self.data = self._load_dataset(cfg)\n        self.state = ControllerState(\n            K0=cfg[\"model\"][\"K0_init\"],\n            m=cfg[\"model\"][\"m_init\"],\n            gamma=cfg[\"model\"][\"gamma\"],\n            eps=cfg[\"model\"][\"eps\"],\n            int8_mode=cfg[\"model\"].get(\"int8\", False),\n        )\n        self.model = HAQGAT(\n            num_features=self.data.num_features,\n            hidden_dim=cfg[\"model\"][\"hidden_dim\"],\n            num_classes=self.data.num_classes,\n            num_layers=cfg[\"model\"][\"num_layers\"],\n            heads=cfg[\"model\"][\"heads\"],\n            state=self.state,\n            dropout=cfg[\"training\"].get(\"dropout\", 0.0),\n        ).to(device)\n        self.optimizer = torch.optim.AdamW(\n            self.model.parameters(), lr=cfg[\"training\"][\"lr\"],\n            weight_decay=cfg[\"training\"].get(\"weight_decay\", 0.0))\n        self.criterion = nn.CrossEntropyLoss()\n        self.best_val_acc, self.best_state_dict = 0.0, None\n        self.history = {k: [] for k in [\"epoch\",\"train_loss\",\"val_loss\",\"val_acc\",\"K0\",\"m\"]}\n        self.train_loader, self.val_loader, self.test_loader = self._make_loaders(cfg)\n\n    # ------------------------------------------------------------------\n    # DATA LOADER  (replaces previous placeholder)\n    # ------------------------------------------------------------------\n    def _dict_to_data(self, sample, cfg_dataset):\n        # -------- edge index -------------------\n        if \"edge_index\" in sample:\n            edge_index = torch.tensor(sample[\"edge_index\"], dtype=torch.long)\n            if edge_index.dim() == 2 and edge_index.size(0) != 2:\n                edge_index = edge_index.t()\n        elif \"edges\" in sample:\n            edge_index = torch.tensor(sample[\"edges\"], dtype=torch.long).t()\n        else:\n            raise RuntimeError(\"edge_index/edges field missing in dataset\")\n        # -------- features ---------------------\n        if \"x\" in sample:\n            x = torch.tensor(sample[\"x\"], dtype=torch.float32)\n        elif \"features\" in sample:\n            x = torch.tensor(sample[\"features\"], dtype=torch.float32)\n        else:\n            raise RuntimeError(\"x/features field missing in dataset\")\n        if x.dim() == 1:  # corner-case (scalar feature)\n            x = x.unsqueeze(1)\n        # -------- labels -----------------------\n        y_key = \"y\" if \"y\" in sample else \"label\"\n        y = torch.tensor(sample[y_key], dtype=torch.long)\n        data = Data(x=x, edge_index=edge_index.contiguous(), y=y)\n        # -------- masks ------------------------\n        if all(k in sample for k in [\"train_mask\",\"val_mask\",\"test_mask\"]):\n            data.train_mask = torch.tensor(sample[\"train_mask\"], dtype=torch.bool)\n            data.val_mask   = torch.tensor(sample[\"val_mask\"],   dtype=torch.bool)\n            data.test_mask  = torch.tensor(sample[\"test_mask\"],  dtype=torch.bool)\n        else:  # create random 60/20/20 split (stratified)\n            num_nodes = data.num_nodes\n            idx = torch.randperm(num_nodes)\n            t1, t2 = int(0.6*num_nodes), int(0.8*num_nodes)\n            data.train_mask = torch.zeros(num_nodes, dtype=torch.bool)\n            data.val_mask   = torch.zeros(num_nodes, dtype=torch.bool)\n            data.test_mask  = torch.zeros(num_nodes, dtype=torch.bool)\n            data.train_mask[idx[:t1]] = True\n            data.val_mask[idx[t1:t2]] = True\n            data.test_mask[idx[t2:]] = True\n        # -------- pre-processing ---------------\n        data = preprocess_graph(data, cfg_dataset)\n        return data\n\n    def _load_dataset(self, cfg):\n        name = cfg[\"dataset\"][\"name\"].lower()\n        if name in [\"huggingfacegeclm/reddit_comments\", \"reddit_comments\", \"reddit\"]:\n            ds = load_dataset(\"HuggingFaceGECLM/REDDIT_comments\", split=\"train\")\n            data = self._dict_to_data(ds[0], cfg[\"dataset\"])\n        elif name in [\"allen-uq/texas_all_nodes\", \"texas\"]:\n            ds = load_dataset(\"Allen-UQ/texas_all_nodes\", split=\"train\")\n            data = self._dict_to_data(ds[0], cfg[\"dataset\"])\n        elif name in [\"allen-uq/wisconsin_all_nodes\", \"wisconsin\"]:\n            ds = load_dataset(\"Allen-UQ/wisconsin_all_nodes\", split=\"train\")\n            data = self._dict_to_data(ds[0], cfg[\"dataset\"])\n        elif name in [\"ogb-arxiv\", \"ogb-products\", \"ogb-mag240m-s\"]:\n            from torch_geometric.datasets import OGBMag, OGBProducts, OGBArxiv\n            if name == \"ogb-arxiv\":\n                dataset = OGBArxiv(root=\"./data/ogb_arxiv\")\n            elif name == \"ogb-products\":\n                dataset = OGBProducts(root=\"./data/ogb_products\")\n            else:\n                dataset = OGBMag(root=\"./data/ogb_mag240m_s\", subset=True)\n            data = dataset[0]\n            data = preprocess_graph(data, cfg[\"dataset\"])\n        else:\n            raise RuntimeError(f\"Unknown dataset name {name}\")\n        # convenience fields ------------------------------------------------\n        data.num_features = data.x.size(1)\n        data.num_classes  = int(data.y.max().item() + 1)\n        return data\n\n    # ------------------------------------------------------------------\n    def _make_loaders(self, cfg):\n        train_idx = torch.where(self.data.train_mask)[0]\n        val_idx   = torch.where(self.data.val_mask)[0]\n        test_idx  = torch.where(self.data.test_mask)[0]\n        bs = cfg[\"training\"].get(\"batch_size\", 4096)\n        nl_args = dict(num_neighbors=[15,10], batch_size=bs, shuffle=True)\n        train_loader = NeighborLoader(self.data, input_nodes=train_idx, **nl_args)\n        val_loader   = NeighborLoader(self.data, input_nodes=val_idx, batch_size=bs)\n        test_loader  = NeighborLoader(self.data, input_nodes=test_idx, batch_size=bs)\n        return train_loader, val_loader, test_loader\n\n    ##################################################################\n    # TRAIN / VAL loop\n    ##################################################################\n    def train(self):\n        epochs = self.cfg[\"training\"][\"epochs\"]\n        for epoch in range(1, epochs+1):\n            self.model.train()\n            tot_loss = 0.0\n            for batch in self.train_loader:\n                batch = batch.to(self.device)\n                self.optimizer.zero_grad()\n                out = self.model(batch.x, batch.edge_index)\n                loss = self.criterion(out[:batch.batch_size], batch.y)\n                loss.backward();  self.optimizer.step()\n                tot_loss += loss.item()*batch.y.size(0)\n            train_loss = tot_loss / len(self.train_loader.dataset)\n            val_loss, val_acc = self._evaluate(self.val_loader)\n            self._adaptive_controller(val_loss)\n            # history ----------------------------------------------------\n            self.history[\"epoch\"].append(epoch)\n            self.history[\"train_loss\"].append(train_loss)\n            self.history[\"val_loss\"].append(val_loss)\n            self.history[\"val_acc\"].append(val_acc)\n            self.history[\"K0\"].append(self.state.K0)\n            self.history[\"m\"].append(self.state.m)\n            if val_acc \u003e self.best_val_acc:\n                self.best_val_acc = val_acc\n                self.best_state_dict = {k:v.cpu() for k,v in self.model.state_dict().items()}\n            print(f\"[Ep {epoch:03}] TL={train_loss:.4f} VL={val_loss:.4f} VA={val_acc:.4f} \"\n                  f\"K0={self.state.K0} m={self.state.m}\")\n        # ------------------- test -------------------\n        if self.best_state_dict:\n            self.model.load_state_dict(self.best_state_dict)\n        test_loss, test_acc = self._evaluate(self.test_loader)\n        return {\n            \"best_val_acc\": self.best_val_acc,\n            \"test_acc\": test_acc,\n            \"test_loss\": test_loss,\n            \"K0_final\": self.state.K0,\n            \"m_final\": self.state.m,\n        }\n\n    ##################################################################\n    # Evaluation helper\n    ##################################################################\n    @torch.no_grad()\n    def _evaluate(self, loader):\n        self.model.eval()\n        y_true, y_pred, tot_loss = [], [], 0.0\n        for batch in loader:\n            batch = batch.to(self.device)\n            out = self.model(batch.x, batch.edge_index)\n            loss = self.criterion(out[:batch.batch_size], batch.y)\n            tot_loss += loss.item()*batch.y.size(0)\n            y_true.append(batch.y.cpu())\n            y_pred.append(out[:batch.batch_size].argmax(-1).cpu())\n        y_true = torch.cat(y_true);  y_pred = torch.cat(y_pred)\n        acc = (y_true==y_pred).float().mean().item()\n        return tot_loss/len(loader.dataset), acc\n\n    ##################################################################\n    # Controller step\n    ##################################################################\n    def _adaptive_controller(self, val_loss):\n        delta = self.state.prev_val_loss - val_loss\n        if delta \u003c self.state.gamma and self.state.K0 \u003e 2:\n            self.state.K0 = max(2, self.state.K0//2)\n        self.state.prev_val_loss = val_loss\n        sample_err = np.random.uniform(0, self.state.eps*1.2)\n        self.state.att_error_hist.append(sample_err)\n        ci_low, ci_high = jackknife_ci(self.state.att_error_hist[-100:])\n        if ci_high \u003e self.state.eps:\n            self.state.m *= 2\n        elif ci_high \u003c self.state.eps/4 and self.state.m\u003e4:\n            self.state.m //= 2\n        # simplistic fairness guard stub --------------------------------\n        if np.random.rand() \u003c 0.05:\n            self.state.K0 += 1\n\n######################################################################\n# Convenience wrapper used by main.py\n######################################################################\n\ndef run_training(cfg: Dict[str, Any], device: torch.device, out_dir: Path):\n    trainer = Trainer(cfg, device)\n    results = trainer.train()\n    out_dir.mkdir(parents=True, exist_ok=True)\n    # checkpoint --------------------------------------------------------\n    ckpt_path = out_dir / \"best_model.pt\"\n    torch.save(trainer.best_state_dict or trainer.model.state_dict(), ckpt_path)\n    # JSON --------------------------------------------------------------\n    with open(out_dir/\"results.json\", \"w\", encoding=\"utf-8\") as fp:\n        json.dump(results, fp, indent=2)\n    # quick figure (val acc) -------------------------------------------\n    plt.figure(figsize=(6,4))\n    plt.plot(trainer.history[\"epoch\"], trainer.history[\"val_acc\"], marker=\"o\")\n    plt.xlabel(\"Epoch\"); plt.ylabel(\"Val Acc\")\n    plt.tight_layout(); plt.savefig(out_dir/\"val_acc.pdf\"); plt.close()\n    results[\"figures\"] = [\"val_acc.pdf\"]\n    return results\n"}
+
+# External Resources
+
+**HuggingFace Models:**
+
+
+**HuggingFace Datasets:**
+
+- ID: HuggingFaceGECLM/REDDIT_comments
+
+
+- ID: Allen-UQ/texas_all_nodes
+
+
+- ID: Allen-UQ/wisconsin_all_nodes
+
+
+
+
+Analyze the code thoroughly and provide your validation result.
+Output:
+{
+    "is_full_experiment_ready": false,
+    "full_experiment_issue": "Full-experiment mode is not production-ready: (1) core HAQ-GAT features are stubbed – error budget uses random values and fairness guard is a random increment; (2) placeholders present (comment 'simplistic fairness guard stub'); (3) required evaluation metrics (energy, GPU-MEM, CO2, etc.) are missing; (4) full-experiment config runs only 50 epochs and single dataset, not the complete protocol; (5) INT8/QAT path is incomplete; therefore criteria 3,4,6 are violated."
+}
