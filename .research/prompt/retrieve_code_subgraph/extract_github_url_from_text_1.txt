@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The core methodology involves deriving a conservation law for GAT gradient flow dynamics. This derivation is based on the concept of rescale invariance, adapted from traditional deep neural networks, and applies to GATs with positive homogeneous activation functions (e.g., ReLU, LeakyReLU). The conservation law reveals a structural relationship between parameters and their gradients. Based on this theoretical insight, a balanced initialization scheme is devised. This scheme involves setting attention parameters to zero and scaling feature transformation weights layer-wise to ensure that the l2-norms of incoming and outgoing weights satisfy a specific balancedness condition (∥Wl[i, :]∥² - ∥al[i]∥² = ∥Wl+1[:, i]∥²). Additionally, a Looks-Linear-Orthogonal (LLortho) structure is used for initializing feature weights before balancing, which aims to achieve dynamical isometry and further enhance trainability, especially for deeper models.
+
+# GitHub URLs List
+['https://github.com/Diego999/pyGAT']
+Output:
+{
+    "index": 0
+}
