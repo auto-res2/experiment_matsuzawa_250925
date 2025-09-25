@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The core methodology involves applying dynamic sparsity to different Transformer components. For the **Sparse Feedforward Layer**, a controller determines which activations in fixed-size blocks (1 in N) are non-zero using a low-rank bottleneck dense layer and the Gumbel-Softmax trick for differentiable selection during training. For **Sparse QKV Layers**, the `dmodel` dimension is subdivided into `S` modules, processed by a novel multiplicative layer (which can represent arbitrary permutations) followed by a 2D convolutional layer. This reduces parameter count from O(d^2 model) to O(d^1.5 model) while allowing attention heads flexible access to embeddings. A **Sparse Loss Layer** uses a similar multiplicative layer. For long sequences, the **Terraformer** architecture is introduced, which incorporates LSH (Locality-Sensitive Hashing) attention from Reformer, redesigns the decoder block to remove encoder-decoder attention and use two attention mechanisms, integrates reversible layers for memory efficiency, and adds low-rank recurrent units (SRUs) to the feedforward block for improved generalization.
+
+# GitHub URLs List
+['https://github.com/google/trax', 'https://github.com/google-research/google-research']
+Output:
+{
+    "index": 0
+}
