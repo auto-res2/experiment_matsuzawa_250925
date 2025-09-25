@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The Prototype-oriented Conditional Transport (PCT) framework comprises three components: 1) Learning class prototypes by using the linear classifier's weights, trained with cross-entropy loss on source data, which avoids additional parameters and expensive computation of averaging latent features. 2) A probabilistic bi-directional transport mechanism to align target features with these prototypes. This includes a target-to-prototype (Lt→µ) cost, encouraging target features to cluster near prototypes, and a prototype-to-target (Lµ→t) cost, preventing degenerate solutions by ensuring each prototype attracts target features. Cosine dissimilarity defines the point-to-point moving cost. 3) An EM algorithm to iteratively estimate target class proportions (p(µk)) by maximizing the log-likelihood of unlabeled target data, initialized with a uniform prior and updated with a decaying learning rate. Gradients of prototypes are stopped during transport loss calculation for stability.
+
+# GitHub URLs List
+['https://github.com/korawat-tanwisuth/Proto_DA']
+Output:
+{
+    "index": 0
+}
