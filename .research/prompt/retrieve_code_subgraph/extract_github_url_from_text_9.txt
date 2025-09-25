@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+Spexphormer employs a two-phase training process. The first phase trains an 'Attention Score Estimator Network,' a narrow-width network (e.g., 4 or 8 hidden dimensions, one attention head) on a high-degree expander graph (30 to 200). This network's purpose is to estimate pairwise attention score patterns. It includes two architectural additions: normalization of rows of V with a learnable global scale and a variable temperature parameter that anneals from 1.0 to 0.05 to sharpen attention scores. The learned attention scores from this narrow network are then used in the second phase to construct sparse, layer-wise interaction graphs for a wider, final network. This sparsification selects a fixed number of edges per attention layer (degℓ) for each node using GPU-friendly, parallel reservoir sampling. The fixed degree enables efficient regular matrix calculations. Batching for large graphs is achieved through neighborhood sampling based on these learned attention scores. The method is supported by theoretical underpinnings showing that a narrow network's attention scores can approximate a wide network's scores and that the sampling procedure can form a sparse matrix that approximates the full attention matrix.
+
+# GitHub URLs List
+['https://github.com/hamed1375/Sp_Exphormer']
+Output:
+{
+    "index": 0
+}
