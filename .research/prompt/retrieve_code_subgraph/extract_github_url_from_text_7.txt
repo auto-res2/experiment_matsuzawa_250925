@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The core methodology involves adapting 'model soups' for GNNs. It starts by creating multiple instances (K) of the same GNN architecture, referred to as 'soup ingredients,' sharing a common random initialization. These ingredients are trained independently and in parallel on different GPUs, with slight variations in hyperparameters (learning rate, weight decay, seed values, etc.). After independent training, the 'soup' is prepared using a greedy interpolation procedure (Algorithm 1). This procedure sequentially adds each model as a potential ingredient, keeping it only if it improves validation performance through an optimal linear interpolation ratio (alpha). For large graphs where the entire graph data cannot fit in memory, the method employs data-centric model soups by leveraging state-of-the-art graph sampling (node-wise, edge-wise, layer-wise) and graph partitioning (e.g., ClusterGCN with METIS) mechanisms for mini-batch training of the candidate ingredients (Algorithms 2 and 3). Notably, there is no intermediate communication of model weights during the training of individual ingredients; merging only occurs post-training.
+
+# GitHub URLs List
+['https://github.com/kimiyoung/planetoid', 'https://github.com/kimiyoung/planetoid', 'https://github.com/kimiyoung/planetoid', 'https://github.com/mori97/JKNet-dgl', 'https://github.com/vthost/DAGNN', 'https://github.com/gasteigerjo/ppnp', 'https://github.com/chennnM/GCNII', 'https://github.com/Tiiiger/SGC', 'https://github.com/benedekrozemberczki/ClusterGCN', 'https://github.com/GraphSAINT/GraphSAINT']
+Output:
+{
+    "index": 8
+}
