@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The Adaptive Node Sampling (ANS-GT) module optimizes node sampling by treating it as an adversary bandit problem, modifying the Exp4.P method. It adaptively assigns weights to various sampling heuristics (1-hop, 2-hop neighbors, PPR, and KNN based on attribute similarity) and combines their probabilities. Rewards are calculated based on the attention weights and sampling probabilities, encouraging sampling strategies that yield more significant nodes. The Hierarchical Graph Attention scheme combines fine-grained local attention (using ANS-GT) and coarse-grained global attention. Global attention utilizes graph coarsening algorithms (e.g., Variational Neighborhoods) to group nodes into super-nodes, reducing complexity and capturing long-range dependencies. The model integrates global nodes with learnable features and employs proximity encoding for positional information. The overall computational complexity is designed to be linear with the number of nodes (O(n)).
+
+# GitHub URLs List
+['https://github.com/zaixizhang/ANS-GT']
+Output:
+{
+    "index": 0
+}
