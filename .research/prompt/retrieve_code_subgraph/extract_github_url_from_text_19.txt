@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+CoPA is built upon a frozen pre-trained ResNet-18 backbone. It adapts two distinct transformation heads, `hθP` for prototypes and `hθI` for image instances, analogous to CLIP's approach by treating prototypes as text prompts. The core learning objective is a symmetric cross-entropy (SCE) loss, which aims to align prototype and image instance representations. This approach preserves discriminative information in gradients and explores a more flexible hypothesis space. Prototypes are generated as the average vector of all support data embeddings within a class.
+
+# GitHub URLs List
+['https://github.com/tmlr-group/CoPA']
+Output:
+{
+    "index": 0
+}
