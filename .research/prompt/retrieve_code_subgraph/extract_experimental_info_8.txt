@@ -1,0 +1,2035 @@
+
+Input:
+You are a researcher with expertise in engineering in the field of machine learning.
+
+# Instructions
+- The content described in “Repository Content” corresponds to the GitHub repository of the method described in “Method.”
+- Please extract the following two pieces of information from “Repository Content”:
+    - experimental_code：Extract the implementation sections that are directly related to the method described in “Method.”
+    - experimental_info：Extract and output the experimental settings related to the method described in “Method.”
+
+# Method
+The core methodology involves two main components: Virtual Outlier Regularization (VOR) and OnePrompt. VOR is a regularization method that generates virtual outliers from the feature space of current training data. These outliers are used to regularize the classifier head by enforcing higher confidence for in-task samples and lower confidence for virtual outliers using two hinge loss terms with Huber loss. This helps to make decision boundaries more compact, reducing inter-task confusion. OnePrompt simplifies prompt-based CIL by utilizing a single, shared prompt throughout all tasks, eliminating the need for a complex prompt composition mechanism or a prompt pool, thereby reducing computational overhead and the number of learnable parameters. OVOR combines OnePrompt with VOR, where the prompt and head are initially trained with cross-entropy loss, then virtual outliers are generated, and finally, the classifier head is updated using both cross-entropy and the VOR loss.
+
+# Repository Content
+File Path: dataloaders/__init__.py
+Content:
+# SPDX-License-Identifier: Apache-2.0
+# Copyright : JP Morgan Chase & Co
+
+from .dataloader import get_dataloaders
+
+__all__ = ('get_dataloaders')
+File Path: dataloaders/dataloader.py
+Content:
+# SPDX-License-Identifier: Apache-2.0
+# Copyright : JP Morgan Chase & Co
+
+import numpy as np
+import random
+import torch
+from torch.utils.data import Subset, DataLoader
+
+from .dataset import *
+
+def get_dataloaders(args, seed):
+    if args.dataset == 'ImageNet_R':
+        loader = ImagenetRLoader(args.dataroot)
+    elif args.dataset.startswith('CIFAR100'):
+        loader = CIFAR100Loader(args.dataroot)
+    elif args.dataset.startswith('CUB'):
+        loader = CUBLoader(args.dataroot)
+    elif args.dataset == 'ImageNet_A':
+        loader = ImagenetALoader(args.dataroot)
+    print(f"Train set: {len(loader.data['train'][0])}")
+    print(f"Test set: {len(loader.data['test'][0])}")
+
+    classes = np.arange(loader.num_cls).tolist()
+    if seed > 0:
+        random.seed(seed)
+        random.shuffle(classes)
+    mapping = {c: i for i, c in enumerate(classes)}
+    tasks = [classes[i*args.split_size:(i+1)*args.split_size] for i in range(args.tasks)]
+
+    train_ds = get_dataset(args.dataset, loader, mapping, 'train')
+    train_dls = split_dataset(train_ds, tasks, 'train', args.batch_size, args.workers, seed)
+    test_ds = get_dataset(args.dataset, loader, mapping, 'test')
+    test_dls = split_dataset(test_ds, tasks, 'test', args.batch_size, args.workers, seed)
+    return {'train': train_dls, 'test': test_dls}
+
+def get_dataset(dataset, loader, mapping, mode):
+    data, targets = loader.data[mode]
+    params = {'data': data, 'targets': targets, 'cls_mapping': mapping, 'transform': loader.get_transform(mode)}
+    if dataset == 'ImageNet_R':
+        return ImagenetR(**params)
+    elif dataset.startswith('CIFAR100'):
+        return CIFAR100(**params)
+    elif dataset.startswith('CUB'):
+        return CUB200(**params)
+    elif dataset == 'ImageNet_A':
+        return ImagenetA(**params)
+
+def split_dataset(dataset, tasks, mode, bsz, workers, seed):
+    dataloaders = []
+    for t in tasks:
+        indices = np.isin(dataset.targets, t).nonzero()[0]
+        g = torch.Generator()
+        g.manual_seed(seed)
+        dataloaders.append(DataLoader(
+            dataset=Subset(dataset, indices), batch_size=bsz,
+            shuffle=(mode=='train'), num_workers=workers,
+            worker_init_fn=seed_worker, generator=g
+        ))
+    return dataloaders
+
+def seed_worker(worker_id):
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
+File Path: dataloaders/dataset.py
+Content:
+# SPDX-License-Identifier: Apache-2.0
+# Copyright : JP Morgan Chase & Co
+
+import errno
+import hashlib
+import numpy as np
+from os import makedirs
+from os.path import exists, expanduser, isfile, join
+import pickle
+from PIL import Image
+from torch.utils.data import Dataset
+from torchvision import datasets, transforms
+import yaml
+
+class DatasetLoader:
+    def __init__(self, root):
+        self.root = expanduser(root)
+        self.data = dict()
+        self.load()
+
+    def load(self):
+        pass
+
+class CIFAR100Loader(DatasetLoader):
+    num_cls = 100
+    input_size = [32, 32, 3]
+    base_folder = 'cifar-100-python'
+    
+    def load(self):
+        train_path = join(self.root, self.base_folder, 'train')
+        test_path = join(self.root, self.base_folder, 'test')
+        if not exists(train_path) or not exists(test_path):
+            self._download()
+        self.data['train'] = self._load_set(train_path)
+        self.data['test'] = self._load_set(test_path)
+
+    def _load_set(self, path):
+        with open(path, 'rb') as f:
+            entry = pickle.load(f, encoding='latin1')
+        data = entry['data']
+        targets = entry['labels' if 'labels' in entry else 'fine_labels']
+        data = np.vstack(data).reshape(-1, self.input_size[2], self.input_size[0], self.input_size[1])
+        data = data.transpose((0, 2, 3, 1))
+        return np.asarray(data), np.asarray(targets)
+
+    def _download(self):
+        import tarfile
+        filename = 'cifar-100-python.tar.gz'
+        download_url(
+            'https://www.cs.toronto.edu/~kriz/cifar-100-python.tar.gz',
+            self.root, filename,
+            'eb9058c3a382ffc7106e4002c42a8d85'
+        )
+        with tarfile.open(join(self.root, filename), 'r:gz') as tar:
+            tar.extractall(path=self.root)
+
+    def get_transform(self, mode='train'):
+        mean = (0.0, 0.0, 0.0)
+        std = (1.0, 1.0, 1.0)
+        if mode == 'train':
+            transform_list = [transforms.RandomResizedCrop(224), transforms.RandomHorizontalFlip()]
+        else:
+            transform_list = [transforms.Resize(224)]
+        transform_list.extend([transforms.ToTensor(), transforms.Normalize(mean, std)])
+        return transforms.Compose(transform_list)
+
+class ImagenetRLoader(DatasetLoader):
+    num_cls = 200
+    input_size = [224, 224, 3]
+    base_folder = 'imagenet-r'
+    
+    def load(self):
+        cfg = yaml.load(open('dataloaders/splits/imagenet-r_train.yaml', 'r'), Loader=yaml.Loader)
+        self.data['train'] = (np.asarray(cfg['data']), np.asarray(cfg['targets']))
+        cfg = yaml.load(open('dataloaders/splits/imagenet-r_test.yaml', 'r'), Loader=yaml.Loader)
+        self.data['test'] = (np.asarray(cfg['data']), np.asarray(cfg['targets']))
+
+    def get_transform(self, mode='train'):
+        mean = (0.0, 0.0, 0.0)
+        std = (1.0, 1.0, 1.0)
+        if mode == 'train':
+            transform_list = [transforms.RandomResizedCrop(224), transforms.RandomHorizontalFlip()]
+        else:
+            transform_list = [transforms.Resize(256), transforms.CenterCrop(224)]
+        transform_list.extend([transforms.ToTensor(), transforms.Normalize(mean, std)])
+        return transforms.Compose(transform_list)
+
+class CUBLoader(DatasetLoader):
+    num_cls = 200
+    base_folder = 'CUB_200_2011'
+
+    def load(self):
+        paths = self._load_file(join(self.root, self.base_folder, 'images.txt'))
+        split = self._load_file(join(self.root, self.base_folder, 'train_test_split.txt'))
+        targets = self._load_file(join(self.root, self.base_folder, 'image_class_labels.txt'))
+        path_train, path_test = [], []
+        targets_train, targets_test = [], []
+        for p, s, t in zip(paths, split, targets):
+            path = join(self.root, self.base_folder, 'images', p)
+            if int(s) == 1:
+                path_train.append(path)
+                targets_train.append(int(t) - 1)
+            else:
+                path_test.append(path)
+                targets_test.append(int(t) - 1)
+        self.data['train'] = (np.array(path_train), np.array(targets_train))
+        self.data['test'] = (np.array(path_test), np.array(targets_test))
+
+    def _load_file(self, path):
+        d = []
+        with open(path) as f:
+            for line in f:
+                _, item = line.strip().split(' ')
+                d.append(item)
+        return d
+
+    def get_transform(self, mode='train'):
+        mean = (0.0, 0.0, 0.0)
+        std = (1.0, 1.0, 1.0)
+        if mode == 'train':
+            transform_list = [transforms.RandomResizedCrop(224), transforms.RandomHorizontalFlip()]
+        else:
+            transform_list = [transforms.Resize(256), transforms.CenterCrop(224)]
+        transform_list.extend([transforms.ToTensor(), transforms.Normalize(mean, std)])
+        return transforms.Compose(transform_list)
+
+class ImagenetALoader(DatasetLoader):
+    num_cls = 200
+    base_folder = 'imagenet-a'
+
+    def load(self):
+        dst_train = datasets.ImageFolder(join(self.root, self.base_folder, 'train'))
+        self.data['train'] = (np.array([i[0] for i in dst_train.imgs]), np.array(dst_train.targets))
+        dst_test = datasets.ImageFolder(join(self.root, self.base_folder, 'test'))
+        self.data['test'] = (np.array([i[0] for i in dst_test.imgs]), np.array(dst_test.targets))
+
+    def get_transform(self, mode='train'):
+        mean = (0.0, 0.0, 0.0)
+        std = (1.0, 1.0, 1.0)
+        if mode == 'train':
+            transform_list = [transforms.RandomResizedCrop(224), transforms.RandomHorizontalFlip()]
+        else:
+            transform_list = [transforms.Resize(256), transforms.CenterCrop(224)]
+        transform_list.extend([transforms.ToTensor(), transforms.Normalize(mean, std)])
+        return transforms.Compose(transform_list)
+
+class ClassShuffledDataset(Dataset):
+    def __init__(self, data, targets, cls_mapping, transform):
+        self.data = data
+        self.targets = targets
+        self.cls_mapping = cls_mapping
+        self.transform = transform
+
+    def __getitem__(self, index):
+        img, target = self.data[index], self.targets[index]
+        img = self._read_img(img)
+        if self.transform is not None:
+            img = self.transform(img)
+        return img, self.cls_mapping[target], index
+
+    def __len__(self):
+        return len(self.data)
+
+    def _read_img(self, img):
+        pass
+
+class CIFAR100(ClassShuffledDataset):
+    def _read_img(self, img):
+        return Image.fromarray(img)
+
+class ImagenetR(ClassShuffledDataset):
+    def _read_img(self, img):
+        with Image.open(img) as i:
+            i = i.convert('RGB')
+            i_arr = np.fromstring(i.tobytes(), dtype=np.uint8)
+            i_arr = i_arr.reshape((i.size[1], i.size[0], 3))
+        return Image.fromarray(i_arr)
+
+class CUB200(ClassShuffledDataset):
+    def _read_img(self, img):
+        with Image.open(img) as i:
+            i = i.convert('RGB')
+            i_arr = np.frombuffer(i.tobytes(), dtype=np.uint8)
+            i_arr = i_arr.reshape((i.size[1], i.size[0], 3))
+        return Image.fromarray(i_arr)
+
+class ImagenetA(ClassShuffledDataset):
+    def _read_img(self, img):
+        with Image.open(img) as i:
+            i = i.convert('RGB')
+            i_arr = np.frombuffer(i.tobytes(), dtype=np.uint8)
+            i_arr = i_arr.reshape((i.size[1], i.size[0], 3))
+        return Image.fromarray(i_arr)
+
+def check_integrity(fpath, md5):
+    if not isfile(fpath):
+        return False
+    md5o = hashlib.md5()
+    with open(fpath, 'rb') as f:
+        # read in 1MB chunks
+        for chunk in iter(lambda: f.read(1024 * 1024), b''):
+            md5o.update(chunk)
+    md5c = md5o.hexdigest()
+    if md5c != md5:
+        return False
+    return True
+
+def download_url(url, root, filename, md5):
+    from six.moves import urllib
+
+    fpath = join(root, filename)
+    try:
+        makedirs(root)
+    except OSError as e:
+        if e.errno == errno.EEXIST:
+            pass
+        else:
+            raise
+
+    # downloads file
+    if not isfile(fpath) or not check_integrity(fpath, md5):
+        try:
+            urllib.request.urlretrieve(url, fpath)
+        except:
+            if url[:5] == 'https':
+                url = url.replace('https:', 'http:')
+                urllib.request.urlretrieve(url, fpath)
+File Path: learners/__init__.py
+Content:
+# SPDX-License-Identifier: Apache-2.0
+# Copyright : JP Morgan Chase & Co
+
+from . import default
+from . import prompt
+File Path: learners/default.py
+Content:
+# SPDX-License-Identifier: Apache-2.0
+# Copyright : JP Morgan Chase & Co
+
+import torch
+from torch import nn
+from tqdm import tqdm
+
+import models
+from .ood import NPOS
+from utils.schedulers import CosineSchedule
+
+class NormalNN(nn.Module):
+    def __init__(self, out_dim, args, logger):
+        super().__init__()
+        self.logger = logger
+        self.out_dim = out_dim
+        self.bsz = args.batch_size
+        self.opt_cfg = {k: args[k] for k in ('optimizer', 'lr', 'momentum', 'weight_decay', 'scheduler')}
+        self.subset_start = 0
+        self.subset_end = out_dim
+        self.epochs = args.epochs
+        self.model_type = args.model_type
+        self.model_name = args.model_name
+
+        torch.cuda.set_device(args.gpus[0])
+        self.model = self._create_model().cuda()
+        self.ood = NPOS(args.ood)
+        self.criterion = nn.CrossEntropyLoss().cuda()
+        self.model = nn.DataParallel(self.model, device_ids=args.gpus, output_device=args.gpus[0])
+
+    def _create_model(self):
+        return models.__dict__[self.model_type].__dict__[self.model_name](out_dim=self.out_dim)
+
+    def init_optimizer(self):
+        optim_args = {
+            'params': self._get_learnable_params(),
+            'lr': self.opt_cfg['lr'],
+            'weight_decay': self.opt_cfg['weight_decay']
+        }
+        optim = self.opt_cfg['optimizer']
+        if optim in ['SGD', 'RMSprop']:
+            optim_args['momentum'] = self.opt_cfg['momentum']
+        elif optim == 'Rprop':
+            optim_args.pop('weight_decay')
+        elif optim == 'amsgrad':
+            optim_args['amsgrad'] = True
+            optim = 'Adam'
+        elif optim == 'Adam':
+            optim_args['betas'] = (self.opt_cfg['momentum'], 0.999)
+        self.optimizer = torch.optim.__dict__[optim](**optim_args)
+
+        if self.opt_cfg['scheduler'] == 'cosine':
+            self.scheduler = CosineSchedule(self.optimizer, K=sum(self.epochs))
+        else: # decay
+            self.scheduler = torch.optim.lr_scheduler.MultiStepLR(
+                self.optimizer, milestones=sum(self.epochs), gamma=0.1
+            )
+
+    def _get_learnable_params(self):
+        return self.model.parameters()
+
+    def count_params(self):
+        return sum(p.numel() for p in self.model.parameters())
+
+    def count_learnable_params(self):
+        return sum(p.numel() for p in self._get_learnable_params())
+
+    def train(self, dataloader, task):
+        self.init_optimizer()
+        self.model.train()
+        pbar = tqdm(desc='Epoch', total=sum(self.epochs), leave=False)
+        self.logger.timer.tic()
+
+        start_epoch = 0
+        if task > 0:
+            for e in range(self.epochs[0]):
+                stats_str = self._train_one_epoch(dataloader, e, warmup=True)
+                pbar.postfix = stats_str
+                pbar.update()
+            start_epoch = self.epochs[0]
+        
+        for e in range(start_epoch, start_epoch + self.epochs[1]):
+            stats_str = self._train_one_epoch(dataloader, e)
+            pbar.postfix = stats_str
+            pbar.update()
+
+        start_epoch += self.epochs[1]
+        for e in range(start_epoch, start_epoch + self.epochs[2]):
+            stats_str = self._train_one_epoch_ood(dataloader, e)
+            pbar.postfix = stats_str
+            pbar.update()
+        
+        train_time = self.logger.timer.toc()
+        self.logger.train_time.add(train_time)
+        pbar.close()
+
+    def _get_ood_samples(self, dataloader):
+        subset_size = self.subset_end - self.subset_start
+        id_feats = [torch.empty(0, 768) for _ in range(subset_size)]
+        with torch.no_grad():
+            for imgs, targets, _ in dataloader:
+                imgs = imgs.cuda()
+                targets = targets.cuda()
+                feats = self.model(x=imgs, feat=True).detach().cpu()
+                for i, idx in enumerate(targets):
+                    key = (idx % subset_size).item()
+                    id_feats[key] = torch.cat((id_feats[key], feats[i].view(1, -1)), 0)
+        return self.ood.generate(id_feats, self.subset_start)
+
+    def _train_one_epoch(self, dataloader, epoch, warmup=False):
+        if epoch > 0:
+            self.scheduler.step()
+        self.logger.train_loss.reset()
+        self.logger.train_acc.reset()
+        self.logger.memory.reset()
+
+        for imgs, targets, _ in dataloader:
+            imgs = imgs.cuda()
+            targets = targets.cuda()
+            logits, prompt_loss = self.model(x=imgs, train=True, warmup=warmup)
+            logits = logits[:, :self.subset_end]
+            logits[:, :self.subset_start] = -float('inf')
+            loss = self.criterion(logits, targets)
+            loss += prompt_loss.sum()
+
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+
+            self.logger.train_loss.add(loss.item(), n=targets.size(0))
+            self.logger.train_acc.add(accuracy(logits, targets), n=targets.size(0))
+            self.logger.memory.add(self.logger.get_memory_usage())
+            self.logger.step += 1
+
+        return f"Loss: {str(self.logger.train_loss)}, Acc: {str(self.logger.train_acc)}"
+
+    def _train_one_epoch_ood(self, dataloader, epoch):
+        self.scheduler.step()
+        self.logger.train_loss.reset()
+        self.logger.train_acc.reset()
+        self.logger.memory.reset()
+        self.logger.id_score.reset()
+        self.logger.ood_score.reset()
+        id_loader, ood_loader = self._get_ood_samples(dataloader)
+        for ((ids, targets), oods) in zip(id_loader, ood_loader):
+            ids = ids.cuda()
+            targets = targets.cuda()
+            oods = oods[0].cuda()
+            id_logits = self.model(x=ids, last=True)[:, :self.subset_end]
+            ood_logits = self.model(x=oods, last=True)[:, self.subset_start:self.subset_end]
+            id_logits[:, :self.subset_start] = -float('inf')
+            loss = self.criterion(id_logits, targets)
+            ood_loss, id_score, ood_score = self.ood.loss(id_logits[:, self.subset_start:], ood_logits)
+            loss += ood_loss
+
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+
+            self.logger.train_loss.add(loss.item(), n=targets.size(0))
+            self.logger.train_acc.add(accuracy(id_logits, targets), n=targets.size(0))
+            self.logger.memory.add(self.logger.get_memory_usage())
+            self.logger.id_score.add(id_score.item(), n=targets.size(0))
+            self.logger.ood_score.add(ood_score.item(), n=targets.size(0))
+            self.logger.step += 1
+
+        return f"Loss: {str(self.logger.train_loss)}, Acc: {str(self.logger.train_acc)}"
+
+    def log_model(self):
+        self.logger.log_model(self.model.module.state_dict())
+
+    def eval_cil(self, dataloader, model_task, data_task):
+        acc, time, preds, targets = self._eval(dataloader=dataloader, start=0, end=self.subset_end, return_predictions=True)
+        metric = f"eval_acc_cil_{data_task+1}"
+        self.logger.metrics[metric].add(acc)
+        self.logger.eval_time.add(time)
+        self.logger.log(f"Eval-CIL M{model_task+1}D{data_task+1}: Acc {acc:.4f}, Time {time:.2f}")
+        return acc, preds, targets
+
+    def eval_til(self, dataloader, model_task, data_task, start, end):
+        acc, time = self._eval(dataloader=dataloader, start=start, end=end)
+        metric = f"eval_acc_til_{data_task+1}"
+        self.logger.metrics[metric].add(acc)
+        self.logger.eval_time.add(time)
+        self.logger.log(f"Eval-TIL M{model_task+1}D{data_task+1}: Acc {acc:.4f}, Time {time:.2f}")
+        return acc
+
+    def _eval(self, dataloader, start, end, return_predictions=False):
+        self.model.eval()
+        self.logger.timer.tic()
+        correct, total = 0., 0.
+        preds = []
+        gts = []
+        with torch.no_grad():
+            for imgs, targets, _ in dataloader:
+                imgs = imgs.cuda()
+                targets = targets.cuda()
+                logits = self.model(x=imgs)[:, :end]
+                logits[:, :start] = -float('inf')
+                correct += accuracy(logits, targets) * targets.size(0)
+                total += targets.size(0)
+                preds.extend(logits.argmax(dim=1).tolist())
+                gts.extend(targets.tolist())
+        if return_predictions:
+            return correct / total, self.logger.timer.toc(), preds, gts
+        return correct / total, self.logger.timer.toc()
+
+class SL(NormalNN):
+    def init_optimizer(self):
+        self.optim_slow = self._get_optim(self.model.module.feat.parameters(), 0.0001)
+        self.optim_fast = self._get_optim(self.model.module.last.parameters(), 0.01)
+        if self.opt_cfg['scheduler'] == 'cosine':
+            self.sched_slow = CosineSchedule(self.optim_slow, K=self.epochs[1])
+            self.sched_fast = CosineSchedule(self.optim_fast, K=sum(self.epochs))
+        else: # decay
+            self.sched_slow = torch.optim.lr_scheduler.MultiStepLR(
+                self.optim_slow, milestones=sum(self.epochs), gamma=0.1
+            )
+            self.sched_fast = torch.optim.lr_scheduler.MultiStepLR(
+                self.optim_fast, milestones=sum(self.epochs), gamma=0.1
+            )
+
+    def _get_optim(self, params, lr):
+        optim_args = {
+            'params': params,
+            'lr': lr,
+            'weight_decay': self.opt_cfg['weight_decay']
+        }
+        optim = self.opt_cfg['optimizer']
+        if optim in ['SGD', 'RMSprop']:
+            optim_args['momentum'] = self.opt_cfg['momentum']
+        elif optim == 'Rprop':
+            optim_args.pop('weight_decay')
+        elif optim == 'amsgrad':
+            optim_args['amsgrad'] = True
+            optim = 'Adam'
+        elif optim == 'Adam':
+            optim_args['betas'] = (self.opt_cfg['momentum'], 0.999)
+        return torch.optim.__dict__[optim](**optim_args)
+
+    def _train_one_epoch(self, dataloader, epoch, warmup=False):
+        if epoch > 0:
+            self.sched_slow.step()
+            self.sched_fast.step()
+        self.logger.train_loss.reset()
+        self.logger.train_acc.reset()
+        self.logger.memory.reset()
+
+        for imgs, targets, _ in dataloader:
+            imgs = imgs.cuda()
+            targets = targets.cuda()
+            logits = self.model(x=imgs, train=True, warmup=warmup)
+            logits = logits[:, :self.subset_end]
+            logits[:, :self.subset_start] = -float('inf')
+            loss = self.criterion(logits, targets)
+
+            self.optim_slow.zero_grad()
+            self.optim_fast.zero_grad()
+            loss.backward()
+            self.optim_slow.step()
+            self.optim_fast.step()
+
+            self.logger.train_loss.add(loss.item(), n=targets.size(0))
+            self.logger.train_acc.add(accuracy(logits, targets), n=targets.size(0))
+            self.logger.memory.add(self.logger.get_memory_usage())
+            self.logger.step += 1
+
+        return f"Loss: {str(self.logger.train_loss)}, Acc: {str(self.logger.train_acc)}"
+
+    def _train_one_epoch_ood(self, dataloader, epoch):
+        self.sched_fast.step()
+        self.logger.train_loss.reset()
+        self.logger.train_acc.reset()
+        self.logger.memory.reset()
+        self.logger.id_score.reset()
+        self.logger.ood_score.reset()
+        id_loader, ood_loader = self._get_ood_samples(dataloader)
+        for ((ids, targets), oods) in zip(id_loader, ood_loader):
+            ids = ids.cuda()
+            targets = targets.cuda()
+            oods = oods[0].cuda()
+            id_logits = self.model(x=ids, last=True)[:, :self.subset_end]
+            ood_logits = self.model(x=oods, last=True)[:, self.subset_start:self.subset_end]
+            id_logits[:, :self.subset_start] = -float('inf')
+            loss = self.criterion(id_logits, targets)
+            ood_loss, id_score, ood_score = self.ood.loss(id_logits[:, self.subset_start:], ood_logits)
+            loss += ood_loss
+
+            self.optim_fast.zero_grad()
+            loss.backward()
+            self.optim_fast.step()
+
+            self.logger.train_loss.add(loss.item(), n=targets.size(0))
+            self.logger.train_acc.add(accuracy(id_logits, targets), n=targets.size(0))
+            self.logger.memory.add(self.logger.get_memory_usage())
+            self.logger.id_score.add(id_score.item(), n=targets.size(0))
+            self.logger.ood_score.add(ood_score.item(), n=targets.size(0))
+            self.logger.step += 1
+
+        return f"Loss: {str(self.logger.train_loss)}, Acc: {str(self.logger.train_acc)}"
+
+def accuracy(output, target):
+    with torch.no_grad():
+        batch_size = target.size(0)
+        _, pred = output.topk(1, 1, True, True)
+        pred = pred.t()
+        correct = pred.eq(target.view(1, -1).expand_as(pred))
+    return correct[0].view(-1).float().sum().item() * 100.0 / batch_size
+File Path: learners/ood.py
+Content:
+# SPDX-License-Identifier: Apache-2.0
+# Copyright : JP Morgan Chase & Co
+
+import math
+
+import faiss
+import numpy as np
+import torch
+from torch.nn import functional as F
+from torch.distributions import MultivariateNormal
+from torch.utils.data import DataLoader, TensorDataset
+
+class NPOS:
+    def __init__(self, config):
+        self.knn_idx = faiss.IndexFlatL2(768)
+        self.K = config.get('K', 50)
+        self.sample_from = config.get('sample_from', 600)
+        self.select = config.get('select', 50)
+        self.cov_mat = config.get('cov', 1.0)
+        self.per_class = config.get('num_per_class', 40)
+        self.dis = MultivariateNormal(torch.zeros(768), torch.eye(768))
+        self.id_bsz = config.get('id_bsz', 128)
+        self.thres_id = config.get('thres_id', -15.0)
+        self.thres_ood = config.get('thres_ood', -3.0)
+        self.lmda = config.get('lmda', 0.1)
+        self.huber = torch.nn.HuberLoss().cuda() if config.get('huber', True) else torch.nn.MSELoss().cuda()
+
+    def generate(self, in_dist, subset_start=0):
+        num_cls = len(in_dist)
+        targets = torch.cat([torch.ones(t.size(0)).long() * (subset_start + i) for i, t in enumerate(in_dist)], dim=0)
+        ids = torch.cat(in_dist, dim=0)
+        id_count = ids.size(0)
+        oods = self._generate(ids, num_cls)
+        id_loader = DataLoader(dataset=TensorDataset(ids, targets), batch_size=self.id_bsz, shuffle=True)
+        num_batch = int(math.ceil(id_count / self.id_bsz))
+        ood_bsz = int(math.floor(oods.shape[0] / num_batch))
+        ood_loader = DataLoader(dataset=TensorDataset(oods), batch_size=ood_bsz)
+        return id_loader, ood_loader
+
+    def _generate(self, in_dist, num_cls):
+        offsets = self.dis.rsample((self.sample_from,))
+        normed = in_dist / torch.norm(in_dist, p=2, dim=1, keepdim=True)
+        select = min(self.select, normed.shape[0])
+        rand_ind = np.random.choice(normed.shape[0], replace=False)
+        self.knn_idx.add(normed.numpy())
+        boundary_ids = self._boundary(normed, select)
+        boundary_points = torch.cat([in_dist[i:i+1].repeat(self.sample_from, 1) for i in boundary_ids])
+        ood_list = self.cov_mat * offsets.repeat(select, 1)
+        oods = self._select_ood(ood_list, num_cls)
+        self.knn_idx.reset()
+        return oods
+
+    def _boundary(self, ids, select):
+        distance, _ = self.knn_idx.search(ids.numpy(), self.K)
+        _, min_ids = torch.topk(torch.tensor(distance[:, -1]), select)
+        return min_ids
+
+    def _select_ood(self, ood_list, num_cls):
+        distance, _ = self.knn_idx.search(ood_list.numpy(), self.K)
+        k_th_distance = torch.tensor(distance[:, -1])
+        num_points = min(k_th_distance.shape[0], self.per_class * num_cls)
+        _, min_ids = torch.topk(k_th_distance, num_points, dim=0)
+        min_ids = min_ids.squeeze()
+        return ood_list[min_ids]
+
+    def loss(self, id_logits, ood_logits):
+        id_score = -torch.logsumexp(id_logits, dim=1)
+        ood_score = -torch.logsumexp(ood_logits, dim=1)
+        id_dist = F.relu(id_score - self.thres_id)
+        ood_dist = F.relu(self.thres_ood - ood_score)
+        return (
+            self.lmda * (
+                self.huber(id_dist, torch.zeros_like(id_dist)) +
+                self.huber(ood_dist, torch.zeros_like(ood_dist))
+            ),
+            id_score.mean(),
+            ood_score.mean()
+        )
+File Path: learners/prompt.py
+Content:
+# SPDX-License-Identifier: Apache-2.0
+# Copyright : JP Morgan Chase & Co
+
+from .default import NormalNN
+import models
+
+class Prompt(NormalNN):
+    def __init__(self, out_dim, args, logger):
+        self.prompt_param = [args.tasks, args.prompt_param]
+        super().__init__(out_dim, args, logger)
+
+    def _get_learnable_params(self):
+        return list(self.model.module.prompt.parameters()) + list(self.model.module.last.parameters())
+
+    def _create_model(self):
+        pass
+
+class CODAPrompt(Prompt):
+    def _create_model(self):
+        return models.__dict__[self.model_type].__dict__[self.model_name](
+            out_dim=self.out_dim, prompt_flag='coda', prompt_param=self.prompt_param
+        )
+
+class DualPrompt(Prompt):
+    def _create_model(self):
+        return models.__dict__[self.model_type].__dict__[self.model_name](
+            out_dim=self.out_dim, prompt_flag='dual', prompt_param=self.prompt_param
+        )
+
+class L2P(Prompt):
+    def _create_model(self):
+        return models.__dict__[self.model_type].__dict__[self.model_name](
+            out_dim=self.out_dim, prompt_flag='l2p', prompt_param=self.prompt_param
+        )
+
+class OnePrompt(Prompt):
+    def _create_model(self):
+        return models.__dict__[self.model_type].__dict__[self.model_name](
+            out_dim=self.out_dim, prompt_flag='oneprompt', prompt_param=self.prompt_param
+        )
+File Path: models/__init__.py
+Content:
+# SPDX-License-Identifier: Apache-2.0
+# Copyright : JP Morgan Chase & Co
+
+from . import vit
+from . import zoo
+File Path: models/vit.py
+Content:
+# SPDX-License-Identifier: Apache-2.0
+# Copyright : JP Morgan Chase & Co
+
+'''
+ * Based on vit from blip code base
+ * https://github.com/salesforce/BLIP
+'''
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from functools import partial
+
+from timm.models.vision_transformer import _cfg, PatchEmbed
+from timm.models.registry import register_model
+from timm.models.layers import trunc_normal_, DropPath
+from timm.models.helpers import named_apply, adapt_input_conv
+
+class Mlp(nn.Module):
+    """ MLP as used in Vision Transformer, MLP-Mixer and related networks
+    """
+    def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
+        super().__init__()
+        out_features = out_features or in_features
+        hidden_features = hidden_features or in_features
+        self.fc1 = nn.Linear(in_features, hidden_features)
+        self.act = act_layer()
+        self.fc2 = nn.Linear(hidden_features, out_features)
+        self.drop = nn.Dropout(drop)
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = self.act(x)
+        x = self.drop(x)
+        x = self.fc2(x)
+        x = self.drop(x)
+        return x
+
+
+class Attention(nn.Module):
+    def __init__(self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0.):
+        super().__init__()
+        self.num_heads = num_heads
+        head_dim = dim // num_heads
+        # NOTE scale factor was wrong in my original version, can set manually to be compat with prev weights
+        self.scale = qk_scale or head_dim ** -0.5
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop)
+        self.attn_gradients = None
+        self.attention_map = None
+        
+    def save_attn_gradients(self, attn_gradients):
+        self.attn_gradients = attn_gradients
+        
+    def get_attn_gradients(self):
+        return self.attn_gradients
+    
+    def save_attention_map(self, attention_map):
+        self.attention_map = attention_map
+        
+    def get_attention_map(self):
+        return self.attention_map
+    
+    def forward(self, x, register_hook=False, prompt=None):
+        B, N, C = x.shape
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]   # make torchscript happy (cannot use tensor as tuple)
+
+        if prompt is not None:
+            pk, pv = prompt
+            pk = pk.reshape(B, -1, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
+            pv = pv.reshape(B, -1, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
+            k = torch.cat((pk,k), dim=2)
+            v = torch.cat((pv,v), dim=2)
+
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+                
+        if register_hook:
+            self.save_attention_map(attn)
+            attn.register_hook(self.save_attn_gradients)        
+
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x
+
+
+class Block(nn.Module):
+
+    def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop=0., attn_drop=0.,
+                 drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm):
+        super().__init__()
+        self.norm1 = norm_layer(dim)
+        self.attn = Attention(
+            dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
+        # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
+        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+        self.norm2 = norm_layer(dim)
+        mlp_hidden_dim = int(dim * mlp_ratio)
+        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
+
+
+    def forward(self, x, register_hook=False, prompt=None):
+        x = x + self.drop_path(self.attn(self.norm1(x), register_hook=register_hook, prompt=prompt))
+        x = x + self.drop_path(self.mlp(self.norm2(x)))
+        return x
+
+    
+class VisionTransformer(nn.Module):
+    """ Vision Transformer
+    A PyTorch impl of : `An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale`  -
+        https://arxiv.org/abs/2010.11929
+    """
+    def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, embed_dim=768, depth=12,
+                 num_heads=12, mlp_ratio=4., qkv_bias=True, qk_scale=None, representation_size=None,
+                 drop_rate=0., attn_drop_rate=0., drop_path_rate=0., norm_layer=None, 
+                 ckpt_layer=0):
+        """
+        Args:
+            img_size (int, tuple): input image size
+            patch_size (int, tuple): patch size
+            in_chans (int): number of input channels
+            num_classes (int): number of classes for classification head
+            embed_dim (int): embedding dimension
+            depth (int): depth of transformer
+            num_heads (int): number of attention heads
+            mlp_ratio (int): ratio of mlp hidden dim to embedding dim
+            qkv_bias (bool): enable bias for qkv if True
+            qk_scale (float): override default qk scale of head_dim ** -0.5 if set
+            representation_size (Optional[int]): enable and set representation layer (pre-logits) to this value if set
+            drop_rate (float): dropout rate
+            attn_drop_rate (float): attention dropout rate
+            drop_path_rate (float): stochastic depth rate
+            norm_layer: (nn.Module): normalization layer
+        """
+        super().__init__()
+        self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
+        norm_layer = norm_layer or partial(nn.LayerNorm, eps=1e-6)
+
+        self.patch_embed = PatchEmbed(
+            img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim)
+
+        num_patches = self.patch_embed.num_patches
+
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
+        self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, embed_dim))
+        self.pos_drop = nn.Dropout(p=drop_rate)
+
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
+        self.blocks = nn.ModuleList([
+            Block(
+                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
+                )
+            for i in range(depth)])
+        self.norm = norm_layer(embed_dim)
+
+        trunc_normal_(self.pos_embed, std=.02)
+        trunc_normal_(self.cls_token, std=.02)
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {'pos_embed', 'cls_token'}
+
+    def forward(self, x, register_blk=-1, prompt=None, q=None, train=False):
+        B = x.shape[0]
+        x = self.patch_embed(x)
+
+        cls_tokens = self.cls_token.expand(B, -1, -1)  # stole cls_tokens impl from Phil Wang, thanks
+        x = torch.cat((cls_tokens, x), dim=1)
+  
+        x = x + self.pos_embed[:,:x.size(1),:]
+        x = self.pos_drop(x)
+
+        prompt_loss = torch.zeros((1,), requires_grad=True).cuda()
+        for i,blk in enumerate(self.blocks):
+
+            if prompt is not None:
+                if train:
+                    p_list, loss, x = prompt.forward(q, i, x, train=True)
+                    prompt_loss += loss
+                else:
+                    p_list, _, x = prompt.forward(q, i, x, train=False)
+                # if p_list is not None and i == 1:
+                #     print(x[0,0,0:10])
+                #     print(p_list[0][0,0,0:10])
+                #     print(apple)
+                # if p_list is not None:
+                #     x = torch.concat((x[:,0,:].unsqueeze(1),p_list[0],p_list[1],x[:,1:,:]), dim=1)
+                #     p_list = None
+            else:
+                p_list = None
+
+            x = blk(x, register_blk==i, prompt=p_list)
+            # if i == 11: x = x.detach()
+
+        x = self.norm(x)
+        if prompt is not None:
+            prompt_loss /= len(prompt.e_layers)
+        
+        return x, prompt_loss
+
+    @torch.jit.ignore()
+    def load_pretrained(self, checkpoint_path, prefix=''):
+        _load_weights(self, checkpoint_path, prefix)
+        
+
+@torch.no_grad()
+def _load_weights(model: VisionTransformer, checkpoint_path: str, prefix: str = ''):
+    """ Load weights from .npz checkpoints for official Google Brain Flax implementation
+    """
+    import numpy as np
+
+    def _n2p(w, t=True):
+        if w.ndim == 4 and w.shape[0] == w.shape[1] == w.shape[2] == 1:
+            w = w.flatten()
+        if t:
+            if w.ndim == 4:
+                w = w.transpose([3, 2, 0, 1])
+            elif w.ndim == 3:
+                w = w.transpose([2, 0, 1])
+            elif w.ndim == 2:
+                w = w.transpose([1, 0])
+        return torch.from_numpy(w)
+
+    w = np.load(checkpoint_path)
+    if not prefix and 'opt/target/embedding/kernel' in w:
+        prefix = 'opt/target/'
+
+    if hasattr(model.patch_embed, 'backbone'):
+        # hybrid
+        backbone = model.patch_embed.backbone
+        stem_only = not hasattr(backbone, 'stem')
+        stem = backbone if stem_only else backbone.stem
+        stem.conv.weight.copy_(adapt_input_conv(stem.conv.weight.shape[1], _n2p(w[f'{prefix}conv_root/kernel'])))
+        stem.norm.weight.copy_(_n2p(w[f'{prefix}gn_root/scale']))
+        stem.norm.bias.copy_(_n2p(w[f'{prefix}gn_root/bias']))
+        if not stem_only:
+            for i, stage in enumerate(backbone.stages):
+                for j, block in enumerate(stage.blocks):
+                    bp = f'{prefix}block{i + 1}/unit{j + 1}/'
+                    for r in range(3):
+                        getattr(block, f'conv{r + 1}').weight.copy_(_n2p(w[f'{bp}conv{r + 1}/kernel']))
+                        getattr(block, f'norm{r + 1}').weight.copy_(_n2p(w[f'{bp}gn{r + 1}/scale']))
+                        getattr(block, f'norm{r + 1}').bias.copy_(_n2p(w[f'{bp}gn{r + 1}/bias']))
+                    if block.downsample is not None:
+                        block.downsample.conv.weight.copy_(_n2p(w[f'{bp}conv_proj/kernel']))
+                        block.downsample.norm.weight.copy_(_n2p(w[f'{bp}gn_proj/scale']))
+                        block.downsample.norm.bias.copy_(_n2p(w[f'{bp}gn_proj/bias']))
+        embed_conv_w = _n2p(w[f'{prefix}embedding/kernel'])
+    else:
+        embed_conv_w = adapt_input_conv(
+            model.patch_embed.proj.weight.shape[1], _n2p(w[f'{prefix}embedding/kernel']))
+    model.patch_embed.proj.weight.copy_(embed_conv_w)
+    model.patch_embed.proj.bias.copy_(_n2p(w[f'{prefix}embedding/bias']))
+    model.cls_token.copy_(_n2p(w[f'{prefix}cls'], t=False))
+    pos_embed_w = _n2p(w[f'{prefix}Transformer/posembed_input/pos_embedding'], t=False)
+    if pos_embed_w.shape != model.pos_embed.shape:
+        pos_embed_w = resize_pos_embed(  # resize pos embedding when different size from pretrained weights
+            pos_embed_w, model.pos_embed, getattr(model, 'num_tokens', 1), model.patch_embed.grid_size)
+    model.pos_embed.copy_(pos_embed_w)
+    model.norm.weight.copy_(_n2p(w[f'{prefix}Transformer/encoder_norm/scale']))
+    model.norm.bias.copy_(_n2p(w[f'{prefix}Transformer/encoder_norm/bias']))
+#     if isinstance(model.head, nn.Linear) and model.head.bias.shape[0] == w[f'{prefix}head/bias'].shape[-1]:
+#         model.head.weight.copy_(_n2p(w[f'{prefix}head/kernel']))
+#         model.head.bias.copy_(_n2p(w[f'{prefix}head/bias']))
+#     if isinstance(getattr(model.pre_logits, 'fc', None), nn.Linear) and f'{prefix}pre_logits/bias' in w:
+#         model.pre_logits.fc.weight.copy_(_n2p(w[f'{prefix}pre_logits/kernel']))
+#         model.pre_logits.fc.bias.copy_(_n2p(w[f'{prefix}pre_logits/bias']))
+    for i, block in enumerate(model.blocks.children()):
+        block_prefix = f'{prefix}Transformer/encoderblock_{i}/'
+        mha_prefix = block_prefix + 'MultiHeadDotProductAttention_1/'
+        block.norm1.weight.copy_(_n2p(w[f'{block_prefix}LayerNorm_0/scale']))
+        block.norm1.bias.copy_(_n2p(w[f'{block_prefix}LayerNorm_0/bias']))
+        block.attn.qkv.weight.copy_(torch.cat([
+            _n2p(w[f'{mha_prefix}{n}/kernel'], t=False).flatten(1).T for n in ('query', 'key', 'value')]))
+        block.attn.qkv.bias.copy_(torch.cat([
+            _n2p(w[f'{mha_prefix}{n}/bias'], t=False).reshape(-1) for n in ('query', 'key', 'value')]))
+        block.attn.proj.weight.copy_(_n2p(w[f'{mha_prefix}out/kernel']).flatten(1))
+        block.attn.proj.bias.copy_(_n2p(w[f'{mha_prefix}out/bias']))
+        for r in range(2):
+            getattr(block.mlp, f'fc{r + 1}').weight.copy_(_n2p(w[f'{block_prefix}MlpBlock_3/Dense_{r}/kernel']))
+            getattr(block.mlp, f'fc{r + 1}').bias.copy_(_n2p(w[f'{block_prefix}MlpBlock_3/Dense_{r}/bias']))
+        block.norm2.weight.copy_(_n2p(w[f'{block_prefix}LayerNorm_2/scale']))
+        block.norm2.bias.copy_(_n2p(w[f'{block_prefix}LayerNorm_2/bias']))
+
+            
+def interpolate_pos_embed(pos_embed_checkpoint, visual_encoder):        
+    # interpolate position embedding
+    embedding_size = pos_embed_checkpoint.shape[-1]
+    num_patches = visual_encoder.patch_embed.num_patches
+    num_extra_tokens = visual_encoder.pos_embed.shape[-2] - num_patches
+    # height (== width) for the checkpoint position embedding
+    orig_size = int((pos_embed_checkpoint.shape[-2] - num_extra_tokens) ** 0.5)
+    # height (== width) for the new position embedding
+    new_size = int(num_patches ** 0.5)
+
+    if orig_size!=new_size:
+        # class_token and dist_token are kept unchanged
+        extra_tokens = pos_embed_checkpoint[:, :num_extra_tokens]
+        # only the position tokens are interpolated
+        pos_tokens = pos_embed_checkpoint[:, num_extra_tokens:]
+        pos_tokens = pos_tokens.reshape(-1, orig_size, orig_size, embedding_size).permute(0, 3, 1, 2)
+        pos_tokens = torch.nn.functional.interpolate(
+            pos_tokens, size=(new_size, new_size), mode='bicubic', align_corners=False)
+        pos_tokens = pos_tokens.permute(0, 2, 3, 1).flatten(1, 2)
+        new_pos_embed = torch.cat((extra_tokens, pos_tokens), dim=1)
+        print('reshape position embedding from %d to %d'%(orig_size ** 2,new_size ** 2))
+        
+        return new_pos_embed    
+    else:
+        return pos_embed_checkpoint
+File Path: models/zoo.py
+Content:
+# SPDX-License-Identifier: Apache-2.0
+# Copyright : JP Morgan Chase & Co
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.nn.init as init
+import torchvision.models as models
+from torch.autograd import Variable
+from .vit import VisionTransformer
+import numpy as np
+import copy
+
+class CodaPrompt(nn.Module):
+    def __init__(self, emb_d, n_tasks, prompt_param, key_dim=768):
+        super().__init__()
+        self.task_count = 0
+        self.emb_d = emb_d
+        self.key_d = key_dim
+        self.n_tasks = n_tasks
+        self._init_smart(emb_d, prompt_param)
+
+        # e prompt init
+        for e in self.e_layers:
+            # for model saving/loading simplicity, we init the full paramaters here
+            # however, please note that we reinit the new components at each task
+            # in the "spirit of continual learning", as we don't know how many tasks
+            # we will encounter at the start of the task sequence
+            #
+            # in the original paper, we used ortho init at the start - this modification is more 
+            # fair in the spirit of continual learning and has little affect on performance
+            e_l = self.e_p_length
+            p = tensor_prompt(self.e_pool_size, e_l, emb_d)
+            k = tensor_prompt(self.e_pool_size, self.key_d)
+            a = tensor_prompt(self.e_pool_size, self.key_d)
+            p = self.gram_schmidt(p)
+            k = self.gram_schmidt(k)
+            a = self.gram_schmidt(a)
+            setattr(self, f'e_p_{e}',p)
+            setattr(self, f'e_k_{e}',k)
+            setattr(self, f'e_a_{e}',a)
+
+    def _init_smart(self, emb_d, prompt_param):
+
+        # prompt basic param
+        self.e_pool_size = int(prompt_param[0])
+        self.e_p_length = int(prompt_param[1])
+        self.e_layers = [0,1,2,3,4]
+
+        # strenth of ortho penalty
+        self.ortho_mu = prompt_param[2]
+        
+    def process_task_count(self):
+        self.task_count += 1
+
+        # in the spirit of continual learning, we will reinit the new components
+        # for the new task with Gram Schmidt
+        #
+        # in the original paper, we used ortho init at the start - this modification is more 
+        # fair in the spirit of continual learning and has little affect on performance
+        # 
+        # code for this function is modified from:
+        # https://github.com/legendongary/pytorch-gram-schmidt/blob/master/gram_schmidt.py
+        for e in self.e_layers:
+            K = getattr(self,f'e_k_{e}')
+            A = getattr(self,f'e_a_{e}')
+            P = getattr(self,f'e_p_{e}')
+            k = self.gram_schmidt(K)
+            a = self.gram_schmidt(A)
+            p = self.gram_schmidt(P)
+            setattr(self, f'e_p_{e}',p)
+            setattr(self, f'e_k_{e}',k)
+            setattr(self, f'e_a_{e}',a)
+
+    # code for this function is modified from:
+    # https://github.com/legendongary/pytorch-gram-schmidt/blob/master/gram_schmidt.py
+    def gram_schmidt(self, vv):
+
+        def projection(u, v):
+            denominator = (u * u).sum()
+
+            if denominator < 1e-8:
+                return None
+            else:
+                return (v * u).sum() / denominator * u
+
+        # check if the tensor is 3D and flatten the last two dimensions if necessary
+        is_3d = len(vv.shape) == 3
+        if is_3d:
+            shape_2d = copy.deepcopy(vv.shape)
+            vv = vv.view(vv.shape[0],-1)
+
+        # swap rows and columns
+        vv = vv.T
+
+        # process matrix size
+        nk = vv.size(1)
+        uu = torch.zeros_like(vv, device=vv.device)
+
+        # get starting point
+        pt = int(self.e_pool_size / (self.n_tasks))
+        s = int(self.task_count * pt)
+        f = int((self.task_count + 1) * pt)
+        if s > 0:
+            uu[:, 0:s] = vv[:, 0:s].clone()
+        for k in range(s, f):
+            redo = True
+            while redo:
+                redo = False
+                vk = torch.randn_like(vv[:,k]).to(vv.device)
+                uk = 0
+                for j in range(0, k):
+                    if not redo:
+                        uj = uu[:, j].clone()
+                        proj = projection(uj, vk)
+                        if proj is None:
+                            redo = True
+                            print('restarting!!!')
+                        else:
+                            uk = uk + proj
+                if not redo: uu[:, k] = vk - uk
+        for k in range(s, f):
+            uk = uu[:, k].clone()
+            uu[:, k] = uk / (uk.norm())
+
+        # undo swapping of rows and columns
+        uu = uu.T 
+
+        # return from 2D
+        if is_3d:
+            uu = uu.view(shape_2d)
+        
+        return torch.nn.Parameter(uu) 
+
+    def forward(self, x_querry, l, x_block, train=False):
+
+        # e prompts
+        e_valid = False
+        if l in self.e_layers:
+            e_valid = True
+            B, C = x_querry.shape
+
+            K = getattr(self,f'e_k_{l}')
+            A = getattr(self,f'e_a_{l}')
+            p = getattr(self,f'e_p_{l}')
+            pt = int(self.e_pool_size / (self.n_tasks))
+            s = int(self.task_count * pt)
+            f = int((self.task_count + 1) * pt)
+            
+            # freeze/control past tasks
+            if train:
+                if self.task_count > 0:
+                    K = torch.cat((K[:s].detach().clone(),K[s:f]), dim=0)
+                    A = torch.cat((A[:s].detach().clone(),A[s:f]), dim=0)
+                    p = torch.cat((p[:s].detach().clone(),p[s:f]), dim=0)
+                else:
+                    K = K[s:f]
+                    A = A[s:f]
+                    p = p[s:f]
+            else:
+                K = K[0:f]
+                A = A[0:f]
+                p = p[0:f]
+
+            # with attention and cosine sim
+            # (b x 1 x d) * soft([1 x k x d]) = (b x k x d) -> attention = k x d
+            a_querry = torch.einsum('bd,kd->bkd', x_querry, A)
+            # # (b x k x d) - [1 x k x d] = (b x k) -> key = k x d
+            n_K = nn.functional.normalize(K, dim=1)
+            q = nn.functional.normalize(a_querry, dim=2)
+            aq_k = torch.einsum('bkd,kd->bk', q, n_K)
+            # (b x 1 x k x 1) * [1 x plen x k x d] = (b x plen x d) -> prompt = plen x k x d
+            P_ = torch.einsum('bk,kld->bld', aq_k, p)
+
+            # select prompts
+            i = int(self.e_p_length/2)
+            Ek = P_[:,:i,:]
+            Ev = P_[:,i:,:]
+
+            # ortho penalty
+            if train and self.ortho_mu > 0:
+                loss = ortho_penalty(K) * self.ortho_mu
+                loss += ortho_penalty(A) * self.ortho_mu
+                loss += ortho_penalty(p.view(p.shape[0], -1)) * self.ortho_mu
+            else:
+                loss = 0
+        else:
+            loss = 0
+
+        # combine prompts for prefix tuning
+        if e_valid:
+            p_return = [Ek, Ev]
+        else:
+            p_return = None
+
+        # return
+        return p_return, loss, x_block
+
+def ortho_penalty(t):
+    return ((t @t.T - torch.eye(t.shape[0]).cuda())**2).mean()
+
+class DualPrompt(nn.Module):
+    def __init__(self, emb_d, n_tasks, prompt_param, key_dim=768):
+        super().__init__()
+        self.task_count = 0
+        self.emb_d = emb_d
+        self.key_d = key_dim
+        self.n_tasks = n_tasks
+        self._init_smart(emb_d, prompt_param)
+
+        # g prompt init
+        for g in self.g_layers:
+            p = tensor_prompt(self.g_p_length, emb_d)
+            setattr(self, f'g_p_{g}',p)
+
+        # e prompt init
+        for e in self.e_layers:
+            p = tensor_prompt(self.e_pool_size, self.e_p_length, emb_d)
+            k = tensor_prompt(self.e_pool_size, self.key_d)
+            setattr(self, f'e_p_{e}',p)
+            setattr(self, f'e_k_{e}',k)
+
+    def _init_smart(self, emb_d, prompt_param):
+        
+        self.top_k = 1
+        self.task_id_bootstrap = True
+
+        # prompt locations
+        self.g_layers = [0,1]
+        self.e_layers = [2,3,4]
+
+        # prompt pool size
+        self.g_p_length = int(prompt_param[2])
+        self.e_p_length = int(prompt_param[1])
+        self.e_pool_size = int(prompt_param[0])
+
+    def process_task_count(self):
+        self.task_count += 1
+
+    def forward(self, x_querry, l, x_block, train=False):
+
+        # e prompts
+        e_valid = False
+        if l in self.e_layers:
+            e_valid = True
+            B, C = x_querry.shape
+            K = getattr(self,f'e_k_{l}') # 0 based indexing here
+            p = getattr(self,f'e_p_{l}') # 0 based indexing here
+            
+            # cosine similarity to match keys/querries
+            n_K = nn.functional.normalize(K, dim=1)
+            q = nn.functional.normalize(x_querry, dim=1).detach()
+            cos_sim = torch.einsum('bj,kj->bk', q, n_K)
+            
+            if train:
+                # dual prompt during training uses task id
+                if self.task_id_bootstrap:
+                    loss = (1.0 - cos_sim[:, self.task_count]).mean()
+                    P_ = p[self.task_count].expand(len(x_querry),-1,-1)
+                else:
+                    top_k = torch.topk(cos_sim, self.top_k, dim=1)
+                    k_idx = top_k.indices
+                    loss = (1.0 - cos_sim[:,k_idx]).mean()
+                    P_ = p[k_idx]
+            else:
+                top_k = torch.topk(cos_sim, self.top_k, dim=1)
+                k_idx = top_k.indices
+                P_ = p[k_idx]
+                
+            # select prompts
+            if train and self.task_id_bootstrap:
+                i = int(self.e_p_length/2)
+                Ek = P_[:,:i,:].reshape((B,-1,self.emb_d))
+                Ev = P_[:,i:,:].reshape((B,-1,self.emb_d))
+            else:
+                i = int(self.e_p_length/2)
+                Ek = P_[:,:,:i,:].reshape((B,-1,self.emb_d))
+                Ev = P_[:,:,i:,:].reshape((B,-1,self.emb_d))
+        
+        # g prompts
+        g_valid = False
+        if l in self.g_layers:
+            g_valid = True
+            j = int(self.g_p_length/2)
+            p = getattr(self,f'g_p_{l}') # 0 based indexing here
+            P_ = p.expand(len(x_querry),-1,-1)
+            Gk = P_[:,:j,:]
+            Gv = P_[:,j:,:]
+
+        # combine prompts for prefix tuning
+        if e_valid and g_valid:
+            Pk = torch.cat((Ek, Gk), dim=1)
+            Pv = torch.cat((Ev, Gv), dim=1)
+            p_return = [Pk, Pv]
+        elif e_valid:
+            p_return = [Ek, Ev]
+        elif g_valid:
+            p_return = [Gk, Gv]
+            loss = 0
+        else:
+            p_return = None
+            loss = 0
+
+        # return
+        if train:
+            return p_return, loss, x_block
+        else:
+            return p_return, 0, x_block
+
+class L2P(DualPrompt):
+    def __init__(self, emb_d, n_tasks, prompt_param, key_dim=768):
+        super().__init__(emb_d, n_tasks, prompt_param, key_dim)
+
+    def _init_smart(self, emb_d, prompt_param):
+        self.top_k = 5
+        self.task_id_bootstrap = False
+
+        # prompt locations
+        self.g_layers = []
+        if prompt_param[2] > 0:
+            self.e_layers = [0,1,2,3,4]
+        else:
+            self.e_layers = [0]
+
+        # prompt pool size
+        self.g_p_length = -1
+        self.e_p_length = int(prompt_param[1])
+        self.e_pool_size = int(prompt_param[0])
+
+class OnePrompt(nn.Module):
+    def __init__(self, emb_d, n_tasks, prompt_param, key_dim=768):
+        super().__init__()
+        self.task_count = 0
+        self.emb_d = emb_d
+        self.key_d = key_dim
+        self.n_tasks = n_tasks
+        self._init_smart(emb_d, prompt_param)
+
+        # g prompt init
+        for g in self.g_layers:
+            p = tensor_prompt(self.g_p_length, emb_d)
+            setattr(self, f'g_p_{g}',p)
+
+        # e prompt init
+        for e in self.e_layers:
+            p = tensor_prompt(self.e_p_length, emb_d)
+            setattr(self, f'e_p_{e}',p)
+
+    def _init_smart(self, emb_d, prompt_param):
+        
+        self.top_k = 1
+        self.task_id_bootstrap = True
+
+        # prompt locations
+        self.g_layers = [0,1]
+        self.e_layers = [2,3,4]
+
+        # prompt length
+        self.g_p_length = int(prompt_param[2])
+        self.e_p_length = int(prompt_param[1])
+
+    def process_task_count(self):
+        self.task_count += 1
+
+    def forward(self, x_querry, l, x_block, train=False):
+
+        # e prompts
+        e_valid = False
+        if l in self.e_layers:
+            e_valid = True
+            p = getattr(self,f'e_p_{l}') # 0 based indexing here
+            P_ = p.expand(len(x_querry),-1,-1)
+            i = int(self.e_p_length/2)
+            Ek = P_[:,:i,:]
+            Ev = P_[:,i:,:]
+        
+        # g prompts
+        g_valid = False
+        if l in self.g_layers:
+            g_valid = True
+            j = int(self.g_p_length/2)
+            p = getattr(self,f'g_p_{l}') # 0 based indexing here
+            P_ = p.expand(len(x_querry),-1,-1)
+            Gk = P_[:,:j,:]
+            Gv = P_[:,j:,:]
+
+        # combine prompts for prefix tuning
+        if e_valid and g_valid:
+            Pk = torch.cat((Ek, Gk), dim=1)
+            Pv = torch.cat((Ev, Gv), dim=1)
+            p_return = [Pk, Pv]
+        elif e_valid:
+            p_return = [Ek, Ev]
+        elif g_valid:
+            p_return = [Gk, Gv]
+        else:
+            p_return = None
+
+        return p_return, 0, x_block
+
+# note - ortho init has not been found to help l2p/dual prompt
+def tensor_prompt(a, b, c=None, ortho=False):
+    if c is None:
+        p = torch.nn.Parameter(torch.FloatTensor(a,b), requires_grad=True)
+    else:
+        p = torch.nn.Parameter(torch.FloatTensor(a,b,c), requires_grad=True)
+    if ortho:
+        nn.init.orthogonal_(p)
+    else:
+        nn.init.uniform_(p)
+    return p    
+
+class ViTZoo(nn.Module):
+    def __init__(self, num_classes=10, pt=False, prompt_flag=False, prompt_param=None):
+        super(ViTZoo, self).__init__()
+
+        # get last layer
+        self.last = nn.Linear(512, num_classes)
+        self.prompt_flag = prompt_flag
+
+        # get feature encoder
+        if pt:
+            zoo_model = VisionTransformer(img_size=224, patch_size=16, embed_dim=768, depth=12,
+                                        num_heads=12, ckpt_layer=0,
+                                        drop_path_rate=0
+                                        )
+            from timm.models import vit_base_patch16_224
+            load_dict = vit_base_patch16_224(pretrained=True).state_dict()
+            del load_dict['head.weight']; del load_dict['head.bias']
+            zoo_model.load_state_dict(load_dict)
+
+        # classifier
+        self.last = nn.Linear(768, num_classes)
+
+        # create prompting module
+        if self.prompt_flag == 'l2p':
+            self.prompt = L2P(768, prompt_param[0], prompt_param[1])
+        elif self.prompt_flag == 'dual':
+            self.prompt = DualPrompt(768, prompt_param[0], prompt_param[1])
+        elif self.prompt_flag == 'coda':
+            self.prompt = CodaPrompt(768, prompt_param[0], prompt_param[1])
+        elif self.prompt_flag == 'oneprompt':
+            self.prompt = OnePrompt(768, prompt_param[0], prompt_param[1])
+        else:
+            self.prompt = None
+        
+        # feature encoder changes if transformer vs resnet
+        self.feat = zoo_model
+
+    def forward(self, x, train=False, last=False, warmup=False, feat=False):
+        if last:
+            return self.last(x)
+
+        if self.prompt is not None:
+            if self.prompt_flag  == 'oneprompt':
+                out, prompt_loss = self.feat(
+                    x, prompt=self.prompt,
+                    q=torch.zeros(x.size(0), 768, device=x.device), train=train
+                )
+            else:
+                with torch.no_grad():
+                    q, _ = self.feat(x)
+                    q = q[:, 0, :]
+                out, prompt_loss = self.feat(x, prompt=self.prompt, q=q, train=train)
+            out = out[:, 0, :]
+            if warmup:
+                prompt_loss = torch.zeros_like(prompt_loss)
+                out = out.detach()
+        else:
+            out, _ = self.feat(x)
+            out = out[:, 0, :]
+        out = out.view(out.size(0), -1)
+
+        if feat:
+            return out
+        out = self.last(out)
+        if self.prompt is not None and train:
+            return out, prompt_loss
+        else:
+            return out
+            
+def vit_pt_imnet(out_dim, block_division = None, prompt_flag = 'None', prompt_param=None):
+    return ViTZoo(num_classes=out_dim, pt=True, prompt_flag=prompt_flag, prompt_param=prompt_param)
+
+
+File Path: run.py
+Content:
+# SPDX-License-Identifier: Apache-2.0
+# Copyright : JP Morgan Chase & Co
+
+import argparse
+import numpy as np
+import torch
+import random
+from utils.config import Config
+from utils.logger import Logger
+from trainer import Trainer
+
+def get_args():
+    cfg = Config(yaml_path='configs/common.yaml')
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', type=str, default=None, help='yaml experiment config input')
+    parser.add_argument('--gpus', type=int, nargs='+', default=[0, 1, 2, 3],
+                        help='The list of gpuid, ex:--gpuid 3 1. Negative value means cpu-only')
+    parser.add_argument('--repeat', type=int, default=1, help='Repeat the experiment N times')
+    parsed, unparsed = parser.parse_known_args()
+    if parsed.config is not None:
+        cfg.merge(parsed.config)
+    cfg.update(gpus=parsed.gpus, repeat=parsed.repeat)
+
+    ood = cfg.ood
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--cov', type=float, default=ood.cov)
+    parser.add_argument('--thres_id', type=float, default=ood.thres_id)
+    parser.add_argument('--thres_ood', type=float, default=ood.thres_ood)
+    parser.add_argument('--num_per_class', type=int, default=40)
+    parser.add_argument('--sample_from', type=int, default=600)
+    parser.add_argument('--select', type=int, default=50)
+    parser.add_argument('--pick_nums', type=int, default=30)
+    parser.add_argument('--K', type=int, default=50)
+    parser.add_argument('--lmda', type=float, default=ood.lmda)
+    parser.add_argument('--huber', action='store_false')
+    parsed, unparsed = parser.parse_known_args(unparsed)
+    ood.merge(vars(parsed))
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--log_dir', type=str, default=None,
+                        help='Dir to save experiment results, named with hps if not set')
+    parser.add_argument('--learner_type', type=str, default='prompt', help='The type (filename) of learner')
+    parser.add_argument('--learner_name', type=str, default='OnePrompt', help='The class name of learner')
+    parser.add_argument('--prompt_param', nargs='+', type=float, default=[10, 40, 10],
+                        help='e prompt pool size, e prompt length, g prompt length')
+    parser.add_argument('--epochs', nargs='+', type=int, default=cfg.epochs,
+                        help='warmup epochs, regular training epochs, ood epochs')
+    args = parser.parse_args(unparsed)
+    cfg.update(learner_type=args.learner_type, learner_name=args.learner_name,
+               prompt_param=args.prompt_param, epochs=args.epochs)
+    cfg.logging.log_dir = args.log_dir or generate_log_dir(cfg)
+    for i in range(cfg.tasks):
+        cfg.logging.metrics[f"eval_acc_cil_{i+1}"] = "{last:.4f}"
+        cfg.logging.metrics[f"eval_acc_til_{i+1}"] = "{last:.4f}"
+    return cfg
+
+def generate_log_dir(cfg):
+    learner_dict = {'CODAPrompt': 'coda', 'DualPrompt': 'dualprompt', 'L2P': 'l2p', 'OnePrompt': 'oneprompt'}
+    prefix = '/'.join([
+        'outputs', cfg.dataset, str(cfg.tasks),
+        learner_dict.get(cfg.learner_name, 'default')
+    ])
+    hps = [prefix]
+    epochs = cfg.epochs
+    if epochs[0] > 0 or epochs[2] > 0:
+        hps.append(f"e{epochs[0]}{epochs[1]}{epochs[2]}")
+    if epochs[2] > 0:
+        ood = cfg.ood
+        hps.append(f"ood-{int(abs(ood.thres_id * 10))}-{int(abs(ood.thres_ood * 10))}-cov{int(10 * ood.cov):02d}-{ood.num_per_class}pc")
+        hps.append(f"lmda{int(10 * ood.lmda):02d}")
+    return '-'.join(hps)
+
+if __name__ == '__main__':
+    torch.backends.cudnn.deterministic=True
+
+    args = get_args()
+
+    results = {'Avg_acc': [], 'Forgetting': []}
+    for r in range(args.repeat):
+        seed = r
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed(seed)
+
+        logger = Logger(args.logging, seed+1)
+        args.dump(f"{logger.log_dir}/args.yaml")
+
+        logger.log('************************************')
+        logger.log(f"* TRIAL {r+1}")
+        logger.log('************************************')
+        trainer = Trainer(args, seed, logger)
+        trainer.run()
+
+        results['Avg_acc'].append(logger.avg_acc.last)
+        results['Forgetting'].append(logger.forgetting.last)
+    avg_acc = np.array(results['Avg_acc'])
+    forget = np.array(results['Forgetting'])
+    logger.log(f"===Summary of all {args.repeat} runs===")
+    logger.log(f"Average accuracy: {avg_acc.mean():.2f}, std {avg_acc.std():.2f}")
+    logger.log(f"Forgetting: {forget.mean():.2f}, std {forget.std():.2f}")
+File Path: trainer.py
+Content:
+# SPDX-License-Identifier: Apache-2.0
+# Copyright : JP Morgan Chase & Co
+
+import datetime
+import numpy as np
+from tqdm import tqdm, trange
+
+from dataloaders import get_dataloaders
+import learners
+
+class Trainer:
+    def __init__(self, args, seed, logger):
+        self.logger = logger
+        self.data = get_dataloaders(args, seed)
+        self.split_size = args.split_size
+        self.num_task = args.tasks
+        self.learner = learners.__dict__[args.learner_type].__dict__[args.learner_name](
+            self.num_task * self.split_size, args, logger
+        )
+
+        self.logger.log(f"Number of parameters: {self.learner.count_params()}")
+        self.logger.log(f"Number of learnable parameters: {self.learner.count_learnable_params()}")
+
+    def run(self):
+        for task in trange(self.num_task, desc='Task'):
+            self.logger.task = task
+            self.learner.subset_start = task * self.split_size
+            self.learner.subset_end = (task + 1) * self.split_size
+            if task > 0:
+                self.learner.model.module.prompt.process_task_count()
+            self.learner.train(dataloader=self.data['train'][task], task=task)
+            self.learner.log_model()
+
+            forgetting = []
+            accs = []
+            forgetting_til = []
+            for task2 in range(task + 1):
+                if task - task2 > 0:
+                    max_acc = self.logger.metrics[f"eval_acc_cil_{task2+1}"].max
+                    max_acc_til = self.logger.metrics[f"eval_acc_til_{task2+1}"].max
+                cur_acc, preds, targets = self.learner.eval_cil(
+                    dataloader=self.data['test'][task2], model_task=task, data_task=task2
+                )
+                stats = np.zeros(self.num_task)
+                for p, t in zip(preds, targets):
+                    stats[p // self.split_size] += 1
+                self.logger.log(f"num of test samples: {stats.sum()}")
+                cur_acc_til = self.learner.eval_til(
+                    dataloader=self.data['test'][task2], model_task=task, data_task=task2,
+                    start=task2*self.split_size, end=(task2+1)*self.split_size
+                )
+                accs.append(cur_acc)
+                if task - task2 > 0:
+                    forgetting.append(max_acc - cur_acc)
+                    forgetting_til.append(max_acc_til - cur_acc_til)
+            avg_acc = np.array(accs).mean()
+            self.logger.avg_acc.add(avg_acc)
+            if task > 0:
+                avg_forget = np.array(forgetting).mean()
+                avg_forget_til = np.array(forgetting_til).mean()
+                self.logger.forgetting.add(avg_forget)
+                self.logger.forgetting_til.add(avg_forget_til)
+            self.logger.log(
+                f"Task {task+1}: Average acc {avg_acc:.4f}" + (
+                    f", Forgetting {avg_forget:.4f}, Forgetting-TIL {avg_forget_til:.4f}"
+                    if task > 0 else ''
+                )
+            )
+
+            train_time = self.logger.train_time.sum
+            eval_time = self.logger.eval_time.sum
+            self.logger.log(f"Train time till now: {datetime.timedelta(seconds=train_time)}")
+            self.logger.log(f"Eval time till now: {datetime.timedelta(seconds=eval_time)}")
+File Path: utils/config.py
+Content:
+# SPDX-License-Identifier: Apache-2.0
+# Copyright : JP Morgan Chase & Co
+
+from pathlib import Path
+import yaml
+
+class Config(dict):
+    """
+    Modified from EasyDict: https://github.com/makinacorpus/easydict
+    """
+    def __init__(self, d=None, yaml_path=None, **kwargs):
+        d = {} if d is None else dict(d)
+        if yaml_path is not None:
+            d.update(**yaml.load(open(yaml_path, 'r'), Loader=yaml.Loader))
+        if kwargs:
+            d.update(**kwargs)
+        for k, v in d.items():
+            setattr(self, k, v)
+        reserved_fns = ('update', 'pop', 'to_dict', 'dump', 'flatten', 'merge')
+        for k in self.__class__.__dict__.keys():
+            if not (k.startswith('__') and k.endswith('__')) and not k in reserved_fns:
+                setattr(self, k, getattr(self, k))
+
+    def __setattr__(self, name, value):
+        if isinstance(value, (list, tuple)):
+            value = [self.__class__(x) if isinstance(x, dict) else x for x in value]
+        elif isinstance(value, dict) and not isinstance(value, self.__class__):
+            value = self.__class__(value)
+        super().__setattr__(name, value)
+        super().__setitem__(name, value)
+
+    __setitem__ = __setattr__
+
+    def update(self, e=None, **f):
+        d = e or dict()
+        d.update(f)
+        for k in d:
+            setattr(self, k, d[k])
+
+    def pop(self, k, d=None):
+        delattr(self, k)
+        return super().pop(k, d)
+    
+    def to_dict(self):
+        return {k: v.to_dict() if isinstance(v, Config) else v for k, v in self.__dict__.items()}
+
+    def dump(self, path=None):
+        if path is None:
+            return yaml.dump(self.to_dict())
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        return yaml.dump(self.to_dict(), open(path, 'w'), default_flow_style=False)
+
+    def flatten(self, prefix=''):
+        d = dict()
+        for k, v in self.__dict__.items():
+            new_k = k if not prefix else prefix + '_' + k
+            if isinstance(v, Config):
+                d.update(**v.flatten(new_k))
+            else:
+                d[new_k] = v
+        return d
+
+    def merge(self, cfg):
+        if isinstance(cfg, str):
+            cfg = Config(yaml_path=cfg)
+        elif not isinstance(cfg, Config):
+            cfg = Config(d=cfg)
+        for k, v in cfg.items():
+            if k in self.__dict__ and isinstance(v, Config) and isinstance(getattr(self, k), Config):
+                getattr(self, k).merge(v)
+            else:
+                self.__setattr__(k, v)
+File Path: utils/logger.py
+Content:
+# SPDX-License-Identifier: Apache-2.0
+# Copyright : JP Morgan Chase & Co
+
+from collections import deque
+import os
+from pathlib import Path
+import time
+
+import torch
+from torch.cuda import max_memory_allocated
+import tqdm
+
+class Metric:
+    def __init__(self, fmt="{avg:.4f}", window=1000):
+        self.fmt = fmt
+        self.data = deque(maxlen=window)
+        self.reset()
+
+    def reset(self):
+        self.data.clear()
+        self.sum = 0.0
+        self.count = 0
+
+    def add(self, val, n=1):
+        self.data.extend([val] * n)
+        self.sum += val * n
+        self.count += n
+    
+    @property
+    def avg(self):
+        return self.sum / self.count
+
+    @property
+    def max(self):
+        return max(self.data)
+
+    @property
+    def last(self):
+        return self.data[-1]
+
+    def __str__(self):
+        return self.fmt.format(avg=self.avg, max=self.max, last=self.last)
+
+    def __repr__(self):
+        return f"({self.sum}, {self.count})"
+
+class DummyLogger:
+    def __getattr__(self, attr):
+        return self._dummy
+
+    def _dummy(self, *args, **kwargs):
+        pass
+
+class Logger:
+    def __init__(self, config, seed=1):
+        self.log_dir = config.log_dir + f"/run-{seed}"
+        Path(self.log_dir).mkdir(parents=True, exist_ok=True)
+        self.logger = LclLogger(config.log_dir + '/output.log')
+        self.metrics = self.setup_metrics(config.metrics)
+        self.counters = config.counters
+        for k in self.counters:
+            setattr(self, k, 0)
+        self.timer = Timer()
+
+    def setup_metrics(self, config):
+        d = dict()
+        if config is None:
+            return d
+        for k, v in config.items():
+            d[k] = Metric(v)
+        return d
+
+    def __getattr__(self, attr):
+        if attr in self.metrics:
+            return self.metrics[attr]
+        if attr in self.__dict__:
+            return self.__dict__[attr]
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{attr}'")
+
+    def log(self, msg):
+        self.logger.write(msg)
+
+    def get_metrics(self, metrics):
+        return {m: self.metrics[m].avg for m in metrics}
+
+    def reset(self):
+        for m in self.metrics.values():
+            m.reset()
+        for c in self.counters:
+            setattr(self, c, 0)
+
+    def __str__(self):
+        return ', '.join(
+            [f"{c}: {getattr(self, c)}" for c in self.counters] +
+            [f"{name}: {str(metric)}" for name, metric in self.metrics.items() if metric.count > 0]
+        )
+    
+    def get_memory_usage(self):
+        return max_memory_allocated() / 1048576
+
+    def log_model(self, model_state_dict):
+        for k, v in model_state_dict.items():
+            model_state_dict[k] = v.cpu()
+        checkpoint_path = f"{self.log_dir}/models/task{self.task}.pth"
+        Path(checkpoint_path).parent.mkdir(parents=True, exist_ok=True)
+        torch.save(model_state_dict, checkpoint_path)
+
+class LclLogger:
+    def __init__(self, path):
+        self.log = open(path, 'a')
+
+    def write(self, message):
+        tqdm.tqdm.write(message)
+        self.log.write(message + '\n')  
+
+    def flush(self):
+        self.log.flush()
+
+class Timer:
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.interval = 0
+        self.time = time.time()
+
+    def value(self):
+        return time.time() - self.time
+
+    def tic(self):
+        self.time = time.time()
+
+    def toc(self):
+        self.interval = time.time() - self.time
+        self.time = time.time()
+        return self.interval
+File Path: utils/schedulers.py
+Content:
+# SPDX-License-Identifier: Apache-2.0
+# Copyright : JP Morgan Chase & Co
+
+from torch.optim import Optimizer
+import math
+
+class _LRScheduler(object):
+    def __init__(self, optimizer, last_epoch=-1):
+        if not isinstance(optimizer, Optimizer):
+            raise TypeError('{} is not an Optimizer'.format(
+                type(optimizer).__name__))
+        self.optimizer = optimizer
+        if last_epoch == -1:
+            for group in optimizer.param_groups:
+                group.setdefault('initial_lr', group['lr'])
+        else:
+            for i, group in enumerate(optimizer.param_groups):
+                if 'initial_lr' not in group:
+                    raise KeyError("param 'initial_lr' is not specified "
+                                   "in param_groups[{}] when resuming an optimizer".format(i))
+        self.base_lrs = list(map(lambda group: group['initial_lr'], optimizer.param_groups))
+        self.step(last_epoch + 1)
+        self.last_epoch = last_epoch
+
+    def state_dict(self):
+        """Returns the state of the scheduler as a :class:`dict`.
+        It contains an entry for every variable in self.__dict__ which
+        is not the optimizer.
+        """
+        return {key: value for key, value in self.__dict__.items() if key != 'optimizer'}
+
+    def load_state_dict(self, state_dict):
+        """Loads the schedulers state.
+        Arguments:
+            state_dict (dict): scheduler state. Should be an object returned
+                from a call to :meth:`state_dict`.
+        """
+        self.__dict__.update(state_dict)
+
+    def get_lr(self):
+        raise NotImplementedError
+
+    def step(self, epoch=None):
+        if epoch is None:
+            epoch = self.last_epoch + 1
+        self.last_epoch = epoch
+        for param_group, lr in zip(self.optimizer.param_groups, self.get_lr()):
+            param_group['lr'] = lr
+
+class CosineSchedule(_LRScheduler):
+
+    def __init__(self, optimizer, K):
+        self.K = K
+        super().__init__(optimizer, -1)
+
+    def cosine(self, base_lr):
+        return base_lr * math.cos((99 * math.pi * (self.last_epoch)) / (200 * (self.K-1)))
+
+    def get_lr(self):
+        return [self.cosine(base_lr) for base_lr in self.base_lrs]
+Output:
+{
+    "experimental_code": "File Path: learners/ood.py\nContent:\n# SPDX-License-Identifier: Apache-2.0\n# Copyright : JP Morgan Chase & Co\n\nimport math\n\nimport faiss\nimport numpy as np\nimport torch\nfrom torch.nn import functional as F\nfrom torch.distributions import MultivariateNormal\nfrom torch.utils.data import DataLoader, TensorDataset\n\nclass NPOS:\n    def __init__(self, config):\n        self.knn_idx = faiss.IndexFlatL2(768)\n        self.K = config.get('K', 50)\n        self.sample_from = config.get('sample_from', 600)\n        self.select = config.get('select', 50)\n        self.cov_mat = config.get('cov', 1.0)\n        self.per_class = config.get('num_per_class', 40)\n        self.dis = MultivariateNormal(torch.zeros(768), torch.eye(768))\n        self.id_bsz = config.get('id_bsz', 128)\n        self.thres_id = config.get('thres_id', -15.0)\n        self.thres_ood = config.get('thres_ood', -3.0)\n        self.lmda = config.get('lmda', 0.1)\n        self.huber = torch.nn.HuberLoss().cuda() if config.get('huber', True) else torch.nn.MSELoss().cuda()\n\n    def generate(self, in_dist, subset_start=0):\n        num_cls = len(in_dist)\n        targets = torch.cat([torch.ones(t.size(0)).long() * (subset_start + i) for i, t in enumerate(in_dist)], dim=0)\n        ids = torch.cat(in_dist, dim=0)\n        id_count = ids.size(0)\n        oods = self._generate(ids, num_cls)\n        id_loader = DataLoader(dataset=TensorDataset(ids, targets), batch_size=self.id_bsz, shuffle=True)\n        num_batch = int(math.ceil(id_count / self.id_bsz))\n        ood_bsz = int(math.floor(oods.shape[0] / num_batch))\n        ood_loader = DataLoader(dataset=TensorDataset(oods), batch_size=ood_bsz)\n        return id_loader, ood_loader\n\n    def _generate(self, in_dist, num_cls):\n        offsets = self.dis.rsample((self.sample_from,))\n        normed = in_dist / torch.norm(in_dist, p=2, dim=1, keepdim=True)\n        select = min(self.select, normed.shape[0])\n        rand_ind = np.random.choice(normed.shape[0], replace=False)\n        self.knn_idx.add(normed.numpy())\n        boundary_ids = self._boundary(normed, select)\n        boundary_points = torch.cat([in_dist[i:i+1].repeat(self.sample_from, 1) for i in boundary_ids])\n        ood_list = self.cov_mat * offsets.repeat(select, 1)\n        oods = self._select_ood(ood_list, num_cls)\n        self.knn_idx.reset()\n        return oods\n\n    def _boundary(self, ids, select):\n        distance, _ = self.knn_idx.search(ids.numpy(), self.K)\n        _, min_ids = torch.topk(torch.tensor(distance[:, -1]), select)\n        return min_ids\n\n    def _select_ood(self, ood_list, num_cls):\n        distance, _ = self.knn_idx.search(ood_list.numpy(), self.K)\n        k_th_distance = torch.tensor(distance[:, -1])\n        num_points = min(k_th_distance.shape[0], self.per_class * num_cls)\n        _, min_ids = torch.topk(k_th_distance, num_points, dim=0)\n        min_ids = min_ids.squeeze()\n        return ood_list[min_ids]\n\n    def loss(self, id_logits, ood_logits):\n        id_score = -torch.logsumexp(id_logits, dim=1)\n        ood_score = -torch.logsumexp(ood_logits, dim=1)\n        id_dist = F.relu(id_score - self.thres_id)\n        ood_dist = F.relu(self.thres_ood - ood_score)\n        return (\n            self.lmda * (\n                self.huber(id_dist, torch.zeros_like(id_dist)) +\n                self.huber(ood_dist, torch.zeros_like(ood_dist))\n            ),\n            id_score.mean(),\n            ood_score.mean()\n        )\nFile Path: learners/prompt.py\nContent:\n# SPDX-License-Identifier: Apache-2.0\n# Copyright : JP Morgan Chase & Co\n\nfrom .default import NormalNN\nimport models\n\nclass Prompt(NormalNN):\n    def __init__(self, out_dim, args, logger):\n        self.prompt_param = [args.tasks, args.prompt_param]\n        super().__init__(out_dim, args, logger)\n\n    def _get_learnable_params(self):\n        return list(self.model.module.prompt.parameters()) + list(self.model.module.last.parameters())\n\n    def _create_model(self):\n        pass\n\nclass OnePrompt(Prompt):\n    def _create_model(self):\n        return models.__dict__[self.model_type].__dict__[self.model_name](\n            out_dim=self.out_dim, prompt_flag='oneprompt', prompt_param=self.prompt_param\n        )\nFile Path: models/zoo.py\nContent:\n# SPDX-License-Identifier: Apache-2.0\n# Copyright : JP Morgan Chase & Co\n\nimport torch\nimport torch.nn as nn\nimport torch.nn.functional as F\nimport torch.nn.init as init\nimport torchvision.models as models\nfrom torch.autograd import Variable\nfrom .vit import VisionTransformer\nimport numpy as np\nimport copy\n\nclass OnePrompt(nn.Module):\n    def __init__(self, emb_d, n_tasks, prompt_param, key_dim=768):\n        super().__init__()\n        self.task_count = 0\n        self.emb_d = emb_d\n        self.key_d = key_dim\n        self.n_tasks = n_tasks\n        self._init_smart(emb_d, prompt_param)\n\n        # g prompt init\n        for g in self.g_layers:\n            p = tensor_prompt(self.g_p_length, emb_d)\n            setattr(self, f'g_p_{g}',p)\n\n        # e prompt init\n        for e in self.e_layers:\n            p = tensor_prompt(self.e_p_length, emb_d)\n            setattr(self, f'e_p_{e}',p)\n\n    def _init_smart(self, emb_d, prompt_param):\n        \n        self.top_k = 1\n        self.task_id_bootstrap = True\n\n        # prompt locations\n        self.g_layers = [0,1]\n        self.e_layers = [2,3,4]\n\n        # prompt length\n        self.g_p_length = int(prompt_param[2])\n        self.e_p_length = int(prompt_param[1])\n\n    def process_task_count(self):\n        self.task_count += 1\n\n    def forward(self, x_querry, l, x_block, train=False):\n\n        # e prompts\n        e_valid = False\n        if l in self.e_layers:\n            e_valid = True\n            p = getattr(self,f'e_p_{l}') # 0 based indexing here\n            P_ = p.expand(len(x_querry),-1,-1)\n            i = int(self.e_p_length/2)\n            Ek = P_[:,:i,:]\n            Ev = P_[:,i:,:]\n        \n        # g prompts\n        g_valid = False\n        if l in self.g_layers:\n            g_valid = True\n            j = int(self.g_p_length/2)\n            p = getattr(self,f'g_p_{l}') # 0 based indexing here\n            P_ = p.expand(len(x_querry),-1,-1)\n            Gk = P_[:,:j,:]\n            Gv = P_[:,j:,:]\n\n        # combine prompts for prefix tuning\n        if e_valid and g_valid:\n            Pk = torch.cat((Ek, Gk), dim=1)\n            Pv = torch.cat((Ev, Gv), dim=1)\n            p_return = [Pk, Pv]\n        elif e_valid:\n            p_return = [Ek, Ev]\n        elif g_valid:\n            p_return = [Gk, Gv]\n        else:\n            p_return = None\n\n        return p_return, 0, x_block\n\n# note - ortho init has not been found to help l2p/dual prompt\ndef tensor_prompt(a, b, c=None, ortho=False):\n    if c is None:\n        p = torch.nn.Parameter(torch.FloatTensor(a,b), requires_grad=True)\n    else:\n        p = torch.nn.Parameter(torch.FloatTensor(a,b,c), requires_grad=True)\n    if ortho:\n        nn.init.orthogonal_(p)\n    else:\n        nn.init.uniform_(p)\n    return p    \n\nclass ViTZoo(nn.Module):\n    def __init__(self, num_classes=10, pt=False, prompt_flag=False, prompt_param=None):\n        super(ViTZoo, self).__init__()\n\n        # get last layer\n        self.last = nn.Linear(512, num_classes)\n        self.prompt_flag = prompt_flag\n\n        # get feature encoder\n        if pt:\n            zoo_model = VisionTransformer(img_size=224, patch_size=16, embed_dim=768, depth=12,\n                                        num_heads=12, ckpt_layer=0,\n                                        drop_path_rate=0\n                                        )\n            from timm.models import vit_base_patch16_224\n            load_dict = vit_base_patch16_224(pretrained=True).state_dict()\n            del load_dict['head.weight']; del load_dict['head.bias']\n            zoo_model.load_state_dict(load_dict)\n\n        # classifier\n        self.last = nn.Linear(768, num_classes)\n\n        # create prompting module\n        if self.prompt_flag == 'l2p':\n            self.prompt = L2P(768, prompt_param[0], prompt_param[1])\n        elif self.prompt_flag == 'dual':\n            self.prompt = DualPrompt(768, prompt_param[0], prompt_param[1])\n        elif self.prompt_flag == 'coda':\n            self.prompt = CodaPrompt(768, prompt_param[0], prompt_param[1])\n        elif self.prompt_flag == 'oneprompt':\n            self.prompt = OnePrompt(768, prompt_param[0], prompt_param[1])\n        else:\n            self.prompt = None\n        \n        # feature encoder changes if transformer vs resnet\n        self.feat = zoo_model\n\n    def forward(self, x, train=False, last=False, warmup=False, feat=False):\n        if last:\n            return self.last(x)\n\n        if self.prompt is not None:\n            if self.prompt_flag  == 'oneprompt':\n                out, prompt_loss = self.feat(\n                    x, prompt=self.prompt,\n                    q=torch.zeros(x.size(0), 768, device=x.device), train=train\n                )\n            else:\n                with torch.no_grad():\n                    q, _ = self.feat(x)\n                    q = q[:, 0, :]\n                out, prompt_loss = self.feat(x, prompt=self.prompt, q=q, train=train)\n            out = out[:, 0, :]\n            if warmup:\n                prompt_loss = torch.zeros_like(prompt_loss)\n                out = out.detach()\n        else:\n            out, _ = self.feat(x)\n            out = out[:, 0, :]\n        out = out.view(out.size(0), -1)\n\n        if feat:\n            return out\n        out = self.last(out)\n        if self.prompt is not None and train:\n            return out, prompt_loss\n        else:\n            return out\n            \ndef vit_pt_imnet(out_dim, block_division = None, prompt_flag = 'None', prompt_param=None):\n    return ViTZoo(num_classes=out_dim, pt=True, prompt_flag=prompt_flag, prompt_param=prompt_param)\nFile Path: models/vit.py\nContent:\n# SPDX-License-Identifier: Apache-2.0\n# Copyright : JP Morgan Chase & Co\n\n'''\n * Based on vit from blip code base\n * https://github.com/salesforce/BLIP\n'''\n\nimport torch\nimport torch.nn as nn\nimport torch.nn.functional as F\nfrom functools import partial\n\nfrom timm.models.vision_transformer import _cfg, PatchEmbed\nfrom timm.models.registry import register_model\nfrom timm.models.layers import trunc_normal_, DropPath\nfrom timm.models.helpers import named_apply, adapt_input_conv\n\nclass Mlp(nn.Module):\n    \"\"\" MLP as used in Vision Transformer, MLP-Mixer and related networks\n    \"\"\"\n    def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):\n        super().__init__()\n        out_features = out_features or in_features\n        hidden_features = hidden_features or in_features\n        self.fc1 = nn.Linear(in_features, hidden_features)\n        self.act = act_layer()\n        self.fc2 = nn.Linear(hidden_features, out_features)\n        self.drop = nn.Dropout(drop)\n\n    def forward(self, x):\n        x = self.fc1(x)\n        x = self.act(x)\n        x = self.drop(x)\n        x = self.fc2(x)\n        x = self.drop(x)\n        return x\n\n\nclass Attention(nn.Module):\n    def __init__(self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0.):\n        super().__init__()\n        self.num_heads = num_heads\n        head_dim = dim // num_heads\n        # NOTE scale factor was wrong in my original version, can set manually to be compat with prev weights\n        self.scale = qk_scale or head_dim ** -0.5\n        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)\n        self.attn_drop = nn.Dropout(attn_drop)\n        self.proj = nn.Linear(dim, dim)\n        self.proj_drop = nn.Dropout(proj_drop)\n        self.attn_gradients = None\n        self.attention_map = None\n        \n    def save_attn_gradients(self, attn_gradients):\n        self.attn_gradients = attn_gradients\n        \n    def get_attn_gradients(self):\n        return self.attn_gradients\n    \n    def save_attention_map(self, attention_map):\n        self.attention_map = attention_map\n        \n    def get_attention_map(self):\n        return self.attention_map\n    \n    def forward(self, x, register_hook=False, prompt=None):\n        B, N, C = x.shape\n        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)\n        q, k, v = qkv[0], qkv[1], qkv[2]   # make torchscript happy (cannot use tensor as tuple)\n\n        if prompt is not None:\n            pk, pv = prompt\n            pk = pk.reshape(B, -1, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)\n            pv = pv.reshape(B, -1, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)\n            k = torch.cat((pk,k), dim=2)\n            v = torch.cat((pv,v), dim=2)\n\n        attn = (q @ k.transpose(-2, -1)) * self.scale\n        attn = attn.softmax(dim=-1)\n        attn = self.attn_drop(attn)\n                \n        if register_hook:\n            self.save_attention_map(attn)\n            attn.register_hook(self.save_attn_gradients)        \n\n        x = (attn @ v).transpose(1, 2).reshape(B, N, C)\n        x = self.proj(x)\n        x = self.proj_drop(x)\n        return x\n\n\nclass Block(nn.Module):\n\n    def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop=0., attn_drop=0.,\n                 drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm):\n        super().__init__()\n        self.norm1 = norm_layer(dim)\n        self.attn = Attention(\n            dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)\n        # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here\n        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()\n        self.norm2 = norm_layer(dim)\n        mlp_hidden_dim = int(dim * mlp_ratio)\n        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)\n\n\n    def forward(self, x, register_hook=False, prompt=None):\n        x = x + self.drop_path(self.attn(self.norm1(x), register_hook=register_hook, prompt=prompt))\n        x = x + self.drop_path(self.mlp(self.norm2(x)))\n        return x\n\n    \nclass VisionTransformer(nn.Module):\n    \"\"\" Vision Transformer\n    A PyTorch impl of : `An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale`  -\n        https://arxiv.org/abs/2010.11929\n    \"\"\"\n    def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, embed_dim=768, depth=12,\n                 num_heads=12, mlp_ratio=4., qkv_bias=True, qk_scale=None, representation_size=None,\n                 drop_rate=0., attn_drop_rate=0., drop_path_rate=0., norm_layer=None, \n                 ckpt_layer=0):\n        \"\"\"\n        Args:\n            img_size (int, tuple): input image size\n            patch_size (int, tuple): patch size\n            in_chans (int): number of input channels\n            num_classes (int): number of classes for classification head\n            embed_dim (int): embedding dimension\n            depth (int): depth of transformer\n            num_heads (int): number of attention heads\n            mlp_ratio (int): ratio of mlp hidden dim to embedding dim\n            qkv_bias (bool): enable bias for qkv if True\n            qk_scale (float): override default qk scale of head_dim ** -0.5 if set\n            representation_size (Optional[int]): enable and set representation layer (pre-logits) to this value if set\n            drop_rate (float): dropout rate\n            attn_drop_rate (float): attention dropout rate\n            drop_path_rate (float): stochastic depth rate\n            norm_layer: (nn.Module): normalization layer\n        \"\"\"\n        super().__init__()\n        self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models\n        norm_layer = norm_layer or partial(nn.LayerNorm, eps=1e-6)\n\n        self.patch_embed = PatchEmbed(\n            img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim)\n\n        num_patches = self.patch_embed.num_patches\n\n        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))\n        self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, embed_dim))\n        self.pos_drop = nn.Dropout(p=drop_rate)\n\n        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule\n        self.blocks = nn.ModuleList([\n            Block(\n                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,\n                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,\n                )\n            for i in range(depth)])\n        self.norm = norm_layer(embed_dim)\n\n        trunc_normal_(self.pos_embed, std=.02)\n        trunc_normal_(self.cls_token, std=.02)\n        self.apply(self._init_weights)\n\n    def _init_weights(self, m):\n        if isinstance(m, nn.Linear):\n            trunc_normal_(m.weight, std=.02)\n            if isinstance(m, nn.Linear) and m.bias is not None:\n                nn.init.constant_(m.bias, 0)\n        elif isinstance(m, nn.LayerNorm):\n            nn.init.constant_(m.bias, 0)\n            nn.init.constant_(m.weight, 1.0)\n\n    @torch.jit.ignore\n    def no_weight_decay(self):\n        return {'pos_embed', 'cls_token'}\n\n    def forward(self, x, register_blk=-1, prompt=None, q=None, train=False):\n        B = x.shape[0]\n        x = self.patch_embed(x)\n\n        cls_tokens = self.cls_token.expand(B, -1, -1)  # stole cls_tokens impl from Phil Wang, thanks\n        x = torch.cat((cls_tokens, x), dim=1)\n  \n        x = x + self.pos_embed[:,:x.size(1),:]\n        x = self.pos_drop(x)\n\n        prompt_loss = torch.zeros((1,), requires_grad=True).cuda()\n        for i,blk in enumerate(self.blocks):\n\n            if prompt is not None:\n                if train:\n                    p_list, loss, x = prompt.forward(q, i, x, train=True)\n                    prompt_loss += loss\n                else:\n                    p_list, _, x = prompt.forward(q, i, x, train=False)\n            else:\n                p_list = None\n\n            x = blk(x, register_blk==i, prompt=p_list)\n\n        x = self.norm(x)\n        if prompt is not None:\n            prompt_loss /= len(prompt.e_layers)\n        \n        return x, prompt_loss\nFile Path: learners/default.py\nContent:\n# SPDX-License-Identifier: Apache-2.0\n# Copyright : JP Morgan Chase & Co\n\nimport torch\nfrom torch import nn\nfrom tqdm import tqdm\n\nimport models\nfrom .ood import NPOS\nfrom utils.schedulers import CosineSchedule\n\nclass NormalNN(nn.Module):\n    def __init__(self, out_dim, args, logger):\n        super().__init__()\n        self.logger = logger\n        self.out_dim = out_dim\n        self.bsz = args.batch_size\n        self.opt_cfg = {k: args[k] for k in ('optimizer', 'lr', 'momentum', 'weight_decay', 'scheduler')}\n        self.subset_start = 0\n        self.subset_end = out_dim\n        self.epochs = args.epochs\n        self.model_type = args.model_type\n        self.model_name = args.model_name\n\n        torch.cuda.set_device(args.gpus[0])\n        self.model = self._create_model().cuda()\n        self.ood = NPOS(args.ood)\n        self.criterion = nn.CrossEntropyLoss().cuda()\n        self.model = nn.DataParallel(self.model, device_ids=args.gpus, output_device=args.gpus[0])\n\n    def _create_model(self):\n        return models.__dict__[self.model_type].__dict__[self.model_name](out_dim=self.out_dim)\n\n    def init_optimizer(self):\n        optim_args = {\n            'params': self._get_learnable_params(),\n            'lr': self.opt_cfg['lr'],\n            'weight_decay': self.opt_cfg['weight_decay']\n        }\n        optim = self.opt_cfg['optimizer']\n        if optim in ['SGD', 'RMSprop']:\n            optim_args['momentum'] = self.opt_cfg['momentum']\n        elif optim == 'Rprop':\n            optim_args.pop('weight_decay')\n        elif optim == 'amsgrad':\n            optim_args['amsgrad'] = True\n            optim = 'Adam'\n        elif optim == 'Adam':\n            optim_args['betas'] = (self.opt_cfg['momentum'], 0.999)\n        self.optimizer = torch.optim.__dict__[optim](**optim_args)\n\n        if self.opt_cfg['scheduler'] == 'cosine':\n            self.scheduler = CosineSchedule(self.optimizer, K=sum(self.epochs))\n        else: # decay\n            self.scheduler = torch.optim.lr_scheduler.MultiStepLR(\n                self.optimizer, milestones=sum(self.epochs), gamma=0.1\n            )\n\n    def _get_learnable_params(self):\n        return self.model.parameters()\n\n    def count_params(self):\n        return sum(p.numel() for p in self.model.parameters())\n\n    def count_learnable_params(self):\n        return sum(p.numel() for p in self._get_learnable_params())\n\n    def train(self, dataloader, task):\n        self.init_optimizer()\n        self.model.train()\n        pbar = tqdm(desc='Epoch', total=sum(self.epochs), leave=False)\n        self.logger.timer.tic()\n\n        start_epoch = 0\n        if task > 0:\n            for e in range(self.epochs[0]):\n                stats_str = self._train_one_epoch(dataloader, e, warmup=True)\n                pbar.postfix = stats_str\n                pbar.update()\n            start_epoch = self.epochs[0]\n        \n        for e in range(start_epoch, start_epoch + self.epochs[1]):\n            stats_str = self._train_one_epoch(dataloader, e)\n            pbar.postfix = stats_str\n            pbar.update()\n\n        start_epoch += self.epochs[1]\n        for e in range(start_epoch, start_epoch + self.epochs[2]):\n            stats_str = self._train_one_epoch_ood(dataloader, e)\n            pbar.postfix = stats_str\n            pbar.update()\n        \n        train_time = self.logger.timer.toc()\n        self.logger.train_time.add(train_time)\n        pbar.close()\n\n    def _get_ood_samples(self, dataloader):\n        subset_size = self.subset_end - self.subset_start\n        id_feats = [torch.empty(0, 768) for _ in range(subset_size)]\n        with torch.no_grad():\n            for imgs, targets, _ in dataloader:\n                imgs = imgs.cuda()\n                targets = targets.cuda()\n                feats = self.model(x=imgs, feat=True).detach().cpu()\n                for i, idx in enumerate(targets):\n                    key = (idx % subset_size).item()\n                    id_feats[key] = torch.cat((id_feats[key], feats[i].view(1, -1)), 0)\n        return self.ood.generate(id_feats, self.subset_start)\n\n    def _train_one_epoch(self, dataloader, epoch, warmup=False):\n        if epoch > 0:\n            self.scheduler.step()\n        self.logger.train_loss.reset()\n        self.logger.train_acc.reset()\n        self.logger.memory.reset()\n\n        for imgs, targets, _ in dataloader:\n            imgs = imgs.cuda()\n            targets = targets.cuda()\n            logits, prompt_loss = self.model(x=imgs, train=True, warmup=warmup)\n            logits = logits[:, :self.subset_end]\n            logits[:, :self.subset_start] = -float('inf')\n            loss = self.criterion(logits, targets)\n            loss += prompt_loss.sum()\n\n            self.optimizer.zero_grad()\n            loss.backward()\n            self.optimizer.step()\n\n            self.logger.train_loss.add(loss.item(), n=targets.size(0))\n            self.logger.train_acc.add(accuracy(logits, targets), n=targets.size(0))\n            self.logger.memory.add(self.logger.get_memory_usage())\n            self.logger.step += 1\n\n        return f\"Loss: {str(self.logger.train_loss)}, Acc: {str(self.logger.train_acc)}\"\n\n    def _train_one_epoch_ood(self, dataloader, epoch):\n        self.scheduler.step()\n        self.logger.train_loss.reset()\n        self.logger.train_acc.reset()\n        self.logger.memory.reset()\n        self.logger.id_score.reset()\n        self.logger.ood_score.reset()\n        id_loader, ood_loader = self._get_ood_samples(dataloader)\n        for ((ids, targets), oods) in zip(id_loader, ood_loader):\n            ids = ids.cuda()\n            targets = targets.cuda()\n            oods = oods[0].cuda()\n            id_logits = self.model(x=ids, last=True)[:, :self.subset_end]\n            ood_logits = self.model(x=oods, last=True)[:, self.subset_start:self.subset_end]\n            id_logits[:, :self.subset_start] = -float('inf')\n            loss = self.criterion(id_logits, targets)\n            ood_loss, id_score, ood_score = self.ood.loss(id_logits[:, self.subset_start:], ood_logits)\n            loss += ood_loss\n\n            self.optimizer.zero_grad()\n            loss.backward()\n            self.optimizer.step()\n\n            self.logger.train_loss.add(loss.item(), n=targets.size(0))\n            self.logger.train_acc.add(accuracy(id_logits, targets), n=targets.size(0))\n            self.logger.memory.add(self.logger.get_memory_usage())\n            self.logger.id_score.add(id_score.item(), n=targets.size(0))\n            self.logger.ood_score.add(ood_score.item(), n=targets.size(0))\n            self.logger.step += 1\n\n        return f\"Loss: {str(self.logger.train_loss)}, Acc: {str(self.logger.train_acc)}\"",
+    "experimental_info": "OVOR (OnePrompt with VOR) training configuration:\n- **OnePrompt Settings:**\n    - Learner: `OnePrompt` from `learners/prompt.py`.\n    - Prompt parameters (`prompt_param`): Default `[10, 40, 10]`. In `models/zoo.py`, `OnePrompt._init_smart` interprets these as:\n        - `g_p_length = 10` (global prompt length)\n        - `e_p_length = 40` (episodic prompt length)\n    - Prompt layers: `g_layers = [0,1]` (global prompts in early layers), `e_layers = [2,3,4]` (episodic prompts in later layers).\n    - Shared prompt mechanism (`task_id_bootstrap = True` in `models/zoo.py/OnePrompt._init_smart` and `top_k = 1`).\n- **VOR (Virtual Outlier Regularization) Settings:**\n    - Virtual Outlier Generation (NPOS class in `learners/ood.py`):\n        - `K`: Number of nearest neighbors for boundary/selection, default 50.\n        - `sample_from`: Number of offsets to sample from `MultivariateNormal`, default 600.\n        - `select`: Number of boundary points to select, default 50.\n        - `cov`: Covariance matrix scaling factor for offsets, default 1.0.\n        - `num_per_class`: Number of OOD points to select per class, default 40.\n        - `id_bsz`: Batch size for in-distribution data during OOD training, default 128.\n    - VOR Loss Calculation (NPOS.loss):\n        - `thres_id`: Threshold for in-distribution score, default -15.0.\n        - `thres_ood`: Threshold for out-of-distribution score, default -3.0.\n        - `lmda`: Lambda regularization parameter, default 0.1.\n        - `huber`: Uses HuberLoss for hinge loss terms, default True (otherwise MSELoss).\n- **OVOR Training Strategy:**\n    - Training consists of three phases (specified by `epochs` argument, e.g., `[warmup_epochs, regular_epochs, ood_epochs]`):\n        1.  Warmup (if `task > 0` and `epochs[0] > 0`): Standard cross-entropy training with prompt loss (if applicable), prompts potentially detached for `warmup=True`.\n        2.  Regular Training (`epochs[1]` epochs): Standard cross-entropy training with prompt loss (if applicable).\n        3.  OOD Training (`epochs[2]` epochs): Virtual outliers are generated using `NPOS`, and the classifier head is updated using both cross-entropy loss for in-distribution samples and the VOR loss (hinge losses with Huber/MSE for in-task confidence and virtual outlier uncertainty). This is implemented in `NormalNN._train_one_epoch_ood` in `learners/default.py`."
+}
