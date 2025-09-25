@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The core methodology involves two main components: Virtual Outlier Regularization (VOR) and OnePrompt. VOR is a regularization method that generates virtual outliers from the feature space of current training data. These outliers are used to regularize the classifier head by enforcing higher confidence for in-task samples and lower confidence for virtual outliers using two hinge loss terms with Huber loss. This helps to make decision boundaries more compact, reducing inter-task confusion. OnePrompt simplifies prompt-based CIL by utilizing a single, shared prompt throughout all tasks, eliminating the need for a complex prompt composition mechanism or a prompt pool, thereby reducing computational overhead and the number of learnable parameters. OVOR combines OnePrompt with VOR, where the prompt and head are initially trained with cross-entropy loss, then virtual outliers are generated, and finally, the classifier head is updated using both cross-entropy and the VOR loss.
+
+# GitHub URLs List
+['https://github.com/jpmorganchase/ovor', 'https://github.com/GT-RIPL/CODA-Prompt', 'https://github.com/pprp/timm']
+Output:
+{
+    "index": 0
+}
