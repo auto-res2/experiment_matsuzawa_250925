@@ -46,8 +46,13 @@ def run_experiment(cfg: dict, device: torch.device) -> Dict[str, float]:
     train_loader, val_loader = build_dataloaders(cfg)
 
     # model + CurvTrack wrapper
-    model = timm.create_model(cfg["model_name"], pretrained=True).to(device).eval()
+    model = timm.create_model(cfg["model_name"], pretrained=True).to(device)
     blocks = collect_norm_blocks(model, cfg.get("block_size", 16), device)
+    # Print debug info about blocks found
+    print(f"Found {len(blocks)} normalization blocks for adaptation")
+    print(f"Model: {cfg['model_name']} for dataset: {cfg['dataset']}")
+    # Keep model in eval mode but ensure norm layers can still compute gradients
+    model.eval()
     adaptor = CurvTrack(model, blocks).to(device)
 
     # only evaluation pass (no training loop in this demo)
@@ -69,6 +74,7 @@ def main(argv: list[str] | None = None) -> None:
     print("=== Running smoke-test ===")
     smoke_res = run_experiment(smoke_cfg, device)
     threshold = smoke_cfg.get("smoke_test_pass_threshold", 0.25)
+    print(f"Smoke test accuracy: {smoke_res['accuracy']:.4f}, threshold: {threshold}")
     passed = smoke_res["accuracy"] >= threshold
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     smoke_path = RESULT_DIR / f"smoke_results_{stamp}.json"

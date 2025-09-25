@@ -76,16 +76,28 @@ class CurvTrack(nn.Module):
         self._adapt_params = [blk.param for blk in blocks]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:  # noqa: D401 – simple pass
+        # Ensure we're in training mode for norm layers during adaptation
+        training_mode = self.training
+        if len(self._adapt_params) > 0:
+            self.train()
+
         y = self.m(x)
         loss = softmax_entropy(y).mean()
-        loss.backward()
-        # apply NG update per block (in-place)
-        for blk in self.blocks:
-            delta = blk.update(blk.param.grad.view(-1))
-            blk.param.add_(-delta.view_as(blk.param))
-        # clear grads of adapted params only
-        for p in self._adapt_params:
-            p.grad = None
+        # Only backward if we have parameters that require gradients and loss requires grad
+        if any(p.requires_grad for p in self._adapt_params) and loss.requires_grad:
+            loss.backward()
+            # apply NG update per block (in-place)
+            for blk in self.blocks:
+                if blk.param.grad is not None:
+                    delta = blk.update(blk.param.grad.view(-1))
+                    blk.param.add_(-delta.view_as(blk.param))
+            # clear grads of adapted params only
+            for p in self._adapt_params:
+                if p.grad is not None:
+                    p.grad = None
+
+        # Restore original training mode
+        self.train(training_mode)
         return y.detach()
 
 

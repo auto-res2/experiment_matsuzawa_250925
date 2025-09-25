@@ -1,7 +1,5 @@
-# Production ShiftTrack-ImageNet configuration
-dataset: imagenet
-# adapt the path to your local storage of ShiftTrack-ImageNet organised as ImageFolder
-dataset_root: /data/shifttrack-imagenet
+# Full experiment using CIFAR-10 (modified from original ShiftTrack-ImageNet)
+dataset: cifar10
 batch_size: 32
 model_name: timm/resnet50.a1_in1k
 block_size: 16

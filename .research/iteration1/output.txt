@@ -1,0 +1,29 @@
+=== [PHASE 2/2] Full experiment start Thu Sep 25 05:13:20 AM UTC 2025 ===
+=== Running smoke-test ===
+Found 20 normalization blocks for adaptation
+Model: resnet18.a1_in1k for dataset: cifar10
+Evaluation results: {
+  "accuracy": 0.0008,
+  "num_samples": 10000,
+  "eval_seconds": 3.360313229262829
+}
+Smoke test accuracy: 0.0008, threshold: 0.0005
+{
+  "accuracy": 0.0008,
+  "num_samples": 10000,
+  "eval_seconds": 3.360313229262829
+}
+=== Smoke-test passed – running full experiment ===
+Found 53 normalization blocks for adaptation
+Model: timm/resnet50.a1_in1k for dataset: cifar10
+Evaluation results: {
+  "accuracy": 0.0004,
+  "num_samples": 10000,
+  "eval_seconds": 4.712516061961651
+}
+{
+  "accuracy": 0.0004,
+  "num_samples": 10000,
+  "eval_seconds": 4.712516061961651
+}
+=== [PHASE 2/2] Full experiment end Thu Sep 25 05:13:38 AM UTC 2025 ===

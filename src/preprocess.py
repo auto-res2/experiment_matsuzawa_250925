@@ -18,8 +18,10 @@ def build_dataloaders(cfg: dict) -> Tuple[DataLoader, DataLoader]:
     num_workers = min(8, os.cpu_count() or 2)
 
     if cfg["dataset"].lower() == "cifar10":
-        mean, std = (0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261)
+        # Use ImageNet normalization for better compatibility with pretrained models
+        mean, std = (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
         transform = T.Compose([
+            T.Resize(224),  # Resize CIFAR-10 to match ImageNet input size
             T.ToTensor(),
             T.Normalize(mean, std),
         ])
