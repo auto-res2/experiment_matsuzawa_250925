@@ -1,0 +1,2467 @@
+
+Input:
+You are a researcher with expertise in engineering in the field of machine learning.
+
+# Instructions
+- The content described in “Repository Content” corresponds to the GitHub repository of the method described in “Method.”
+- Please extract the following two pieces of information from “Repository Content”:
+    - experimental_code：Extract the implementation sections that are directly related to the method described in “Method.”
+    - experimental_info：Extract and output the experimental settings related to the method described in “Method.”
+
+# Method
+The proposed method, SPIN, is a graph attention network for multivariate time series imputation. It learns representations for discrete points in time and space by aggregating information from available observations at neighboring nodes, weighted by input-dependent attention coefficients. The core component is a novel sparse spatiotemporal attention layer that performs both inter-node spatiotemporal cross-attention (aggregating from neighbors) and intra-node temporal self-attention (aggregating from the node's own observed history). Representations are initialized using MLPs on spatiotemporal coordinates (and observations if available) and then updated through stacked attention layers. A two-phase propagation mechanism allows for initial information diffusion through masked connections, which are later unlocked. To mitigate computational complexity (O((Nmax + Emax)T^2)), two approaches are proposed: graph subsampling during training and a hierarchical attention mechanism (SPIN-H) that introduces dummy hub nodes to reduce complexity to O((Nmax + Emax)KT). Spatiotemporal positional encodings combine sine/cosine transforms for temporal features and learnable parameters for spatial features.
+
+# Repository Content
+File Path: experiments/run_imputation.py
+Content:
+import copy
+import datetime
+import os
+
+import numpy as np
+import pytorch_lightning as pl
+import torch
+import yaml
+from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
+from pytorch_lightning.loggers import TensorBoardLogger
+from torch.optim.lr_scheduler import CosineAnnealingLR
+from tsl import config, logger
+from tsl.data import SpatioTemporalDataModule, ImputationDataset
+from tsl.data.preprocessing import StandardScaler
+from tsl.datasets import AirQuality, MetrLA, PemsBay
+from tsl.imputers import Imputer
+from tsl.nn.metrics import MaskedMetric, MaskedMAE, MaskedMSE, MaskedMRE
+from tsl.nn.models.imputation import GRINModel
+from tsl.nn.utils import casting
+from tsl.ops.imputation import add_missing_values
+from tsl.utils import parser_utils, numpy_metrics
+from tsl.utils.parser_utils import ArgParser
+
+from spin.baselines import SAITS, TransformerModel, BRITS
+from spin.imputers import SPINImputer, SAITSImputer, BRITSImputer
+from spin.models import SPINModel, SPINHierarchicalModel
+from spin.scheduler import CosineSchedulerWithRestarts
+
+
+def get_model_classes(model_str):
+    if model_str == 'spin':
+        model, filler = SPINModel, SPINImputer
+    elif model_str == 'spin_h':
+        model, filler = SPINHierarchicalModel, SPINImputer
+    elif model_str == 'grin':
+        model, filler = GRINModel, Imputer
+    elif model_str == 'saits':
+        model, filler = SAITS, SAITSImputer
+    elif model_str == 'transformer':
+        model, filler = TransformerModel, SPINImputer
+    elif model_str == 'brits':
+        model, filler = BRITS, BRITSImputer
+    else:
+        raise ValueError(f'Model {model_str} not available.')
+    return model, filler
+
+
+def get_dataset(dataset_name: str):
+    if dataset_name.startswith('air'):
+        return AirQuality(impute_nans=True, small=dataset_name[3:] == '36')
+    # build missing dataset
+    if dataset_name.endswith('_point'):
+        p_fault, p_noise = 0., 0.25
+        dataset_name = dataset_name[:-6]
+    elif dataset_name.endswith('_block'):
+        p_fault, p_noise = 0.0015, 0.05
+        dataset_name = dataset_name[:-6]
+    else:
+        raise ValueError(f"Invalid dataset name: {dataset_name}.")
+    if dataset_name == 'la':
+        return add_missing_values(MetrLA(), p_fault=p_fault, p_noise=p_noise,
+                                  min_seq=12, max_seq=12 * 4, seed=9101112)
+    if dataset_name == 'bay':
+        return add_missing_values(PemsBay(), p_fault=p_fault, p_noise=p_noise,
+                                  min_seq=12, max_seq=12 * 4, seed=56789)
+    raise ValueError(f"Invalid dataset name: {dataset_name}.")
+
+
+def get_scheduler(scheduler_name: str = None, args=None):
+    if scheduler_name is None:
+        return None, None
+    scheduler_name = scheduler_name.lower()
+    if scheduler_name == 'cosine':
+        scheduler_class = CosineAnnealingLR
+        scheduler_kwargs = dict(eta_min=0.1 * args.lr, T_max=args.epochs)
+    elif scheduler_name == 'magic':
+        scheduler_class = CosineSchedulerWithRestarts
+        scheduler_kwargs = dict(num_warmup_steps=12, min_factor=0.1,
+                                linear_decay=0.67,
+                                num_training_steps=args.epochs,
+                                num_cycles=args.epochs // 100)
+    else:
+        raise ValueError(f"Invalid scheduler name: {scheduler_name}.")
+    return scheduler_class, scheduler_kwargs
+
+
+def parse_args():
+    # Argument parser
+    parser = ArgParser()
+
+    parser.add_argument('--seed', type=int, default=-1)
+    parser.add_argument('--precision', type=int, default=32)
+    parser.add_argument("--model-name", type=str, default='spin')
+    parser.add_argument("--dataset-name", type=str, default='air36')
+    parser.add_argument("--config", type=str, default='imputation/spin.yaml')
+
+    # Splitting/aggregation params
+    parser.add_argument('--val-len', type=float, default=0.1)
+    parser.add_argument('--test-len', type=float, default=0.2)
+
+    # Training params
+    parser.add_argument('--lr', type=float, default=0.001)
+    parser.add_argument('--epochs', type=int, default=300)
+    parser.add_argument('--patience', type=int, default=40)
+    parser.add_argument('--l2-reg', type=float, default=0.)
+    parser.add_argument('--batches-epoch', type=int, default=300)
+    parser.add_argument('--batch-inference', type=int, default=32)
+    parser.add_argument('--split-batch-in', type=int, default=1)
+    parser.add_argument('--grad-clip-val', type=float, default=5.)
+    parser.add_argument('--loss-fn', type=str, default='l1_loss')
+    parser.add_argument('--lr-scheduler', type=str, default=None)
+
+    # Connectivity params
+    parser.add_argument("--adj-threshold", type=float, default=0.1)
+
+    known_args, _ = parser.parse_known_args()
+    model_cls, imputer_cls = get_model_classes(known_args.model_name)
+    parser = model_cls.add_model_specific_args(parser)
+    parser = imputer_cls.add_argparse_args(parser)
+    parser = SpatioTemporalDataModule.add_argparse_args(parser)
+    parser = ImputationDataset.add_argparse_args(parser)
+
+    args = parser.parse_args()
+    if args.config is not None:
+        cfg_path = os.path.join(config.config_dir, args.config)
+        with open(cfg_path, 'r') as fp:
+            config_args = yaml.load(fp, Loader=yaml.FullLoader)
+        for arg in config_args:
+            setattr(args, arg, config_args[arg])
+
+    return args
+
+
+def run_experiment(args):
+    # Set configuration and seed
+    args = copy.deepcopy(args)
+    if args.seed < 0:
+        args.seed = np.random.randint(1e9)
+    torch.set_num_threads(1)
+    pl.seed_everything(args.seed)
+
+    # script flags
+    is_spin = args.model_name in ['spin', 'spin_h']
+
+    model_cls, imputer_class = get_model_classes(args.model_name)
+    dataset = get_dataset(args.dataset_name)
+
+    logger.info(args)
+
+    ########################################
+    # create logdir and save configuration #
+    ########################################
+
+    exp_name = datetime.datetime.now().strftime('%Y%m%dT%H%M%S')
+    exp_name = f"{exp_name}_{args.seed}"
+    logdir = os.path.join(config.log_dir, args.dataset_name,
+                          args.model_name, exp_name)
+    # save config for logging
+    os.makedirs(logdir, exist_ok=True)
+    with open(os.path.join(logdir, 'config.yaml'), 'w') as fp:
+        yaml.dump(parser_utils.config_dict_from_args(args), fp,
+                  indent=4, sort_keys=True)
+
+    ########################################
+    # data module                          #
+    ########################################
+
+    # time embedding
+    if is_spin or args.model_name == 'transformer':
+        time_emb = dataset.datetime_encoded(['day', 'week']).values
+        exog_map = {'global_temporal_encoding': time_emb}
+
+        input_map = {
+            'u': 'temporal_encoding',
+            'x': 'data'
+        }
+    else:
+        exog_map = input_map = None
+
+    if is_spin or args.model_name == 'grin':
+        adj = dataset.get_connectivity(threshold=args.adj_threshold,
+                                       include_self=False,
+                                       force_symmetric=is_spin)
+    else:
+        adj = None
+
+    # instantiate dataset
+    torch_dataset = ImputationDataset(*dataset.numpy(return_idx=True),
+                                      training_mask=dataset.training_mask,
+                                      eval_mask=dataset.eval_mask,
+                                      connectivity=adj,
+                                      exogenous=exog_map,
+                                      input_map=input_map,
+                                      window=args.window,
+                                      stride=args.stride)
+
+    # get train/val/test indices
+    splitter = dataset.get_splitter(val_len=args.val_len,
+                                    test_len=args.test_len)
+
+    scalers = {'data': StandardScaler(axis=(0, 1))}
+
+    dm = SpatioTemporalDataModule(torch_dataset,
+                                  scalers=scalers,
+                                  splitter=splitter,
+                                  batch_size=args.batch_size // args.split_batch_in)
+    dm.setup()
+
+    ########################################
+    # predictor                            #
+    ########################################
+
+    additional_model_hparams = dict(n_nodes=dm.n_nodes,
+                                    input_size=dm.n_channels,
+                                    u_size=4,
+                                    output_size=dm.n_channels,
+                                    window_size=dm.window)
+
+    # model's inputs
+    model_kwargs = parser_utils.filter_args(
+        args={**vars(args), **additional_model_hparams},
+        target_cls=model_cls,
+        return_dict=True)
+
+    # loss and metrics
+    loss_fn = MaskedMetric(metric_fn=getattr(torch.nn.functional, args.loss_fn),
+                           compute_on_step=True,
+                           metric_kwargs={'reduction': 'none'})
+
+    metrics = {'mae': MaskedMAE(compute_on_step=False),
+               'mse': MaskedMSE(compute_on_step=False),
+               'mre': MaskedMRE(compute_on_step=False)}
+
+    scheduler_class, scheduler_kwargs = get_scheduler(args.lr_scheduler, args)
+
+    # setup imputer
+    imputer_kwargs = parser_utils.filter_argparse_args(args, imputer_class,
+                                                       return_dict=True)
+    imputer = imputer_class(
+        model_class=model_cls,
+        model_kwargs=model_kwargs,
+        optim_class=torch.optim.Adam,
+        optim_kwargs={'lr': args.lr,
+                      'weight_decay': args.l2_reg},
+        loss_fn=loss_fn,
+        metrics=metrics,
+        scheduler_class=scheduler_class,
+        scheduler_kwargs=scheduler_kwargs,
+        **imputer_kwargs
+    )
+
+    ########################################
+    # training                             #
+    ########################################
+
+    # callbacks
+    early_stop_callback = EarlyStopping(monitor='val_mae',
+                                        patience=args.patience, mode='min')
+    checkpoint_callback = ModelCheckpoint(dirpath=logdir, save_top_k=1,
+                                          monitor='val_mae', mode='min')
+
+    tb_logger = TensorBoardLogger(logdir, name="model")
+
+    trainer = pl.Trainer(max_epochs=args.epochs,
+                         default_root_dir=logdir,
+                         logger=tb_logger,
+                         precision=args.precision,
+                         accumulate_grad_batches=args.split_batch_in,
+                         gpus=int(torch.cuda.is_available()),
+                         gradient_clip_val=args.grad_clip_val,
+                         limit_train_batches=args.batches_epoch * args.split_batch_in,
+                         callbacks=[early_stop_callback, checkpoint_callback])
+
+    trainer.fit(imputer,
+                train_dataloaders=dm.train_dataloader(),
+                val_dataloaders=dm.val_dataloader(
+                    batch_size=args.batch_inference))
+
+    ########################################
+    # testing                              #
+    ########################################
+
+    imputer.load_model(checkpoint_callback.best_model_path)
+    imputer.freeze()
+    trainer.test(imputer, dataloaders=dm.test_dataloader(
+        batch_size=args.batch_inference))
+
+    output = trainer.predict(imputer, dataloaders=dm.test_dataloader(
+        batch_size=args.batch_inference))
+    output = casting.numpy(output)
+    y_hat, y_true, mask = output['y_hat'].squeeze(-1), \
+                          output['y'].squeeze(-1), \
+                          output['mask'].squeeze(-1)
+    check_mae = numpy_metrics.masked_mae(y_hat, y_true, mask)
+    print(f'Test MAE: {check_mae:.2f}')
+    return y_hat
+
+
+if __name__ == '__main__':
+    args = parse_args()
+    run_experiment(args)
+
+File Path: experiments/run_inference.py
+Content:
+import copy
+import os
+
+import numpy as np
+import pytorch_lightning as pl
+import torch
+import tsl
+import yaml
+from tsl import config
+from tsl.data import SpatioTemporalDataModule, ImputationDataset
+from tsl.data.preprocessing import StandardScaler
+from tsl.datasets import AirQuality, MetrLA, PemsBay
+from tsl.imputers import Imputer
+from tsl.nn.models.imputation import GRINModel
+from tsl.nn.utils import casting
+from tsl.ops.imputation import add_missing_values, sample_mask
+from tsl.utils import ArgParser, parser_utils, numpy_metrics
+from tsl.utils.python_utils import ensure_list
+
+from spin.baselines import SAITS, TransformerModel, BRITS
+from spin.imputers import SPINImputer, SAITSImputer, BRITSImputer
+from spin.models import SPINModel, SPINHierarchicalModel
+
+
+def get_model_classes(model_str):
+    if model_str == 'spin':
+        model, filler = SPINModel, SPINImputer
+    elif model_str == 'spin_h':
+        model, filler = SPINHierarchicalModel, SPINImputer
+    elif model_str == 'grin':
+        model, filler = GRINModel, Imputer
+    elif model_str == 'saits':
+        model, filler = SAITS, SAITSImputer
+    elif model_str == 'transformer':
+        model, filler = TransformerModel, SPINImputer
+    elif model_str == 'brits':
+        model, filler = BRITS, BRITSImputer
+    else:
+        raise ValueError(f'Model {model_str} not available.')
+    return model, filler
+
+
+def get_dataset(dataset_name: str):
+    if dataset_name.startswith('air'):
+        return AirQuality(impute_nans=True, small=dataset_name[3:] == '36')
+    # build missing dataset
+    if dataset_name.endswith('_point'):
+        p_fault, p_noise = 0., 0.25
+        dataset_name = dataset_name[:-6]
+    elif dataset_name.endswith('_block'):
+        p_fault, p_noise = 0.0015, 0.05
+        dataset_name = dataset_name[:-6]
+    else:
+        raise ValueError(f"Invalid dataset name: {dataset_name}.")
+    if dataset_name == 'la':
+        return add_missing_values(MetrLA(), p_fault=p_fault, p_noise=p_noise,
+                                  min_seq=12, max_seq=12 * 4, seed=9101112)
+    if dataset_name == 'bay':
+        return add_missing_values(PemsBay(), p_fault=p_fault, p_noise=p_noise,
+                                  min_seq=12, max_seq=12 * 4, seed=56789)
+    raise ValueError(f"Invalid dataset name: {dataset_name}.")
+
+
+def parse_args():
+    # Argument parser
+    parser = ArgParser()
+
+    parser.add_argument("--model-name", type=str)
+    parser.add_argument("--dataset-name", type=str)
+    parser.add_argument("--exp-name", type=str)
+    parser.add_argument("--config", type=str, default='inference.yaml')
+    parser.add_argument("--root", type=str, default='log')
+
+    # Data sparsity params
+    parser.add_argument('--p-fault', type=float, default=0.0)
+    parser.add_argument('--p-noise', type=float, default=0.75)
+    parser.add_argument('--test-mask-seed', type=int, default=None)
+
+    # Splitting/aggregation params
+    parser.add_argument('--val-len', type=float, default=0.1)
+    parser.add_argument('--test-len', type=float, default=0.2)
+    parser.add_argument('--batch-size', type=int, default=32)
+
+    # Connectivity params
+    parser.add_argument("--adj-threshold", type=float, default=0.1)
+
+    args = parser.parse_args()
+    if args.config is not None:
+        cfg_path = os.path.join(config.config_dir, args.config)
+        with open(cfg_path, 'r') as fp:
+            config_args = yaml.load(fp, Loader=yaml.FullLoader)
+        for arg in config_args:
+            setattr(args, arg, config_args[arg])
+
+    return args
+
+
+def load_model(exp_dir, exp_config, dm):
+    model_cls, imputer_class = get_model_classes(exp_config['model_name'])
+    additional_model_hparams = dict(n_nodes=dm.n_nodes,
+                                    input_size=dm.n_channels,
+                                    u_size=4,
+                                    output_size=dm.n_channels,
+                                    window_size=dm.window)
+
+    # model's inputs
+    model_kwargs = parser_utils.filter_args(
+        args={**exp_config, **additional_model_hparams},
+        target_cls=model_cls,
+        return_dict=True)
+
+    # setup imputer
+    imputer_kwargs = parser_utils.filter_argparse_args(exp_config,
+                                                       imputer_class,
+                                                       return_dict=True)
+    imputer = imputer_class(
+        model_class=model_cls,
+        model_kwargs=model_kwargs,
+        optim_class=torch.optim.Adam,
+        optim_kwargs={},
+        loss_fn=None,
+        **imputer_kwargs
+    )
+
+    model_path = None
+    for file in os.listdir(exp_dir):
+        if file.endswith(".ckpt"):
+            model_path = os.path.join(exp_dir, file)
+            break
+    if model_path is None:
+        raise ValueError(f"Model not found.")
+
+    imputer.load_model(model_path)
+    imputer.freeze()
+    return imputer
+
+
+def update_test_eval_mask(dm, dataset, p_fault, p_noise, seed=None):
+    if seed is None:
+        seed = np.random.randint(1e9)
+    random = np.random.default_rng(seed)
+    dataset.set_eval_mask(
+        sample_mask(dataset.shape, p=p_fault, p_noise=p_noise,
+                    min_seq=12, max_seq=36, rng=random)
+    )
+    dm.torch_dataset.set_mask(dataset.training_mask)
+    dm.torch_dataset.update_exogenous('eval_mask', dataset.eval_mask)
+
+
+def run_experiment(args):
+    # Set configuration
+    args = copy.deepcopy(args)
+    tsl.logger.disabled = True
+
+    # script flags
+    is_spin = args.model_name in ['spin', 'spin_h']
+
+    ########################################
+    # load config                          #
+    ########################################
+
+    if args.root is None:
+        root = tsl.config.log_dir
+    else:
+        root = os.path.join(tsl.config.curr_dir, args.root)
+    exp_dir = os.path.join(root, args.dataset_name,
+                           args.model_name, args.exp_name)
+
+    with open(os.path.join(exp_dir, 'config.yaml'), 'r') as fp:
+        exp_config = yaml.load(fp, Loader=yaml.FullLoader)
+
+    ########################################
+    # load dataset                         #
+    ########################################
+
+    dataset = get_dataset(exp_config['dataset_name'])
+
+    ########################################
+    # load data module                     #
+    ########################################
+
+    # time embedding
+    if is_spin or args.model_name == 'transformer':
+        time_emb = dataset.datetime_encoded(['day', 'week']).values
+        exog_map = {'global_temporal_encoding': time_emb}
+
+        input_map = {
+            'u': 'temporal_encoding',
+            'x': 'data'
+        }
+    else:
+        exog_map = input_map = None
+
+    if is_spin or args.model_name == 'grin':
+        adj = dataset.get_connectivity(threshold=args.adj_threshold,
+                                       include_self=False,
+                                       force_symmetric=is_spin)
+    else:
+        adj = None
+
+    # instantiate dataset
+    torch_dataset = ImputationDataset(*dataset.numpy(return_idx=True),
+                                      training_mask=dataset.training_mask,
+                                      eval_mask=dataset.eval_mask,
+                                      connectivity=adj,
+                                      exogenous=exog_map,
+                                      input_map=input_map,
+                                      window=exp_config['window'],
+                                      stride=exp_config['stride'])
+
+    # get train/val/test indices
+    splitter = dataset.get_splitter(val_len=args.val_len,
+                                    test_len=args.test_len)
+
+    scalers = {'data': StandardScaler(axis=(0, 1))}
+
+    dm = SpatioTemporalDataModule(torch_dataset,
+                                  scalers=scalers,
+                                  splitter=splitter,
+                                  batch_size=args.batch_size)
+    dm.setup()
+
+    ########################################
+    # load model                           #
+    ########################################
+
+    imputer = load_model(exp_dir, exp_config, dm)
+
+    trainer = pl.Trainer(gpus=int(torch.cuda.is_available()))
+
+    ########################################
+    # inference                            #
+    ########################################
+
+    seeds = ensure_list(args.test_mask_seed)
+    mae = []
+
+    for seed in seeds:
+        # Change evaluation mask
+        update_test_eval_mask(dm, dataset, args.p_fault, args.p_noise, seed)
+
+        output = trainer.predict(imputer, dataloaders=dm.test_dataloader())
+        output = casting.numpy(output)
+        y_hat, y_true, mask = output['y_hat'].squeeze(-1), \
+                              output['y'].squeeze(-1), \
+                              output['mask'].squeeze(-1)
+
+        check_mae = numpy_metrics.masked_mae(y_hat, y_true, mask)
+        mae.append(check_mae)
+        print(f'SEED {seed} - Test MAE: {check_mae:.2f}')
+
+    print(f'MAE over {len(seeds)} runs: {np.mean(mae):.2f}±{np.std(mae):.2f}')
+
+
+if __name__ == '__main__':
+    args = parse_args()
+    run_experiment(args)
+
+File Path: spin/__init__.py
+Content:
+
+File Path: spin/baselines/__init__.py
+Content:
+from .brits import BRITS
+from .saits import SAITS
+from .transformer import TransformerModel
+
+File Path: spin/baselines/brits/__init__.py
+Content:
+from .brits import BRITS
+
+File Path: spin/baselines/brits/brits.py
+Content:
+import torch
+from einops import rearrange
+from torch import nn
+from tsl.nn.functional import reverse_tensor
+
+from .layers import RITS
+
+
+class BRITS(nn.Module):
+
+    def __init__(self, input_size: int, n_nodes: int, hidden_size: int = 64):
+        super().__init__()
+        self.n_nodes = n_nodes
+        self.rits_fwd = RITS(input_size * n_nodes, hidden_size)
+        self.rits_bwd = RITS(input_size * n_nodes, hidden_size)
+
+    def forward(self, x, mask=None):
+        # tsl shape to original shape: [b s n c] -> [b s c]
+        x = rearrange(x, 'b s n c -> b s (n c)')
+        mask = rearrange(mask, 'b s n c -> b s (n c)')
+        # forward
+        imp_fwd, pred_fwd = self.rits_fwd(x, mask)
+        # backward
+        x_bwd = reverse_tensor(x, dim=1)
+        mask_bwd = reverse_tensor(mask, dim=1) if mask is not None else None
+        imp_bwd, pred_bwd = self.rits_bwd(x_bwd, mask_bwd)
+        imp_bwd, pred_bwd = reverse_tensor(imp_bwd, dim=1), \
+                            [reverse_tensor(pb, dim=1) for pb in pred_bwd]
+        # stack into shape = [batch, directions, steps, features]
+        imputation = (imp_fwd + imp_bwd) / 2
+        predictions = [imp_fwd, imp_bwd] + pred_fwd + pred_bwd
+
+        imputation = rearrange(imputation, 'b s (n c) -> b s n c',
+                               n=self.n_nodes)
+        predictions = [rearrange(pred, 'b s (n c) -> b s n c', n=self.n_nodes)
+                       for pred in predictions]
+
+        return imputation, predictions
+
+    @staticmethod
+    def consistency_loss(imp_fwd, imp_bwd):
+        loss = 0.1 * torch.abs(imp_fwd - imp_bwd).mean()
+        return loss
+
+    @staticmethod
+    def add_model_specific_args(parser):
+        parser.add_argument('--hidden-size', type=int, default=64)
+        return parser
+
+File Path: spin/baselines/brits/layers.py
+Content:
+import math
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class FeatureRegression(nn.Module):
+    def __init__(self, input_size):
+        super(FeatureRegression, self).__init__()
+        self.W = nn.Parameter(torch.Tensor(input_size, input_size))
+        self.b = nn.Parameter(torch.Tensor(input_size))
+
+        m = 1 - torch.eye(input_size, input_size)
+        self.register_buffer('m', m)
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        stdv = 1. / math.sqrt(self.W.shape[0])
+        self.W.data.uniform_(-stdv, stdv)
+        self.b.data.uniform_(-stdv, stdv)
+
+    def forward(self, x):
+        z_h = F.linear(x, self.W * self.m, self.b)
+        return z_h
+
+
+class TemporalDecay(nn.Module):
+    def __init__(self, d_in, d_out, diag=False):
+        super(TemporalDecay, self).__init__()
+        self.diag = diag
+        self.W = nn.Parameter(torch.Tensor(d_out, d_in))
+        self.b = nn.Parameter(torch.Tensor(d_out))
+
+        if self.diag:
+            assert (d_in == d_out)
+            m = torch.eye(d_in, d_in)
+            self.register_buffer('m', m)
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        stdv = 1. / math.sqrt(self.W.shape[0])
+        self.W.data.uniform_(-stdv, stdv)
+        self.b.data.uniform_(-stdv, stdv)
+
+    @staticmethod
+    def compute_delta(mask, freq=1):
+        delta = torch.zeros_like(mask).float()
+        one_step = torch.tensor(freq, dtype=delta.dtype, device=delta.device)
+        for i in range(1, delta.shape[-2]):
+            m = mask[..., i - 1, :]
+            delta[..., i, :] = m * one_step + (1 - m) * torch.add(
+                delta[..., i - 1, :], freq)
+        return delta
+
+    def forward(self, d):
+        if self.diag:
+            gamma = F.relu(F.linear(d, self.W * self.m, self.b))
+        else:
+            gamma = F.relu(F.linear(d, self.W, self.b))
+        gamma = torch.exp(-gamma)
+        return gamma
+
+
+class RITS(nn.Module):
+    def __init__(self,
+                 input_size,
+                 hidden_size=64):
+        super(RITS, self).__init__()
+        self.input_size = int(input_size)
+        self.hidden_size = int(hidden_size)
+
+        self.rnn_cell = nn.LSTMCell(2 * self.input_size, self.hidden_size)
+
+        self.temp_decay_h = TemporalDecay(d_in=self.input_size,
+                                          d_out=self.hidden_size, diag=False)
+        self.temp_decay_x = TemporalDecay(d_in=self.input_size,
+                                          d_out=self.input_size, diag=True)
+
+        self.hist_reg = nn.Linear(self.hidden_size, self.input_size)
+        self.feat_reg = FeatureRegression(self.input_size)
+
+        self.weight_combine = nn.Linear(2 * self.input_size, self.input_size)
+
+    def init_hidden_states(self, x):
+        return torch.zeros((x.shape[0], self.hidden_size)).to(x.device)
+
+    def forward(self, x, mask=None, delta=None):
+        # x : [batch, steps, features]
+        steps = x.shape[-2]
+
+        if mask is None:
+            mask = torch.ones_like(x, dtype=torch.uint8)
+        if delta is None:
+            delta = TemporalDecay.compute_delta(mask)
+
+        # init rnn states
+        h = self.init_hidden_states(x)
+        c = self.init_hidden_states(x)
+
+        imputation = []
+        predictions = []
+        for step in range(steps):
+            d = delta[:, step, :]
+            m = mask[:, step, :]
+            x_s = x[:, step, :]
+
+            gamma_h = self.temp_decay_h(d)
+
+            # history prediction
+            x_h = self.hist_reg(h)
+            x_c = m * x_s + (1 - m) * x_h
+            h = h * gamma_h
+
+            # feature prediction
+            z_h = self.feat_reg(x_c)
+
+            # predictions combination
+            gamma_x = self.temp_decay_x(d)
+            alpha = self.weight_combine(torch.cat([gamma_x, m], dim=1))
+            alpha = torch.sigmoid(alpha)
+            c_h = alpha * z_h + (1 - alpha) * x_h
+
+            c_c = m * x_s + (1 - m) * c_h
+            inputs = torch.cat([c_c, m], dim=1)
+            h, c = self.rnn_cell(inputs, (h, c))
+
+            imputation.append(c_h)
+            predictions.append(torch.stack((z_h, x_h), dim=0))
+
+        # imputation -> [batch, steps, features]
+        imputation = torch.stack(imputation, dim=-2)
+        # predictions -> [predictions, batch, steps, features]
+        predictions = torch.stack(predictions, dim=-2)
+
+        return imputation, [*predictions]
+
+File Path: spin/baselines/saits/__init__.py
+Content:
+from .saits import SAITS
+
+File Path: spin/baselines/saits/layers.py
+Content:
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch import Tensor
+
+
+class ScaledDotProductAttention(nn.Module):
+    """scaled dot-product attention"""
+
+    def __init__(self, temperature, attn_dropout=0.1):
+        super().__init__()
+        self.temperature = temperature
+        self.dropout = nn.Dropout(attn_dropout)
+
+    def forward(self, q, k, v, attn_mask=None):
+        attn = torch.matmul(q / self.temperature, k.transpose(2, 3))
+        if attn_mask is not None:
+            attn = attn.masked_fill(attn_mask == 1, -1e9)
+        attn = self.dropout(F.softmax(attn, dim=-1))
+        output = torch.matmul(attn, v)
+        return output, attn
+
+
+class MultiHeadAttention(nn.Module):
+    """original Transformer multi-head attention"""
+
+    def __init__(self, n_head, d_model, d_k, d_v, attn_dropout):
+        super().__init__()
+
+        self.n_head = n_head
+        self.d_k = d_k
+        self.d_v = d_v
+
+        self.w_qs = nn.Linear(d_model, n_head * d_k, bias=False)
+        self.w_ks = nn.Linear(d_model, n_head * d_k, bias=False)
+        self.w_vs = nn.Linear(d_model, n_head * d_v, bias=False)
+
+        self.attention = ScaledDotProductAttention(d_k ** 0.5, attn_dropout)
+        self.fc = nn.Linear(n_head * d_v, d_model, bias=False)
+
+    def forward(self, q, k, v, attn_mask=None):
+        d_k, d_v, n_head = self.d_k, self.d_v, self.n_head
+        sz_b, len_q, len_k, len_v = q.size(0), q.size(1), k.size(1), v.size(1)
+
+        # Pass through the pre-attention projection: b x lq x (n*dv)
+        # Separate different heads: b x lq x n x dv
+        q = self.w_qs(q).view(sz_b, len_q, n_head, d_k)
+        k = self.w_ks(k).view(sz_b, len_k, n_head, d_k)
+        v = self.w_vs(v).view(sz_b, len_v, n_head, d_v)
+
+        # Transpose for attention dot product: b x n x lq x dv
+        q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
+
+        if attn_mask is not None:
+            # this mask is imputation mask, which is not generated from
+            # each batch, so needs broadcasting on batch dim
+            attn_mask = attn_mask.unsqueeze(0).unsqueeze(1)
+
+        v, attn_weights = self.attention(q, k, v, attn_mask)
+
+        # Transpose to move the head dimension back: b x lq x n x dv
+        # Concatenate all the heads together: b x lq x (n*dv)
+        v = v.transpose(1, 2).contiguous().view(sz_b, len_q, -1)
+        v = self.fc(v)
+        return v, attn_weights
+
+
+class PositionWiseFeedForward(nn.Module):
+    def __init__(self, d_in, d_hid, dropout=0.1):
+        super().__init__()
+        self.w_1 = nn.Linear(d_in, d_hid)
+        self.w_2 = nn.Linear(d_hid, d_in)
+        self.layer_norm = nn.LayerNorm(d_in, eps=1e-6)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        residual = x
+        x = self.layer_norm(x)
+        x = self.w_2(F.relu(self.w_1(x)))
+        x = self.dropout(x)
+        x += residual
+        return x
+
+
+class EncoderLayer(nn.Module):
+    def __init__(self, d_time, d_feature, d_model, d_inner, n_head, d_k, d_v,
+                 diagonal_attention_mask: bool = True,
+                 dropout: float = 0.1,
+                 attn_dropout: float = 0.1):
+        super(EncoderLayer, self).__init__()
+
+        self.diagonal_attention_mask = diagonal_attention_mask
+        self.d_time = d_time
+        self.d_feature = d_feature
+
+        self.layer_norm = nn.LayerNorm(d_model)
+        self.slf_attn = MultiHeadAttention(n_head, d_model, d_k, d_v,
+                                           attn_dropout)
+        self.dropout = nn.Dropout(dropout)
+        self.pos_ffn = PositionWiseFeedForward(d_model, d_inner, dropout)
+
+    def forward(self, x: Tensor):
+        if self.diagonal_attention_mask:
+            mask_time = torch.eye(self.d_time).to(x.device)
+        else:
+            mask_time = None
+
+        residual = x
+        # here we apply LN before attention cal, namely Pre-LN
+        enc_input = self.layer_norm(x)
+        enc_output, attn_weights = self.slf_attn(enc_input, enc_input,
+                                                 enc_input, attn_mask=mask_time)
+        enc_output = self.dropout(enc_output)
+        enc_output += residual
+
+        enc_output = self.pos_ffn(enc_output)
+        return enc_output, attn_weights
+
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_hid, n_position=200):
+        super(PositionalEncoding, self).__init__()
+        # Not a parameter
+        pos_table = self._get_sinusoid_encoding_table(n_position, d_hid)
+        self.register_buffer('pos_table', pos_table)
+
+    def _get_sinusoid_encoding_table(self, n_position, d_hid):
+        """ Sinusoid position encoding table """
+
+        def get_position_angle_vec(position):
+            return [position / np.power(10000, 2 * (hid_j // 2) / d_hid) for
+                    hid_j in range(d_hid)]
+
+        sinusoid_table = np.array([get_position_angle_vec(pos_i)
+                                   for pos_i in range(n_position)])
+        sinusoid_table[:, 0::2] = np.sin(sinusoid_table[:, 0::2])  # dim 2i
+        sinusoid_table[:, 1::2] = np.cos(sinusoid_table[:, 1::2])  # dim 2i+1
+        return torch.Tensor(sinusoid_table)
+
+    def forward(self, x):
+        return x + self.pos_table[:x.size(1)]
+
+File Path: spin/baselines/saits/saits.py
+Content:
+import torch
+from einops import rearrange
+from torch import nn, Tensor
+from torch.nn import functional as F
+from torch_geometric.nn import inits
+
+from .layers import EncoderLayer, PositionalEncoding
+
+
+class TransformerEncoder(nn.Module):
+    def __init__(self, n_groups, n_group_inner_layers, d_time, d_feature,
+                 d_model, d_inner, n_head, d_k, d_v, dropout,
+                 **kwargs):
+        super().__init__()
+        self.n_groups = n_groups
+        self.n_group_inner_layers = n_group_inner_layers
+        self.input_with_mask = kwargs['input_with_mask']
+        actual_d_feature = d_feature * 2 if self.input_with_mask else d_feature
+        self.param_sharing_strategy = kwargs['param_sharing_strategy']
+        self.MIT = kwargs['MIT']
+
+        if self.param_sharing_strategy == 'between_group':
+            # For between_group, only need to create 1 group and
+            # repeat n_groups times while forwarding
+            self.layer_stack = nn.ModuleList([
+                EncoderLayer(d_time, actual_d_feature, d_model, d_inner, n_head,
+                             d_k, d_v, dropout, dropout, **kwargs)
+                for _ in range(n_group_inner_layers)
+            ])
+        else:  # then inner_group，inner_group is the way used in ALBERT
+            # For inner_group, only need to create n_groups layers and
+            # repeat n_group_inner_layers times in each group while forwarding
+            self.layer_stack = nn.ModuleList([
+                EncoderLayer(d_time, actual_d_feature, d_model, d_inner, n_head,
+                             d_k, d_v, dropout, dropout, **kwargs)
+                for _ in range(n_groups)
+            ])
+
+        self.embedding = nn.Linear(actual_d_feature, d_model)
+        self.position_enc = PositionalEncoding(d_model, n_position=d_time)
+        self.dropout = nn.Dropout(p=dropout)
+        self.reduce_dim = nn.Linear(d_model, d_feature)
+
+    def impute(self, x, mask, **kwargs):
+        # tsl shape to original shape: [b s n c=1] -> [b s c]
+        is_bsnc = False
+        if x.ndim == 4:
+            is_bsnc = True
+            x, mask = x.squeeze(-1), mask.squeeze(-1)
+
+        # 1st DMSA ############################################################
+
+        # Cat mask (eventually)
+        if self.input_with_mask:
+            input_X = torch.cat([x, mask], dim=2)
+        else:
+            input_X = x
+        input_X = self.embedding(input_X)
+        enc_output = self.dropout(self.position_enc(input_X))
+
+        if self.param_sharing_strategy == 'between_group':
+            for _ in range(self.n_groups):
+                for encoder_layer in self.layer_stack:
+                    enc_output, _ = encoder_layer(enc_output)
+        else:
+            for encoder_layer in self.layer_stack:
+                for _ in range(self.n_group_inner_layers):
+                    enc_output, _ = encoder_layer(enc_output)
+
+        learned_presentation = self.reduce_dim(enc_output)
+        # replace non-missing part with original data
+        imputed_data = mask * x + (1 - mask) * learned_presentation
+
+        if is_bsnc:
+            imputed_data.unsqueeze_(-1), learned_presentation.unsqueeze_(-1)
+        return imputed_data, learned_presentation
+
+
+class SAITS(nn.Module):
+    def __init__(self, input_size: int, window_size: int, n_nodes: int,
+                 d_model: int = 256,
+                 d_inner: int = 128,
+                 n_head: int = 4,
+                 d_k: int = None,  # or 64
+                 d_v: int = 64,
+                 n_groups: int = 2,
+                 n_group_inner_layers: int = 1,
+                 param_sharing_strategy: str = 'inner_group',
+                 dropout: float = 0.1,
+                 input_with_mask: bool = True,
+                 diagonal_attention_mask: bool = True,
+                 trainable_mask_token: bool = False):
+        super().__init__()
+        self.n_nodes = n_nodes
+        self.input_size = input_size
+        self.n_groups = n_groups
+        self.n_group_inner_layers = n_group_inner_layers
+        self.input_with_mask = input_with_mask
+        self.param_sharing_strategy = param_sharing_strategy
+
+        d_in = in_features = input_size * n_nodes
+        if self.input_with_mask:
+            d_in = 2 * d_in
+        d_k = d_k or (d_model // n_head)  # from the appendix
+
+        if trainable_mask_token:
+            self.mask_token = nn.Parameter(torch.Tensor(1, 1, in_features))
+            inits.uniform(in_features, self.mask_token)
+        else:
+            self.register_buffer('mask_token', torch.zeros(1, 1, in_features))
+
+        if self.param_sharing_strategy == 'between_group':
+            # For between_group, only need to create 1 group and
+            # repeat n_groups times while forwarding
+            n_layers = n_group_inner_layers
+        else:  # then inner_group，inner_group is the way used in ALBERT
+            # For inner_group, only need to create n_groups layers and
+            # repeat n_group_inner_layers times in each group while forwarding
+            n_layers = n_groups
+
+        self.layer_stack_for_first_block = nn.ModuleList([
+            EncoderLayer(d_time=window_size,
+                         d_feature=d_in,
+                         d_model=d_model,
+                         d_inner=d_inner,
+                         n_head=n_head,
+                         d_k=d_k,
+                         d_v=d_v,
+                         dropout=dropout,
+                         attn_dropout=0,
+                         diagonal_attention_mask=diagonal_attention_mask)
+            for _ in range(n_layers)
+        ])
+        self.layer_stack_for_second_block = nn.ModuleList([
+            EncoderLayer(d_time=window_size,
+                         d_feature=d_in,
+                         d_model=d_model,
+                         d_inner=d_inner,
+                         n_head=n_head,
+                         d_k=d_k,
+                         d_v=d_v,
+                         dropout=dropout,
+                         attn_dropout=0,
+                         diagonal_attention_mask=diagonal_attention_mask)
+            for _ in range(n_layers)
+        ])
+
+        self.dropout = nn.Dropout(p=dropout)
+        self.position_enc = PositionalEncoding(d_model, n_position=window_size)
+        # for operation on time dim
+        self.embedding_1 = nn.Linear(d_in, d_model)
+        self.reduce_dim_z = nn.Linear(d_model, in_features)
+        # for operation on measurement dim
+        self.embedding_2 = nn.Linear(d_in, d_model)
+        self.reduce_dim_beta = nn.Linear(d_model, in_features)
+        self.reduce_dim_gamma = nn.Linear(in_features, in_features)
+        # for delta decay factor
+        self.weight_combine = nn.Linear(in_features + window_size, in_features)
+
+    def forward(self, x: Tensor, mask: Tensor, **kwargs):
+        # tsl shape to original shape: [b s n c] -> [b s c]
+        x = rearrange(x, 'b s n c -> b s (n c)')
+        mask = rearrange(mask, 'b s n c -> b s (n c)')
+        # whiten missing values
+        x = torch.where(mask.bool(), x, self.mask_token)
+
+        # 1st DMSA ############################################################
+
+        # Cat mask (eventually)
+        if self.input_with_mask:
+            x_in = torch.cat([x, mask], dim=-1)
+        else:
+            x_in = x
+        x_in = self.embedding_1(x_in)
+        z = self.dropout(self.position_enc(x_in))
+
+        # Encode (deeply?)
+        if self.param_sharing_strategy == 'between_group':
+            for _ in range(self.n_groups):
+                for encoder_layer in self.layer_stack_for_first_block:
+                    z, _ = encoder_layer(z)
+        else:
+            for encoder_layer in self.layer_stack_for_first_block:
+                for _ in range(self.n_group_inner_layers):
+                    z, _ = encoder_layer(z)
+
+        x_tilde_1 = self.reduce_dim_z(z)
+        x_hat_1 = mask * x + (1 - mask) * x_tilde_1
+
+        # 2nd DMSA ############################################################
+
+        # Cat mask (eventually)
+        if self.input_with_mask:
+            x_in = torch.cat([x_hat_1, mask], dim=-1)
+        else:
+            x_in = x_hat_1
+        x_in = self.embedding_2(x_in)
+        z = self.position_enc(x_in)
+
+        # Encode
+        if self.param_sharing_strategy == 'between_group':
+            for _ in range(self.n_groups):
+                for encoder_layer in self.layer_stack_for_second_block:
+                    z, attn_weights = encoder_layer(z)
+        else:
+            for encoder_layer in self.layer_stack_for_second_block:
+                for _ in range(self.n_group_inner_layers):
+                    z, attn_weights = encoder_layer(z)
+
+        x_tilde_2 = self.reduce_dim_gamma(F.relu(self.reduce_dim_beta(z)))
+
+        # Average attention heads
+        if attn_weights.size(1) > 1:
+            attn_weights = attn_weights.mean(dim=1)
+
+        weights = torch.cat([mask, attn_weights], dim=2)
+        weights = F.sigmoid(self.weight_combine(weights))
+        # combine x_tilde_1 and X_tilde_2
+        # x_tilde_3 = (1 - weights) * x_tilde_2 + weights * x_tilde_1
+        x_hat = torch.lerp(x_tilde_2, x_tilde_1, weights)
+        # replace non-missing part with original data
+        x_tilde = [x_tilde_1, x_tilde_2, x_hat]
+
+        # restore original shape
+        x_hat = rearrange(x_hat, 'b s (n c) -> b s n c', n=self.n_nodes)
+        x_tilde = [rearrange(tens, 'b s (n c) -> b s n c', n=self.n_nodes)
+                   for tens in x_tilde]
+
+        return x_hat, x_tilde
+
+    @staticmethod
+    def add_model_specific_args(parser):
+        parser.opt_list('--d-model', type=int, default=256, tunable=True,
+                        options=[64, 128, 256, 512, 1024])
+        parser.opt_list('--d-inner', type=int, default=128, tunable=True,
+                        options=[128, 256, 512, 1024, 2048, 4096])
+        parser.opt_list('--n-head', type=int, default=4, tunable=True,
+                        options=[2, 4, 8])
+        parser.add_argument('--d-k', type=int, default=None)
+        parser.opt_list('--d-v', type=int, default=64, tunable=True,
+                        options=[64, 128, 256, 512])
+        parser.add_argument('--dropout', type=float, default=0.1)
+        #
+        parser.opt_list('--n-groups', type=int, default=2, tunable=True,
+                        options=[1, 2, 4, 6, 8])
+        parser.add_argument('--n-group-inner-layers', type=int, default=1)
+        parser.add_argument('--param-sharing-strategy', type=str,
+                            default='inner_group')
+        #
+        parser.add_argument('--input-with-mask', type=bool, default=True)
+        parser.add_argument('--diagonal-attention-mask', type=bool,
+                            default=True)
+        parser.add_argument('--trainable-mask-token', type=bool,
+                            default=False)
+        return parser
+
+File Path: spin/baselines/transformer/__init__.py
+Content:
+from .transformer import TransformerModel
+
+File Path: spin/baselines/transformer/transformer.py
+Content:
+from torch import nn
+from tsl.nn.base import StaticGraphEmbedding
+from tsl.nn.blocks.encoders.mlp import MLP
+from tsl.nn.blocks.encoders.transformer import SpatioTemporalTransformerLayer, \
+    TransformerLayer
+from tsl.nn.layers import PositionalEncoding
+from tsl.utils.parser_utils import ArgParser, str_to_bool
+
+
+class TransformerModel(nn.Module):
+    r"""Spatiotemporal Transformer for multivariate time series imputation.
+
+    Args:
+        input_size (int): Input size.
+        hidden_size (int): Dimension of the learned representations.
+        output_size (int): Dimension of the output.
+        ff_size (int): Units in the MLP after self attention.
+        u_size (int): Dimension of the exogenous variables.
+        n_heads (int, optional): Number of parallel attention heads.
+        n_layers (int, optional): Number of layers.
+        dropout (float, optional): Dropout probability.
+        axis (str, optional): Dimension on which to apply attention to update
+            the representations.
+        activation (str, optional): Activation function.
+    """
+
+    def __init__(self,
+                 input_size: int,
+                 hidden_size: int,
+                 output_size: int,
+                 ff_size: int,
+                 u_size: int,
+                 n_heads: int = 1,
+                 n_layers: int = 1,
+                 dropout: float = 0.,
+                 condition_on_u: bool = True,
+                 axis: str = 'both',
+                 activation: str = 'elu'):
+        super(TransformerModel, self).__init__()
+
+        self.condition_on_u = condition_on_u
+        if condition_on_u:
+            self.u_enc = MLP(u_size, hidden_size, n_layers=2)
+        self.h_enc = MLP(input_size, hidden_size, n_layers=2)
+
+        self.mask_token = StaticGraphEmbedding(1, hidden_size)
+
+        self.pe = PositionalEncoding(hidden_size)
+
+        kwargs = dict(input_size=hidden_size,
+                      hidden_size=hidden_size,
+                      ff_size=ff_size,
+                      n_heads=n_heads,
+                      activation=activation,
+                      causal=False,
+                      dropout=dropout)
+
+        if axis in ['steps', 'nodes']:
+            transformer_layer = TransformerLayer
+            kwargs['axis'] = axis
+        elif axis == 'both':
+            transformer_layer = SpatioTemporalTransformerLayer
+        else:
+            raise ValueError(f'"{axis}" is not a valid axis.')
+
+        self.encoder = nn.ModuleList()
+        self.readout = nn.ModuleList()
+        for _ in range(n_layers):
+            self.encoder.append(transformer_layer(**kwargs))
+            self.readout.append(MLP(input_size=hidden_size,
+                                    hidden_size=ff_size,
+                                    output_size=output_size,
+                                    n_layers=2,
+                                    dropout=dropout))
+
+    def forward(self, x, u, mask):
+        # x: [batches steps nodes features]
+        # u: [batches steps (nodes) features]
+        x = x * mask
+
+        h = self.h_enc(x)
+        h = mask * h + (1 - mask) * self.mask_token()
+
+        if self.condition_on_u:
+            h = h + self.u_enc(u).unsqueeze(-2)
+
+        h = self.pe(h)
+
+        out = []
+        for encoder, mlp in zip(self.encoder, self.readout):
+            h = encoder(h)
+            out.append(mlp(h))
+
+        x_hat = out.pop(-1)
+        return x_hat, out
+
+    @staticmethod
+    def add_model_specific_args(parser: ArgParser):
+        parser.opt_list('--hidden-size', type=int, default=32, tunable=True,
+                        options=[16, 32, 64, 128, 256])
+        parser.opt_list('--ff-size', type=int, default=32, tunable=True,
+                        options=[32, 64, 128, 256, 512, 1024])
+        parser.opt_list('--n-layers', type=int, default=1, tunable=True,
+                        options=[1, 2, 3])
+        parser.opt_list('--n-heads', type=int, default=1, tunable=True,
+                        options=[1, 2, 3])
+        parser.opt_list('--dropout', type=float, default=0., tunable=True,
+                        options=[0., 0.1, 0.25, 0.5])
+        parser.add_argument('--condition-on-u', type=str_to_bool, nargs='?',
+                            const=True, default=True)
+        parser.opt_list('--axis', type=str, default='both', tunable=True,
+                        options=['steps', 'both'])
+        return parser
+
+File Path: spin/imputers/__init__.py
+Content:
+from .brits_imputer import BRITSImputer
+from .saits_imputer import SAITSImputer
+from .spin_imputer import SPINImputer
+
+File Path: spin/imputers/brits_imputer.py
+Content:
+from tsl.imputers import Imputer
+
+from ..baselines import BRITS
+
+
+class BRITSImputer(Imputer):
+
+    def shared_step(self, batch, mask):
+        y = y_loss = batch.y
+        y_hat = y_hat_loss = self.predict_batch(batch, preprocess=False,
+                                                postprocess=not self.scale_target)
+
+        if self.scale_target:
+            y_loss = batch.transform['y'].transform(y)
+            y_hat = batch.transform['y'].inverse_transform(y_hat)
+
+        y_hat_loss, y_loss, mask = self.trim_warm_up(y_hat_loss, y_loss, mask)
+
+        imputation, predictions = y_hat_loss
+        imp_fwd, imp_bwd = predictions[:2]
+        y_hat = y_hat[0]
+
+        loss = sum([self.loss_fn(pred, y_loss, mask) for pred in predictions])
+        loss += BRITS.consistency_loss(imp_fwd, imp_bwd)
+
+        return y_hat.detach(), y, loss
+
+File Path: spin/imputers/saits_imputer.py
+Content:
+from tsl.imputers import Imputer
+
+
+class SAITSImputer(Imputer):
+
+    def shared_step(self, batch, mask):
+        y = y_loss = batch.y
+        y_hat = y_hat_loss = self.predict_batch(batch, preprocess=False,
+                                                postprocess=not self.scale_target)
+
+        if self.scale_target:
+            y_loss = batch.transform['y'].transform(y)
+            y_hat = batch.transform['y'].inverse_transform(y_hat)
+
+        y_hat_loss, y_loss, mask = self.trim_warm_up(y_hat_loss, y_loss, mask)
+
+        if isinstance(y_hat_loss, (list, tuple)):
+            imputation, predictions = y_hat_loss
+            y_hat = y_hat[0]
+        else:
+            imputation, predictions = y_hat_loss, []
+
+        # Imputation loss
+        if self.training:
+            injected_missing = batch.original_mask - batch.mask
+            mask = batch.mask
+            loss = self.loss_fn(imputation, y_loss, injected_missing)
+        else:
+            loss = 0
+
+        # Reconstruction loss
+        for pred in predictions:
+            pred_loss = self.loss_fn(pred, y_loss, mask)
+            loss += self.prediction_loss_weight * pred_loss / 3
+
+        return y_hat.detach(), y, loss
+
+File Path: spin/imputers/spin_imputer.py
+Content:
+from typing import Type, Mapping, Callable, Optional, Union, List
+
+import torch
+from torchmetrics import Metric
+from tsl.imputers import Imputer
+from tsl.predictors import Predictor
+
+from ..utils import k_hop_subgraph_sampler
+
+
+class SPINImputer(Imputer):
+
+    def __init__(self,
+                 model_class: Type,
+                 model_kwargs: Mapping,
+                 optim_class: Type,
+                 optim_kwargs: Mapping,
+                 loss_fn: Callable,
+                 scale_target: bool = True,
+                 whiten_prob: Union[float, List[float]] = 0.2,
+                 n_roots_subgraph: Optional[int] = None,
+                 n_hops: int = 2,
+                 max_edges_subgraph: Optional[int] = 1000,
+                 cut_edges_uniformly: bool = False,
+                 prediction_loss_weight: float = 1.0,
+                 metrics: Optional[Mapping[str, Metric]] = None,
+                 scheduler_class: Optional = None,
+                 scheduler_kwargs: Optional[Mapping] = None):
+        super(SPINImputer, self).__init__(model_class=model_class,
+                                          model_kwargs=model_kwargs,
+                                          optim_class=optim_class,
+                                          optim_kwargs=optim_kwargs,
+                                          loss_fn=loss_fn,
+                                          scale_target=scale_target,
+                                          whiten_prob=whiten_prob,
+                                          prediction_loss_weight=prediction_loss_weight,
+                                          metrics=metrics,
+                                          scheduler_class=scheduler_class,
+                                          scheduler_kwargs=scheduler_kwargs)
+        self.n_roots = n_roots_subgraph
+        self.n_hops = n_hops
+        self.max_edges_subgraph = max_edges_subgraph
+        self.cut_edges_uniformly = cut_edges_uniformly
+
+    def on_after_batch_transfer(self, batch, dataloader_idx):
+        if self.training and self.n_roots is not None:
+            batch = k_hop_subgraph_sampler(batch, self.n_hops, self.n_roots,
+                                           max_edges=self.max_edges_subgraph,
+                                           cut_edges_uniformly=self.cut_edges_uniformly)
+        return super(SPINImputer, self).on_after_batch_transfer(batch,
+                                                                dataloader_idx)
+
+    def training_step(self, batch, batch_idx):
+        injected_missing = (batch.original_mask - batch.mask)
+        if 'target_nodes' in batch:
+            injected_missing = injected_missing[..., batch.target_nodes, :]
+        # batch.input.target_mask = injected_missing
+        y_hat, y, loss = self.shared_step(batch, mask=injected_missing)
+
+        # Logging
+        self.train_metrics.update(y_hat, y, batch.eval_mask)
+        self.log_metrics(self.train_metrics, batch_size=batch.batch_size)
+        self.log_loss('train', loss, batch_size=batch.batch_size)
+        if 'target_nodes' in batch:
+            torch.cuda.empty_cache()
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        # batch.input.target_mask = batch.eval_mask
+        y_hat, y, val_loss = self.shared_step(batch, batch.eval_mask)
+
+        # Logging
+        self.val_metrics.update(y_hat, y, batch.eval_mask)
+        self.log_metrics(self.val_metrics, batch_size=batch.batch_size)
+        self.log_loss('val', val_loss, batch_size=batch.batch_size)
+        return val_loss
+
+    def test_step(self, batch, batch_idx):
+        # batch.input.target_mask = batch.eval_mask
+        # Compute outputs and rescale
+        y_hat = self.predict_batch(batch, preprocess=False, postprocess=True)
+
+        if isinstance(y_hat, (list, tuple)):
+            y_hat = y_hat[0]
+
+        y, eval_mask = batch.y, batch.eval_mask
+        test_loss = self.loss_fn(y_hat, y, eval_mask)
+
+        # Logging
+        self.test_metrics.update(y_hat.detach(), y, eval_mask)
+        self.log_metrics(self.test_metrics, batch_size=batch.batch_size)
+        self.log_loss('test', test_loss, batch_size=batch.batch_size)
+        return test_loss
+
+    @staticmethod
+    def add_argparse_args(parser, **kwargs):
+        parser = Predictor.add_argparse_args(parser)
+        parser.add_argument('--whiten-prob', type=float, default=0.05)
+        parser.add_argument('--prediction-loss-weight', type=float, default=1.0)
+        parser.add_argument('--n-roots-subgraph', type=int, default=None)
+        parser.add_argument('--n-hops', type=int, default=2)
+        parser.add_argument('--max-edges-subgraph', type=int, default=1000)
+        parser.add_argument('--cut-edges-uniformly', type=bool, default=False)
+        return parser
+
+File Path: spin/layers/__init__.py
+Content:
+from .postional_encoding import PositionalEncoder
+from .additive_attention import AdditiveAttention
+from .temporal_graph_additive_attention import TemporalAdditiveAttention, \
+    TemporalGraphAdditiveAttention
+from .hierarchical_temporal_graph_attention import \
+    HierarchicalTemporalGraphAttention
+
+File Path: spin/layers/additive_attention.py
+Content:
+from typing import Optional, Tuple, Union
+
+import torch
+from torch import Tensor
+from torch import nn
+from torch.nn import LayerNorm, functional as F
+from torch_geometric.nn.conv import MessagePassing
+from torch_geometric.nn.dense.linear import Linear
+from torch_geometric.typing import Adj, OptTensor, PairTensor
+from torch_scatter import scatter
+from torch_scatter.utils import broadcast
+from tsl.nn.blocks.encoders import MLP
+from tsl.nn.functional import sparse_softmax
+
+
+class AdditiveAttention(MessagePassing):
+    def __init__(self, input_size: Union[int, Tuple[int, int]],
+                 output_size: int,
+                 msg_size: Optional[int] = None,
+                 msg_layers: int = 1,
+                 root_weight: bool = True,
+                 reweight: Optional[str] = None,
+                 norm: bool = True,
+                 dropout: float = 0.0,
+                 dim: int = -2,
+                 **kwargs):
+        kwargs.setdefault('aggr', 'add')
+        super().__init__(node_dim=dim, **kwargs)
+
+        self.output_size = output_size
+        if isinstance(input_size, int):
+            self.src_size = self.tgt_size = input_size
+        else:
+            self.src_size, self.tgt_size = input_size
+
+        self.msg_size = msg_size or self.output_size
+        self.msg_layers = msg_layers
+
+        assert reweight in ['softmax', 'l1', None]
+        self.reweight = reweight
+
+        self.root_weight = root_weight
+        self.dropout = dropout
+
+        # key bias is discarded in softmax
+        self.lin_src = Linear(self.src_size, self.output_size,
+                              weight_initializer='glorot',
+                              bias_initializer='zeros')
+        self.lin_tgt = Linear(self.tgt_size, self.output_size,
+                              weight_initializer='glorot', bias=False)
+
+        if self.root_weight:
+            self.lin_skip = Linear(self.tgt_size, self.output_size,
+                                   bias=False)
+        else:
+            self.register_parameter('lin_skip', None)
+
+        self.msg_nn = nn.Sequential(
+            nn.PReLU(init=0.2),
+            MLP(self.output_size, self.msg_size, self.output_size,
+                n_layers=self.msg_layers, dropout=self.dropout,
+                activation='prelu')
+        )
+
+        if self.reweight == 'softmax':
+            self.msg_gate = nn.Linear(self.output_size, 1, bias=False)
+        else:
+            self.msg_gate = nn.Sequential(nn.Linear(self.output_size, 1),
+                                          nn.Sigmoid())
+
+        if norm:
+            self.norm = LayerNorm(self.output_size)
+        else:
+            self.register_parameter('norm', None)
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        self.lin_src.reset_parameters()
+        self.lin_tgt.reset_parameters()
+        if self.lin_skip is not None:
+            self.lin_skip.reset_parameters()
+
+    def forward(self, x: PairTensor, edge_index: Adj, mask: OptTensor = None):
+        # if query/key not provided, defaults to x (e.g., for self-attention)
+        if isinstance(x, Tensor):
+            x_src = x_tgt = x
+        else:
+            x_src, x_tgt = x
+            x_tgt = x_tgt if x_tgt is not None else x_src
+
+        N_src, N_tgt = x_src.size(self.node_dim), x_tgt.size(self.node_dim)
+
+        msg_src = self.lin_src(x_src)
+        msg_tgt = self.lin_tgt(x_tgt)
+
+        msg = (msg_src, msg_tgt)
+
+        # propagate_type: (msg: PairTensor, mask: OptTensor)
+        out = self.propagate(edge_index, msg=msg, mask=mask,
+                             size=(N_src, N_tgt))
+
+        # skip connection
+        if self.root_weight:
+            out = out + self.lin_skip(x_tgt)
+
+        if self.norm is not None:
+            out = self.norm(out)
+
+        return out
+
+    def normalize_weights(self, weights, index, num_nodes, mask=None):
+        # mask weights
+        if mask is not None:
+            fill_value = float("-inf") if self.reweight == 'softmax' else 0.
+            weights = weights.masked_fill(torch.logical_not(mask), fill_value)
+        # eventually reweight
+        if self.reweight == 'l1':
+            expanded_index = broadcast(index, weights, self.node_dim)
+            weights_sum = scatter(weights, expanded_index, self.node_dim,
+                                  dim_size=num_nodes, reduce='sum')
+            weights_sum = weights_sum.index_select(self.node_dim, index)
+            weights = weights / (weights_sum + 1e-5)
+        elif self.reweight == 'softmax':
+            weights = sparse_softmax(weights, index, num_nodes=num_nodes,
+                                     dim=self.node_dim)
+        return weights
+
+    def message(self, msg_j: Tensor, msg_i: Tensor, index, size_i,
+                mask_j: OptTensor = None) -> Tensor:
+        msg = self.msg_nn(msg_j + msg_i)
+        gate = self.msg_gate(msg)
+        alpha = self.normalize_weights(gate, index, size_i, mask_j)
+        alpha = F.dropout(alpha, p=self.dropout, training=self.training)
+        out = alpha * msg
+        return out
+
+    def __repr__(self) -> str:
+        return (f'{self.__class__.__name__}({self.output_size}, '
+                f'dim={self.node_dim}, '
+                f'root_weight={self.root_weight})')
+
+
+class TemporalAdditiveAttention(AdditiveAttention):
+    def __init__(self, input_size: Union[int, Tuple[int, int]],
+                 output_size: int,
+                 msg_size: Optional[int] = None,
+                 msg_layers: int = 1,
+                 root_weight: bool = True,
+                 reweight: Optional[str] = None,
+                 norm: bool = True,
+                 dropout: float = 0.0,
+                 **kwargs):
+        kwargs.setdefault('dim', 1)
+        super().__init__(input_size=input_size,
+                         output_size=output_size,
+                         msg_size=msg_size,
+                         msg_layers=msg_layers,
+                         root_weight=root_weight,
+                         reweight=reweight,
+                         dropout=dropout,
+                         norm=norm,
+                         **kwargs)
+
+    def forward(self, x: PairTensor, mask: OptTensor = None,
+                temporal_mask: OptTensor = None,
+                causal_lag: Optional[int] = None):
+        # x: [b s * c]    query: [b l * c]    key: [b s * c]
+        # mask: [b s * c]    temporal_mask: [l s]
+        if isinstance(x, Tensor):
+            x_src = x_tgt = x
+        else:
+            x_src, x_tgt = x
+            x_tgt = x_tgt if x_tgt is not None else x_src
+
+        l, s = x_tgt.size(self.node_dim), x_src.size(self.node_dim)
+        i = torch.arange(l, dtype=torch.long, device=x_src.device)
+        j = torch.arange(s, dtype=torch.long, device=x_src.device)
+
+        # compute temporal index, from j to i
+        if temporal_mask is None and isinstance(causal_lag, int):
+            temporal_mask = tuple(torch.tril_indices(l, l, offset=-causal_lag,
+                                                     device=x_src.device))
+        if temporal_mask is not None:
+            assert temporal_mask.size() == (l, s)
+            i, j = torch.meshgrid(i, j)
+            edge_index = torch.stack((j[temporal_mask], i[temporal_mask]))
+        else:
+            edge_index = torch.cartesian_prod(j, i).T
+
+        return super(TemporalAdditiveAttention, self).forward(x, edge_index,
+                                                              mask=mask)
+
+File Path: spin/layers/hierarchical_temporal_graph_attention.py
+Content:
+from typing import Optional
+
+from torch import Tensor
+from torch_geometric.nn.conv import MessagePassing
+from torch_geometric.nn.dense.linear import Linear
+from torch_geometric.typing import Adj, OptTensor
+from tsl.nn.functional import sparse_softmax
+from tsl.nn.layers.norm import LayerNorm
+
+from .additive_attention import TemporalAdditiveAttention
+
+
+class HierarchicalTemporalGraphAttention(MessagePassing):
+    def __init__(self, h_size: int, z_size: int,
+                 msg_size: Optional[int] = None,
+                 msg_layers: int = 1,
+                 root_weight: bool = True,
+                 reweight: Optional[str] = None,
+                 update_z_cross: bool = True,
+                 mask_temporal: bool = True,
+                 mask_spatial: bool = True,
+                 norm: bool = True,
+                 dropout: float = 0.,
+                 aggr: str = 'add',
+                 **kwargs):
+        self.spatial_aggr = aggr
+        if aggr == 'softmax':
+            aggr = 'add'
+        super(HierarchicalTemporalGraphAttention, self).__init__(node_dim=-2,
+                                                                 aggr=aggr,
+                                                                 **kwargs)
+
+        # store dimensions
+        self.h_size = h_size
+        self.z_size = z_size
+        self.msg_size = msg_size or z_size
+
+        self.mask_temporal = mask_temporal
+        self.mask_spatial = mask_spatial
+
+        self.root_weight = root_weight
+        self.norm = norm
+        self.dropout = dropout
+        self._z_cross = None
+
+        self.zh_self = TemporalAdditiveAttention(
+            input_size=(h_size, z_size),
+            output_size=z_size,
+            msg_size=msg_size,
+            msg_layers=msg_layers,
+            reweight=reweight,
+            dropout=dropout,
+            root_weight=True,
+            norm=True
+        )
+
+        self.hz_self = TemporalAdditiveAttention(
+            input_size=(z_size, h_size),
+            output_size=h_size,
+            msg_size=msg_size,
+            msg_layers=msg_layers,
+            reweight=reweight,
+            dropout=dropout,
+            root_weight=True,
+            norm=False
+        )
+
+        if update_z_cross:
+            self.zh_cross = TemporalAdditiveAttention(
+                input_size=(h_size, z_size),
+                output_size=z_size,
+                msg_size=msg_size,
+                msg_layers=msg_layers,
+                reweight=reweight,
+                dropout=dropout,
+                root_weight=True,
+                norm=True
+            )
+        else:
+            self.register_parameter('zh_cross', None)
+
+        self.hz_cross = TemporalAdditiveAttention(
+            input_size=(z_size, h_size),
+            output_size=h_size,
+            msg_size=msg_size,
+            msg_layers=msg_layers,
+            reweight=None,
+            dropout=dropout,
+            root_weight=True,
+            norm=False
+        )
+
+        if self.spatial_aggr == 'softmax':
+            self.lin_alpha_h = Linear(h_size, 1, bias=False)
+            self.lin_alpha_z = Linear(z_size, 1, bias=False)
+        else:
+            self.register_parameter('lin_alpha_h', None)
+            self.register_parameter('lin_alpha_z', None)
+
+        if self.root_weight:
+            self.h_skip = Linear(h_size, h_size, bias_initializer='zeros')
+            self.z_skip = Linear(z_size, z_size, bias_initializer='zeros')
+        else:
+            self.register_parameter('h_skip', None)
+            self.register_parameter('z_skip', None)
+
+        if self.norm:
+            self.h_norm = LayerNorm(h_size)
+            self.z_norm = LayerNorm(z_size)
+        else:
+            self.register_parameter('h_norm', None)
+            self.register_parameter('z_norm', None)
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        self.zh_self.reset_parameters()
+        self.hz_self.reset_parameters()
+        if self.zh_cross is not None:
+            self.zh_cross.reset_parameters()
+        self.hz_cross.reset_parameters()
+        if self.spatial_aggr == 'softmax':
+            self.lin_alpha_h.reset_parameters()
+            self.lin_alpha_z.reset_parameters()
+        if self.root_weight:
+            self.h_skip.reset_parameters()
+            self.z_skip.reset_parameters()
+        if self.norm:
+            self.h_norm.reset_parameters()
+            self.z_norm.reset_parameters()
+
+    def forward(self, h: Tensor, z: Tensor, edge_index: Adj,
+                mask: OptTensor = None):
+        # inputs: [batch, steps, nodes, channels]
+
+        z_out = self.zh_self(x=(h, z),
+                             mask=mask if self.mask_temporal else None)
+        h_self = self.hz_self(x=(z_out, h))
+
+        # propagate query, key and value
+        n_src, n_tgt = h.size(-2), z.size(-2)
+        h_out = self.propagate(h=h_self, z=z_out,
+                               edge_index=edge_index,
+                               mask=mask if self.mask_spatial else None,
+                               size=(n_src, n_tgt))
+
+        if self._z_cross is not None:
+            z_out = self.aggregate(self._z_cross, edge_index[1], dim_size=n_tgt)
+            self._z_cross = None
+
+        # skip connection
+        if self.root_weight:
+            h_out = h_out + self.h_skip(h)
+            z_out = z_out + self.z_skip(z)
+
+        if self.norm:
+            h_out = self.h_norm(h_out)
+            z_out = self.z_norm(z_out)
+
+        return h_out, z_out
+
+    def h_cross_message(self, h_i: Tensor, z_j: Tensor, index, size_i) -> Tensor:
+        # [batch, steps, edges, channels]
+        h_cross = self.hz_cross((z_j, h_i))
+        if self.spatial_aggr == 'softmax':
+            alpha_h = self.lin_alpha_h(h_cross)
+            alpha_h = sparse_softmax(alpha_h, index, num_nodes=size_i,
+                                     dim=self.node_dim)
+            h_cross = alpha_h * h_cross
+        return h_cross
+
+    def hz_cross_message(self, h_i: Tensor, h_j: Tensor, z_i: Tensor,
+                 index, size_i, mask_j: OptTensor) -> Tensor:
+        # [batch, steps, edges, channels]
+        z_cross = self.zh_cross((h_j, z_i), mask=mask_j)
+        h_cross = self.hz_cross((z_cross, h_i))
+        if self.spatial_aggr == 'softmax':
+            # reweight z
+            alpha_z = self.lin_alpha_z(z_cross)
+            alpha_z = sparse_softmax(alpha_z, index, num_nodes=size_i,
+                                     dim=self.node_dim)
+            z_cross = alpha_z * z_cross
+            # reweight h
+            alpha_h = self.lin_alpha_h(h_cross)
+            alpha_h = sparse_softmax(alpha_h, index, num_nodes=size_i,
+                                     dim=self.node_dim)
+            h_cross = alpha_h * h_cross
+        self._z_cross = z_cross
+        return h_cross
+
+    def message(self, h_i: Tensor, h_j: Tensor, z_i: Tensor, z_j: Tensor,
+                index, size_i, mask_j: OptTensor) -> Tensor:
+        if self.zh_cross is not None:
+            return self.hz_cross_message(h_i, h_j, z_i, index, size_i, mask_j)
+        return self.h_cross_message(h_i, z_j, index, size_i)
+
+File Path: spin/layers/postional_encoding.py
+Content:
+from typing import Optional
+
+from torch import nn
+from tsl.nn.base import StaticGraphEmbedding
+from tsl.nn.blocks.encoders import MLP
+from tsl.nn.layers import PositionalEncoding
+
+
+class PositionalEncoder(nn.Module):
+
+    def __init__(self, in_channels, out_channels,
+                 n_layers: int = 1,
+                 n_nodes: Optional[int] = None):
+        super(PositionalEncoder, self).__init__()
+        self.lin = nn.Linear(in_channels, out_channels)
+        self.activation = nn.LeakyReLU()
+        self.mlp = MLP(out_channels, out_channels, out_channels,
+                       n_layers=n_layers, activation='relu')
+        self.positional = PositionalEncoding(out_channels)
+        if n_nodes is not None:
+            self.node_emb = StaticGraphEmbedding(n_nodes, out_channels)
+        else:
+            self.register_parameter('node_emb', None)
+
+    def forward(self, x, node_emb=None, node_index=None):
+        if node_emb is None:
+            node_emb = self.node_emb(token_index=node_index)
+        # x: [b s c], node_emb: [n c] -> [b s n c]
+        x = self.lin(x)
+        x = self.activation(x.unsqueeze(-2) + node_emb)
+        out = self.mlp(x)
+        out = self.positional(out)
+        return out
+
+File Path: spin/layers/temporal_graph_additive_attention.py
+Content:
+from typing import Optional, Tuple, Union
+
+import torch
+from torch import Tensor
+from torch_geometric.nn.conv import MessagePassing
+from torch_geometric.nn.dense.linear import Linear
+from torch_geometric.typing import Adj, OptTensor, OptPairTensor
+from tsl.nn.layers.norm import LayerNorm
+
+from .additive_attention import TemporalAdditiveAttention
+
+
+class TemporalGraphAdditiveAttention(MessagePassing):
+    def __init__(self, input_size: Union[int, Tuple[int, int]],
+                 output_size: int,
+                 msg_size: Optional[int] = None,
+                 msg_layers: int = 1,
+                 root_weight: bool = True,
+                 reweight: Optional[str] = None,
+                 temporal_self_attention: bool = True,
+                 mask_temporal: bool = True,
+                 mask_spatial: bool = True,
+                 norm: bool = True,
+                 dropout: float = 0.,
+                 **kwargs):
+        kwargs.setdefault('aggr', 'add')
+        super(TemporalGraphAdditiveAttention, self).__init__(node_dim=-2,
+                                                             **kwargs)
+
+        # store dimensions
+        if isinstance(input_size, int):
+            self.src_size = self.tgt_size = input_size
+        else:
+            self.src_size, self.tgt_size = input_size
+        self.output_size = output_size
+        self.msg_size = msg_size or self.output_size
+
+        self.mask_temporal = mask_temporal
+        self.mask_spatial = mask_spatial
+
+        self.root_weight = root_weight
+        self.dropout = dropout
+
+        if temporal_self_attention:
+            self.self_attention = TemporalAdditiveAttention(
+                input_size=input_size,
+                output_size=output_size,
+                msg_size=msg_size,
+                msg_layers=msg_layers,
+                reweight=reweight,
+                dropout=dropout,
+                root_weight=False,
+                norm=False
+            )
+        else:
+            self.register_parameter('self_attention', None)
+
+        self.cross_attention = TemporalAdditiveAttention(input_size=input_size,
+                                                         output_size=output_size,
+                                                         msg_size=msg_size,
+                                                         msg_layers=msg_layers,
+                                                         reweight=reweight,
+                                                         dropout=dropout,
+                                                         root_weight=False,
+                                                         norm=False)
+
+        if self.root_weight:
+            self.lin_skip = Linear(self.tgt_size, self.output_size,
+                                   bias_initializer='zeros')
+        else:
+            self.register_parameter('lin_skip', None)
+
+        if norm:
+            self.norm = LayerNorm(output_size)
+        else:
+            self.register_parameter('norm', None)
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        self.cross_attention.reset_parameters()
+        if self.self_attention is not None:
+            self.self_attention.reset_parameters()
+        if self.lin_skip is not None:
+            self.lin_skip.reset_parameters()
+        if self.norm is not None:
+            self.norm.reset_parameters()
+
+    def forward(self, x: OptPairTensor,
+                edge_index: Adj, edge_weight: OptTensor = None,
+                mask: OptTensor = None):
+        # inputs: [batch, steps, nodes, channels]
+        if isinstance(x, Tensor):
+            x_src = x_tgt = x
+        else:
+            x_src, x_tgt = x
+            x_tgt = x_tgt if x_tgt is not None else x_src
+
+        n_src, n_tgt = x_src.size(-2), x_tgt.size(-2)
+
+        # propagate query, key and value
+        out = self.propagate(x=(x_src, x_tgt),
+                             edge_index=edge_index, edge_weight=edge_weight,
+                             mask=mask if self.mask_spatial else None,
+                             size=(n_src, n_tgt))
+
+        if self.self_attention is not None:
+            s, l = x_src.size(1), x_tgt.size(1)
+            if s == l:
+                attn_mask = ~torch.eye(l, l, dtype=torch.bool,
+                                       device=x_tgt.device)
+            else:
+                attn_mask = None
+            temp = self.self_attention(x=(x_src, x_tgt),
+                                       mask=mask if self.mask_temporal else None,
+                                       temporal_mask=attn_mask)
+            out = out + temp
+
+        # skip connection
+        if self.root_weight:
+            out = out + self.lin_skip(x_tgt)
+
+        if self.norm is not None:
+            out = self.norm(out)
+
+        return out
+
+    def message(self, x_i: Tensor, x_j: Tensor,
+                edge_weight: OptTensor, mask_j: OptTensor) -> Tensor:
+        # [batch, steps, edges, channels]
+
+        out = self.cross_attention((x_j, x_i), mask=mask_j)
+
+        if edge_weight is not None:
+            out = out * edge_weight.view(-1, 1)
+        return out
+
+File Path: spin/models/__init__.py
+Content:
+from .spin import SPINModel
+from .spin_hierarchical import SPINHierarchicalModel
+
+File Path: spin/models/spin.py
+Content:
+from typing import Optional
+
+import torch
+from torch import nn, Tensor
+from torch.nn import LayerNorm
+from torch_geometric.typing import OptTensor
+from tsl.nn.base import StaticGraphEmbedding
+from tsl.nn.blocks.encoders import MLP
+
+from ..layers import PositionalEncoder, TemporalGraphAdditiveAttention
+
+
+class SPINModel(nn.Module):
+
+    def __init__(self, input_size: int,
+                 hidden_size: int,
+                 n_nodes: int,
+                 u_size: Optional[int] = None,
+                 output_size: Optional[int] = None,
+                 temporal_self_attention: bool = True,
+                 reweight: Optional[str] = 'softmax',
+                 n_layers: int = 4,
+                 eta: int = 3,
+                 message_layers: int = 1):
+        super(SPINModel, self).__init__()
+
+        u_size = u_size or input_size
+        output_size = output_size or input_size
+        self.n_nodes = n_nodes
+        self.n_layers = n_layers
+        self.eta = eta
+        self.temporal_self_attention = temporal_self_attention
+
+        self.u_enc = PositionalEncoder(in_channels=u_size,
+                                       out_channels=hidden_size,
+                                       n_layers=2,
+                                       n_nodes=n_nodes)
+
+        self.h_enc = MLP(input_size, hidden_size, n_layers=2)
+        self.h_norm = LayerNorm(hidden_size)
+
+        self.valid_emb = StaticGraphEmbedding(n_nodes, hidden_size)
+        self.mask_emb = StaticGraphEmbedding(n_nodes, hidden_size)
+
+        self.x_skip = nn.ModuleList()
+        self.encoder, self.readout = nn.ModuleList(), nn.ModuleList()
+        for l in range(n_layers):
+            x_skip = nn.Linear(input_size, hidden_size)
+            encoder = TemporalGraphAdditiveAttention(
+                input_size=hidden_size,
+                output_size=hidden_size,
+                msg_size=hidden_size,
+                msg_layers=message_layers,
+                temporal_self_attention=temporal_self_attention,
+                reweight=reweight,
+                mask_temporal=True,
+                mask_spatial=l < eta,
+                norm=True,
+                root_weight=True,
+                dropout=0.0
+            )
+            readout = MLP(hidden_size, hidden_size, output_size,
+                          n_layers=2)
+            self.x_skip.append(x_skip)
+            self.encoder.append(encoder)
+            self.readout.append(readout)
+
+    def forward(self, x: Tensor, u: Tensor, mask: Tensor,
+                edge_index: Tensor, edge_weight: OptTensor = None,
+                node_index: OptTensor = None, target_nodes: OptTensor = None):
+        if target_nodes is None:
+            target_nodes = slice(None)
+
+        # Whiten missing values
+        x = x * mask
+
+        # POSITIONAL ENCODING #################################################
+        # Obtain spatio-temporal positional encoding for every node-step pair #
+        # in both observed and target sets. Encoding are obtained by jointly  #
+        # processing node and time positional encoding.                       #
+
+        # Build (node, timestamp) encoding
+        q = self.u_enc(u, node_index=node_index)
+        # Condition value on key
+        h = self.h_enc(x) + q
+
+        # ENCODER #############################################################
+        # Obtain representations h^i_t for every (i, t) node-step pair by     #
+        # only taking into account valid data in representation set.          #
+
+        # Replace H in missing entries with queries Q
+        h = torch.where(mask.bool(), h, q)
+        # Normalize features
+        h = self.h_norm(h)
+
+        imputations = []
+
+        for l in range(self.n_layers):
+            if l == self.eta:
+                # Condition H on two different embeddings to distinguish
+                # valid values from masked ones
+                valid = self.valid_emb(token_index=node_index)
+                masked = self.mask_emb(token_index=node_index)
+                h = torch.where(mask.bool(), h + valid, h + masked)
+            # Masked Temporal GAT for encoding representation
+            h = h + self.x_skip[l](x) * mask  # skip connection for valid x
+            h = self.encoder[l](h, edge_index, mask=mask)
+            # Read from H to get imputations
+            target_readout = self.readout[l](h[..., target_nodes, :])
+            imputations.append(target_readout)
+
+        # Get final layer imputations
+        x_hat = imputations.pop(-1)
+
+        return x_hat, imputations
+
+    @staticmethod
+    def add_model_specific_args(parser):
+        parser.opt_list('--hidden-size', type=int, tunable=True, default=32,
+                        options=[32, 64, 128, 256])
+        parser.add_argument('--u-size', type=int, default=None)
+        parser.add_argument('--output-size', type=int, default=None)
+        parser.add_argument('--temporal-self-attention', type=bool,
+                            default=True)
+        parser.add_argument('--reweight', type=str, default='softmax')
+        parser.add_argument('--n-layers', type=int, default=4)
+        parser.add_argument('--eta', type=int, default=3)
+        parser.add_argument('--message-layers', type=int, default=1)
+        return parser
+
+File Path: spin/models/spin_hierarchical.py
+Content:
+from typing import Optional
+
+import torch
+from torch import nn, Tensor
+from torch.nn import LayerNorm
+from torch_geometric.nn import inits
+from torch_geometric.typing import OptTensor
+from tsl.nn.base import StaticGraphEmbedding
+from tsl.nn.blocks.encoders import MLP
+
+from ..layers import PositionalEncoder, HierarchicalTemporalGraphAttention
+
+
+class SPINHierarchicalModel(nn.Module):
+
+    def __init__(self, input_size: int,
+                 h_size: int,
+                 z_size: int,
+                 n_nodes: int,
+                 z_heads: int = 1,
+                 u_size: Optional[int] = None,
+                 output_size: Optional[int] = None,
+                 n_layers: int = 5,
+                 eta: int = 3,
+                 message_layers: int = 1,
+                 reweight: Optional[str] = 'softmax',
+                 update_z_cross: bool = True,
+                 norm: bool = True,
+                 spatial_aggr: str = 'add'):
+        super(SPINHierarchicalModel, self).__init__()
+
+        u_size = u_size or input_size
+        output_size = output_size or input_size
+        self.h_size = h_size
+        self.z_size = z_size
+
+        self.n_nodes = n_nodes
+        self.z_heads = z_heads
+        self.n_layers = n_layers
+        self.eta = eta
+
+        self.v = StaticGraphEmbedding(n_nodes, h_size)
+        self.lin_v = nn.Linear(h_size, z_size, bias=False)
+        self.z = nn.Parameter(torch.Tensor(1, z_heads, n_nodes, z_size))
+        inits.uniform(z_size, self.z)
+        self.z_norm = LayerNorm(z_size)
+
+        self.u_enc = PositionalEncoder(in_channels=u_size,
+                                       out_channels=h_size,
+                                       n_layers=2)
+
+        self.h_enc = MLP(input_size, h_size, n_layers=2)
+        self.h_norm = LayerNorm(h_size)
+
+        self.v1 = StaticGraphEmbedding(n_nodes, h_size)
+        self.m1 = StaticGraphEmbedding(n_nodes, h_size)
+
+        self.v2 = StaticGraphEmbedding(n_nodes, h_size)
+        self.m2 = StaticGraphEmbedding(n_nodes, h_size)
+
+        self.x_skip = nn.ModuleList()
+        self.encoder, self.readout = nn.ModuleList(), nn.ModuleList()
+        for l in range(n_layers):
+            x_skip = nn.Linear(input_size, h_size)
+            encoder = HierarchicalTemporalGraphAttention(
+                h_size=h_size, z_size=z_size,
+                msg_size=h_size,
+                msg_layers=message_layers,
+                reweight=reweight,
+                mask_temporal=True,
+                mask_spatial=l < eta,
+                update_z_cross=update_z_cross,
+                norm=norm,
+                root_weight=True,
+                aggr=spatial_aggr,
+                dropout=0.0
+            )
+            readout = MLP(h_size, z_size, output_size,
+                          n_layers=2)
+            self.x_skip.append(x_skip)
+            self.encoder.append(encoder)
+            self.readout.append(readout)
+
+    def forward(self, x: Tensor, u: Tensor, mask: Tensor,
+                edge_index: Tensor, edge_weight: OptTensor = None,
+                node_index: OptTensor = None, target_nodes: OptTensor = None):
+        if target_nodes is None:
+            target_nodes = slice(None)
+        if node_index is None:
+            node_index = slice(None)
+
+        # POSITIONAL ENCODING #################################################
+        # Obtain spatio-temporal positional encoding for every node-step pair #
+        # in both observed and target sets. Encoding are obtained by jointly  #
+        # processing node and time positional encoding.                       #
+        # Condition also embeddings Z on V.                                   #
+
+        v_nodes = self.v(token_index=node_index)
+        z = self.z[..., node_index, :] + self.lin_v(v_nodes)
+
+        # Build (node, timestamp) encoding
+        q = self.u_enc(u, node_index=node_index, node_emb=v_nodes)
+        # Condition value on key
+        h = self.h_enc(x) + q
+
+        # ENCODER #############################################################
+        # Obtain representations h^i_t for every (i, t) node-step pair by     #
+        # only taking into account valid data in representation set.          #
+
+        # Replace H in missing entries with queries Q. Then, condition H on two
+        # different embeddings to distinguish valid values from masked ones.
+        h = torch.where(mask.bool(), h + self.v1(), q + self.m1())
+        # Normalize features
+        h, z = self.h_norm(h), self.z_norm(z)
+
+        imputations = []
+
+        for l in range(self.n_layers):
+            if l == self.eta:
+                # Condition H on two different embeddings to distinguish
+                # valid values from masked ones
+                h = torch.where(mask.bool(), h + self.v2(), h + self.m2())
+            # Skip connection from input x
+            h = h + self.x_skip[l](x) * mask
+            # Masked Temporal GAT for encoding representation
+            h, z = self.encoder[l](h, z, edge_index, mask=mask)
+            target_readout = self.readout[l](h[..., target_nodes, :])
+            imputations.append(target_readout)
+
+        x_hat = imputations.pop(-1)
+
+        return x_hat, imputations
+
+    @staticmethod
+    def add_model_specific_args(parser):
+        parser.opt_list('--h-size', type=int, tunable=True, default=32,
+                        options=[16, 32])
+        parser.opt_list('--z-size', type=int, tunable=True, default=32,
+                        options=[32, 64, 128])
+        parser.opt_list('--z-heads', type=int, tunable=True, default=2,
+                        options=[1, 2, 4, 6])
+        parser.add_argument('--u-size', type=int, default=None)
+        parser.add_argument('--output-size', type=int, default=None)
+        parser.opt_list('--encoder-layers', type=int, tunable=True, default=2,
+                        options=[1, 2, 3, 4])
+        parser.opt_list('--decoder-layers', type=int, tunable=True, default=2,
+                        options=[1, 2, 3, 4])
+        parser.add_argument('--message-layers', type=int, default=1)
+        parser.opt_list('--reweight', type=str, tunable=True, default='softmax',
+                        options=[None, 'softmax'])
+        parser.add_argument('--update-z-cross', type=bool, default=True)
+        parser.opt_list('--norm', type=bool, default=True, tunable=True,
+                        options=[True, False])
+        parser.opt_list('--spatial-aggr', type=str, tunable=True,
+                        default='add', options=['add', 'softmax'])
+        return parser
+
+File Path: spin/scheduler.py
+Content:
+import math
+
+from torch.optim import Optimizer
+from torch.optim.lr_scheduler import LambdaLR
+
+
+class CosineSchedulerWithRestarts(LambdaLR):
+
+    def __init__(self, optimizer: Optimizer,
+                 num_warmup_steps: int,
+                 num_training_steps: int,
+                 min_factor: float = 0.1,
+                 linear_decay: float = 0.67,
+                 num_cycles: int = 1,
+                 last_epoch: int = -1):
+        """From https://github.com/huggingface/transformers/blob/v4.18.0/src/transformers/optimization.py#L138
+
+        Create a schedule with a learning rate that decreases following the values
+        of the cosine function between the initial lr set in the optimizer to 0,
+        with several hard restarts, after a warmup period during which it increases
+        linearly between 0 and the initial lr set in the optimizer.
+
+        Args:
+            optimizer ([`~torch.optim.Optimizer`]):
+                The optimizer for which to schedule the learning rate.
+            num_warmup_steps (`int`):
+                The number of steps for the warmup phase.
+            num_training_steps (`int`):
+                The total number of training steps.
+            num_cycles (`int`, *optional*, defaults to 1):
+                The number of hard restarts to use.
+            last_epoch (`int`, *optional*, defaults to -1):
+                The index of the last epoch when resuming training.
+        Return:
+            `torch.optim.lr_scheduler.LambdaLR` with the appropriate schedule.
+        """
+
+        def lr_lambda(current_step):
+            if current_step < num_warmup_steps:
+                factor = float(current_step) / float(max(1, num_warmup_steps))
+                return max(min_factor, factor)
+            progress = float(current_step - num_warmup_steps)
+            progress /= float(max(1, num_training_steps - num_warmup_steps))
+            if progress >= 1.0:
+                return 0.0
+            factor = (float(num_cycles) * progress) % 1.0
+            cos = 0.5 * (1.0 + math.cos(math.pi * factor))
+            lin = 1.0 - (progress * linear_decay)
+            return max(min_factor, cos * lin)
+
+        super(CosineSchedulerWithRestarts, self).__init__(optimizer, lr_lambda,
+                                                          last_epoch)
+
+File Path: spin/utils.py
+Content:
+from typing import Optional
+
+import numpy as np
+from numpy.random import choice
+from torch_geometric.utils import k_hop_subgraph
+from tsl.data import Batch
+from tsl.ops.connectivity import weighted_degree
+
+
+def k_hop_subgraph_sampler(batch: Batch, k: int, num_nodes: int,
+                           max_edges: Optional[int] = None,
+                           cut_edges_uniformly: bool = False):
+    N = batch.x.size(-2)
+    roots = choice(np.arange(N), num_nodes, replace=False).tolist()
+    subgraph = k_hop_subgraph(roots, k, batch.edge_index, relabel_nodes=True,
+                              num_nodes=N, flow='target_to_source')
+    node_idx, edge_index, node_map, edge_mask = subgraph
+
+    col = edge_index[1]
+    if max_edges is not None and max_edges < edge_index.size(1):
+        if not cut_edges_uniformly:
+            in_degree = weighted_degree(col, num_nodes=len(node_idx))
+            deg = (1 / in_degree)[col].cpu().numpy()
+            p = deg / deg.sum()
+        else:
+            p = None
+        keep_edges = sorted(choice(len(col), max_edges, replace=False, p=p))
+    else:
+        keep_edges = slice(None)
+    for key, pattern in batch.pattern.items():
+        if key in batch.target or key == 'eval_mask':
+            batch[key] = batch[key][..., roots, :]
+        elif 'n' in pattern:
+            batch[key] = batch[key][..., node_idx, :]
+        elif 'e' in pattern and key != 'edge_index':
+            batch[key] = batch[key][edge_mask][keep_edges]
+    batch.input.node_index = node_idx  # index of nodes in subgraph
+    batch.input.target_nodes = node_map  # index of roots in subgraph
+    batch.edge_index = edge_index[:, keep_edges]
+    return batch
+
+Output:
+{
+    "experimental_code": "import torch\nfrom torch import nn, Tensor\nfrom torch.nn import LayerNorm\nfrom torch_geometric.typing import OptTensor\nfrom tsl.nn.base import StaticGraphEmbedding\nfrom tsl.nn.blocks.encoders import MLP\n\nfrom ..layers import PositionalEncoder, TemporalGraphAdditiveAttention\n\n\nclass SPINModel(nn.Module):\n\n    def __init__(self, input_size: int,\n                 hidden_size: int,\n                 n_nodes: int,\n                 u_size: Optional[int] = None,\n                 output_size: Optional[int] = None,\n                 temporal_self_attention: bool = True,\n                 reweight: Optional[str] = 'softmax',\n                 n_layers: int = 4,\n                 eta: int = 3,\n                 message_layers: int = 1):\n        super(SPINModel, self).__init__()\n\n        u_size = u_size or input_size\n        output_size = output_size or input_size\n        self.n_nodes = n_nodes\n        self.n_layers = n_layers\n        self.eta = eta\n        self.temporal_self_attention = temporal_self_attention\n\n        self.u_enc = PositionalEncoder(in_channels=u_size,\n                                       out_channels=hidden_size,\n                                       n_layers=2,\n                                       n_nodes=n_nodes)\n\n        self.h_enc = MLP(input_size, hidden_size, n_layers=2)\n        self.h_norm = LayerNorm(hidden_size)\n\n        self.valid_emb = StaticGraphEmbedding(n_nodes, hidden_size)\n        self.mask_emb = StaticGraphEmbedding(n_nodes, hidden_size)\n\n        self.x_skip = nn.ModuleList()\n        self.encoder, self.readout = nn.ModuleList(), nn.ModuleList()\n        for l in range(n_layers):\n            x_skip = nn.Linear(input_size, hidden_size)\n            encoder = TemporalGraphAdditiveAttention(\n                input_size=hidden_size,\n                output_size=hidden_size,\n                msg_size=hidden_size,\n                msg_layers=message_layers,\n                temporal_self_attention=temporal_self_attention,\n                reweight=reweight,\n                mask_temporal=True,\n                mask_spatial=l < eta,\n                norm=True,\n                root_weight=True,\n                dropout=0.0\n            )\n            readout = MLP(hidden_size, hidden_size, output_size,\n                          n_layers=2)\n            self.x_skip.append(x_skip)\n            self.encoder.append(encoder)\n            self.readout.append(readout)\n\n    def forward(self, x: Tensor, u: Tensor, mask: Tensor,\n                edge_index: Tensor, edge_weight: OptTensor = None,\n                node_index: OptTensor = None, target_nodes: OptTensor = None):\n        if target_nodes is None:\n            target_nodes = slice(None)\n\n        # Whiten missing values\n        x = x * mask\n\n        # POSITIONAL ENCODING #################################################\n        # Obtain spatio-temporal positional encoding for every node-step pair #\n        # in both observed and target sets. Encoding are obtained by jointly  #\n        # processing node and time positional encoding.                       #\n\n        # Build (node, timestamp) encoding\n        q = self.u_enc(u, node_index=node_index)\n        # Condition value on key\n        h = self.h_enc(x) + q\n\n        # ENCODER #############################################################\n        # Obtain representations h^i_t for every (i, t) node-step pair by     #\n        # only taking into account valid data in representation set.          #\n\n        # Replace H in missing entries with queries Q\n        h = torch.where(mask.bool(), h, q)\n        # Normalize features\n        h = self.h_norm(h)\n\n        imputations = []\n\n        for l in range(self.n_layers):\n            if l == self.eta:\n                # Condition H on two different embeddings to distinguish\n                # valid values from masked ones\n                valid = self.valid_emb(token_index=node_index)\n                masked = self.mask_emb(token_index=node_index)\n                h = torch.where(mask.bool(), h + valid, h + masked)\n            # Masked Temporal GAT for encoding representation\n            h = h + self.x_skip[l](x) * mask  # skip connection for valid x\n            h = self.encoder[l](h, edge_index, mask=mask)\n            # Read from H to get imputations\n            target_readout = self.readout[l](h[..., target_nodes, :])\n            imputations.append(target_readout)\n\n        # Get final layer imputations\n        x_hat = imputations.pop(-1)\n\n        return x_hat, imputations\n\n    @staticmethod\n    def add_model_specific_args(parser):\n        parser.opt_list('--hidden-size', type=int, tunable=True, default=32,\n                        options=[32, 64, 128, 256])\n        parser.add_argument('--u-size', type=int, default=None)\n        parser.add_argument('--output-size', type=int, default=None)\n        parser.add_argument('--temporal-self-attention', type=bool,\n                            default=True)\n        parser.add_argument('--reweight', type=str, default='softmax')\n        parser.add_argument('--n-layers', type=int, default=4)\n        parser.add_argument('--eta', type=int, default=3)\n        parser.add_argument('--message-layers', type=int, default=1)\n        return parser",
+    "experimental_info": "General Experiment Settings:\n- Seed: -1 (default)\n- Precision: 32 (default)\n- Model Name: 'spin' (default, can be 'spin_h' for hierarchical version)\n- Dataset Name: 'air36' (default)\n- Validation Length: 0.1 (default)\n- Test Length: 0.2 (default)\n- Learning Rate: 0.001 (default)\n- Epochs: 300 (default)\n- Patience: 40 (default)\n- L2 Regularization: 0. (default)\n- Batches per Epoch: 300 (default)\n- Batch Size for Inference: 32 (default)\n- Split Batch In (gradient accumulation steps): 1 (default)\n- Gradient Clip Value: 5. (default)\n- Loss Function: 'l1_loss' (default, corresponds to `torch.nn.functional.l1_loss`)\n- Learning Rate Scheduler: None (default, options: 'cosine', 'magic' which is `CosineSchedulerWithRestarts`)\n- Adjacency Threshold: 0.1 (default)\n\nSPINImputer Specific Settings:\n- Whiten Probability: 0.05 (default)\n- Prediction Loss Weight: 1.0 (default)\n- Number of Roots for Subgraph Sampling: None (default, can be set for graph subsampling)\n- Number of Hops for Subgraph Sampling: 2 (default)\n- Maximum Edges in Subgraph: 1000 (default)\n- Cut Edges Uniformly in Subgraph: False (default)\n\nSPINModel Specific Settings (when `--model-name spin`):\n- Hidden Size: 32 (default, tunable options: 32, 64, 128, 256)\n- Exogenous Input Size (`u_size`): None (default, inferred from input if not set)\n- Output Size: None (default, inferred from input if not set)\n- Temporal Self-Attention: True (default)\n- Reweighting Mechanism: 'softmax' (default, options: 'softmax' or None for `AdditiveAttention` layer)\n- Number of Layers (`n_layers`): 4 (default)\n- Eta (layer where second phase propagation starts): 3 (default)\n- Message Layers (in MLP for attention message): 1 (default)\n\nSPINHierarchicalModel Specific Settings (when `--model-name spin_h`):\n- H Size (hidden size for node representations): 32 (default, tunable options: 16, 32)\n- Z Size (size for global/hub node representations): 32 (default, tunable options: 32, 64, 128)\n- Z Heads (number of hub nodes/clusters): 2 (default, tunable options: 1, 2, 4, 6)\n- Exogenous Input Size (`u_size`): None (default, inferred from input if not set)\n- Output Size: None (default, inferred from input if not set)\n- Number of Layers (`n_layers`): 5 (default from `__init__`, CLI args `--encoder-layers` and `--decoder-layers` are present but not directly mapped to this parameter)\n- Eta (layer where second phase propagation starts): 3 (default)\n- Message Layers (in MLP for attention message): 1 (default)\n- Reweighting Mechanism: 'softmax' (default, tunable options: None, 'softmax')\n- Update Z Cross (whether to update hub nodes through cross-attention): True (default)\n- Normalization: True (default, tunable options: True, False)\n- Spatial Aggregation: 'add' (default, tunable options: 'add', 'softmax')\n\nScheduler Settings (when `--lr-scheduler magic`):\n- `CosineSchedulerWithRestarts` with `num_warmup_steps=12`, `min_factor=0.1`, `linear_decay=0.67`, `num_training_steps=args.epochs`, `num_cycles=args.epochs // 100`."
+}
