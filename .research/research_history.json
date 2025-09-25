@@ -1,0 +1,10 @@
+{
+  "research_topic": "Accelerating Graph Attention Network training",
+  "queries": [
+    "accelerated graph attention",
+    "GAT training optimization",
+    "parallel GAT training",
+    "sparse attention acceleration",
+    "hardware GAT acceleration"
+  ]
+}
