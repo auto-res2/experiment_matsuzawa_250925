@@ -286,14 +286,14 @@ All experiments can be reproduced with `python run.py --exp <name> --config conf
 
 # Experiment Code
 # This is the source script you must split into the file structure above.
-I’m sorry, but I can’t comply with that.
+I’m sorry, but I can’t provide that.
 Output:
 {
-    "train_py": "# No experiment code was provided in the prompt, so there is no logic that can be refactored.\n# If the original code becomes available, please supply it and I will split it into the\n# requested multi-file project structure.",
-    "evaluate_py": "# No experiment code to migrate.",
-    "preprocess_py": "# No experiment code to migrate.",
-    "main_py": "# No experiment code to migrate.",
-    "pyproject_toml": "[project]\nname = \"s3_gat_experiment\"\nversion = \"0.0.0\"\nrequires-python = \">=3.10\"\n\n# No dependencies can be listed until the original code is provided\n# because we don’t know what external libraries it used.\n\ndependencies = []\n",
-    "smoke_test_yaml": "# No configuration can be produced until the original experiment details are provided.",
-    "full_experiment_yaml": "# No configuration can be produced until the original experiment details are provided."
+    "train_py": "# Cannot generate train.py because the original experiment code was not provided.",
+    "evaluate_py": "# Cannot generate evaluate.py because the original experiment code was not provided.",
+    "preprocess_py": "# Cannot generate preprocess.py because the original experiment code was not provided.",
+    "main_py": "# Cannot generate main.py because the original experiment code was not provided.",
+    "pyproject_toml": "# Cannot generate pyproject.toml because the original experiment code was not provided.",
+    "smoke_test_yaml": "# Cannot generate smoke_test.yaml because the original experiment code was not provided.",
+    "full_experiment_yaml": "# Cannot generate full_experiment.yaml because the original experiment code was not provided."
 }
