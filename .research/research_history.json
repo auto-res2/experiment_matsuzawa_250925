@@ -666,6 +666,11 @@
         "smoke_test_yaml": "experiment_name: \"smoke_test\"\n\ndataset:\n  name: \"SYNTHETIC_SMOKE\"\n  num_nodes: 1000\n  num_edges: 5000\n\nmodel:\n  name: \"HAQGAT\"\n  in_channels: 16\n  hidden_channels: 32\n  num_layers: 3\n  num_classes: 3\n  heads: 2\n  K0_init: 4\n  m_init: 8\n\ntraining:\n  epochs: 5\n  batch_size: 0  # full-batch\n  lr: 0.005\n  weight_decay: 0.0001\n  gamma: 0.001\n  epsilon: 0.01\n  dropout: 0.2\n  qat: false\n\nevaluation:\n  save_dir: \"results\"\n  seed: 1\n",
         "full_experiment_yaml": "experiment_name: \"reddit_comments_haqgat\"\n\ndataset:\n  name: \"REDDIT_COMMENTS\"\n\nmodel:\n  name: \"HAQGAT\"\n  in_channels: 602          # will be overridden by loader if mismatched\n  hidden_channels: 256\n  num_layers: 4\n  num_classes: 41           # overridden if mismatched\n  heads: 8\n  K0_init: 8\n  m_init: 16\n\ntraining:\n  epochs: 100\n  batch_size: 0  # full-batch\n  lr: 0.002\n  weight_decay: 0.0005\n  gamma: 0.0005\n  epsilon: 0.005\n  dropout: 0.3\n  qat: true\n\nevaluation:\n  save_dir: \"results\"\n  seed: 1\n"
       }
+    },
+    "experimental_results": {
+      "result": "=== [PHASE 2/2] Full experiment start Thu Sep 25 08:26:23 AM UTC 2025 ===\n\n=========================================================\nExperiment Name : reddit_comments_haqgat\nDataset         : REDDIT_COMMENTS\nModel           : HAQGAT\n=========================================================\n",
+      "error": "",
+      "image_file_name_list": []
     }
   },
   "idea_info_history": [
@@ -718,5 +723,6 @@
       }
     }
   ],
+  "executed_flag": true,
   "experiment_iteration": 1
 }
