@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The core methodology involves deriving a conservation law for GATs with positive homogeneous activation functions (e.g., ReLUs) based on the concept of rescale invariance. This law, expressed as a relationship between feature weights, attention parameters, and their gradients, reveals that the l2-norms of incoming and outgoing weights to a neuron, along with attention weights, are conserved under gradient flow. The 'degree of balancedness' (c) is defined, and an initialization is considered balanced if c=0. Based on this, a 'Balancing' procedure (Procedure 2.6) is devised: 1) setting attention parameters to zero, 2) scaling incoming feature weights, and 3) scaling outgoing feature weights to ensure balancedness. The paper also explores a Balanced Orthogonal Initialization, which uses a 'looks-linear' (LL) mirrored block structure for feature weights before applying the balancing procedure.
+
+# GitHub URLs List
+['https://github.com/Diego999/pyGAT']
+Output:
+{
+    "index": 0
+}
