@@ -1,0 +1,17 @@
+
+Input:
+# Task
+You carefully read the contents of the “Paper Outline” and select one GitHub link from the “GitHub URLs List” that you think is most relevant to the contents.
+# Constraints
+- Output the index number corresponding to the selected GitHub URL.
+- Be sure to select only one GitHub URL.
+- If there is no related GitHub link, output None.
+# Paper Outline
+The core methodology involves formulating the sampling problem as an adversary bandit problem where the regret is minimized. The reward for choosing a set of neighbors is defined as the negative derivative of the effective sampling variance. Two bandit algorithms are proposed: (1) GNN-BS, based on the multi-armed bandit (MAB) setting, where 1-element subsets of neighbors are sampled k times, and the sampling distribution is updated by EXP3. (2) GNN-BS.M, based on MAB with multiple plays, which uses an efficient k-combination sampler (DepRound) to select a k-element subset of neighbors once, and updates the sampling distribution by EXP3.M. For attentive GNNs, adjusted feedback attention values are used to approximate true attention values from sampled unnormalized attentions.
+
+# GitHub URLs List
+['https://github.com/matenure/FastGCN', 'https://github.com/huangwb/AS-GCN', 'https://github.com/xavierzw/ogb-geniepath-bs']
+Output:
+{
+    "index": 1
+}
