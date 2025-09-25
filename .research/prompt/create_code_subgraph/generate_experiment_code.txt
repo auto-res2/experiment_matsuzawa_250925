@@ -79,6 +79,11 @@ File names must follow the format: `<figure_topic>[_<condition>][_pairN].pdf`
 ## Full Experiment Validation Feedback
 
 
+**Critical Issue Detected**: The previous code generation failed full experiment validation:
+Full‐scale configuration does not implement the published Dynamic-Shift protocol: (1) dataset loader silently falls back to torchvision FakeData, so real external datasets are not strictly required; (2) full_experiment.yaml only covers a single ResNet-50 on ImageNet and omits ConvNeXt, ViT, ShiftTrack continuous stream and all baselines; (3) no code for streaming, adaptation-lag/energy metrics, per-block line search, TinyCurvNet, quantised stats, or Jetson benchmarking; (4) training/evaluation loops are greatly simplified and lack result logging & saving specified; therefore production-ready full experiment is incomplete and uses placeholders.
+
+**Required Action**: Address this validation failure by ensuring your generated code strictly follows the Hugging Face code requirements and implements genuine full experiments using real datasets and models.
+
 
 
 # Experimental Environment
