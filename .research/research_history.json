@@ -952,6 +952,11 @@
         "smoke_test_yaml": "experiment_name: smoke_test\noutput_dir: runs\n\ndescription: |\n  Smoke-test – synthetic tensor data & small MLP just to ensure the whole stack\n  (preprocess→train→evaluate→plot) works. 5 epochs only.\n\ndataset:\n  name: DATASET_PLACEHOLDER\n  n_samples: 256\n  n_features: 32\n  n_classes: 3\n  batch_size: 32\n\nmodel:\n  name: MODEL_PLACEHOLDER\n  in_features: 32\n  n_classes: 3\n  hidden: 64\n\noptimizer:\n  lr: 1e-3\n  weight_decay: 0.0\n\ntraining:\n  num_epochs: 5\n  early_stop_patience: 3\n  mixed_precision: false\n",
         "full_experiment_yaml": "experiment_name: reddit_hf_transformer\noutput_dir: runs\n\ndescription: |\n  Specialised run on the Hugging-Face `tensorshield/reddit_dataset_157` data-set\n  (comment body → subreddit_id). Uses DistilBERT with AdamW + cosine decay. This\n  config replaces all PLACEHOLDERS with *real* data / models and therefore\n  fulfils the specialisation requirements.\n\ndataset:\n  name: tensorshield/reddit_dataset_157   # ← real HF dataset ID\n  batch_size: 16\n  tokenizer: distilbert-base-uncased\n  text_key: body\n  label_key: subreddit_id\n  max_len: 128\n\nmodel:\n  name: hf:distilbert-base-uncased        # ← real HF model\n  num_labels: 50                          # subreddit count (example)\n\noptimizer:\n  lr: 2e-5\n  weight_decay: 0.01\n\nscheduler:\n  type: cosine\n\ntraining:\n  num_epochs: 3\n  early_stop_patience: 1\n  mixed_precision: true\n\n# ---------- END OF CONFIG ---------------------------------------------------\n"
       }
+    },
+    "experimental_results": {
+      "result": "",
+      "error": "",
+      "image_file_name_list": []
     }
   },
   "idea_info_history": [
@@ -1004,5 +1009,6 @@
       }
     }
   ],
+  "executed_flag": false,
   "experiment_iteration": 1
 }
