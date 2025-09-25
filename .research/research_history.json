@@ -6,5 +6,82 @@
     "test-time adaptation speedup",
     "online adaptation optimization",
     "meta-learning adaptation speed"
+  ],
+  "research_study_list": [
+    {
+      "title": "TTT++: When Does Self-Supervised Test-Time Training Fail or Thrive?"
+    },
+    {
+      "title": "Persistent Test-time Adaptation in Recurring Testing Scenarios"
+    },
+    {
+      "title": "Active Test-Time Adaptation: Theoretical Analyses and An Algorithm"
+    },
+    {
+      "title": "Test Time Adaptation via Conjugate Pseudo-labels"
+    },
+    {
+      "title": "Improved Test-Time Adaptation for Domain Generalization"
+    },
+    {
+      "title": "Test Time Adaptation With Regularized Loss for Weakly Supervised Salient Object Detection"
+    },
+    {
+      "title": "Tent: Fully Test-Time Adaptation by Entropy Minimization"
+    },
+    {
+      "title": "What How and When Should Object Detectors Update in Continually Changing Test Domains?"
+    },
+    {
+      "title": "DELTA: DEGRADATION-FREE FULLY TEST-TIME ADAPTATION"
+    },
+    {
+      "title": "Test-Time Training with Self-Supervision for Generalization under Distribution Shifts"
+    },
+    {
+      "title": "Evaluation of Test-Time Adaptation Under Computational Time Constraints"
+    },
+    {
+      "title": "Test-Time Training with Self-Supervision for Generalization under Distribution Shifts"
+    },
+    {
+      "title": "TTT++: When Does Self-Supervised Test-Time Training Fail or Thrive?"
+    },
+    {
+      "title": "Leveraging Proxy of Training Data for Test-Time Adaptation"
+    },
+    {
+      "title": "Towards Stable Test-time Adaptation in Dynamic Wild World"
+    },
+    {
+      "title": "Online Adaptive Policy Selection in Time-Varying Systems: No-Regret via Contractive Perturbations"
+    },
+    {
+      "title": "Understanding Adam Optimizer via Online Learning of Updates: Adam is FTRL in Disguise"
+    },
+    {
+      "title": "Dynamic Regret of Convex and Smooth Functions"
+    },
+    {
+      "title": "Efficient Non-stationary Online Learning by Wavelets with Applications to Online Distribution Shift Adaptation"
+    },
+    {
+      "title": "Provably Efficient Model-based Policy Adaptation"
+    },
+    {
+      "title": "Meta-learning with negative learning rates"
+    },
+    {
+      "title": "Provable Generalization of Overparameterized Meta-learning Trained with SGD"
+    },
+    {
+      "title": "Provable Generalization of Overparameterized Meta-learning Trained with SGD"
+    },
+    {
+      "title": "On the Stability and Generalization of Meta-Learning"
+    },
+    {
+      "title": "Understanding Benign Overfitting in Gradient-Based Meta Learning"
+    }
   ]
 }
