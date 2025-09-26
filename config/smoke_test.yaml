@@ -1,0 +1,20 @@
+# config/smoke_test.yaml
+experiment_name: "smoke_test_synthetic"
+seed: 42
+results_dir: "results"
+
+dataset:
+  name: "synthetic"               # uses synthetic placeholder dataset
+  num_samples: 500
+  num_features: 10
+  num_classes: 2
+  test_split: 0.2
+  val_split: 0.1
+
+model:
+  name: "baseline"                # placeholder model (simple FFN)
+
+training:
+  epochs: 3
+  batch_size: 32
+  lr: 0.001

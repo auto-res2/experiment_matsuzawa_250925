@@ -1,0 +1,19 @@
+# config/full_experiment.yaml
+experiment_name: "dialogpt_squad_binary"
+seed: 42
+results_dir: "results"
+
+dataset:
+  name: "squad"                 # actual HF dataset
+  num_samples: 2000             # subset for resource limitations
+  answer_length_threshold: 30   # >30 chars => label 1 else 0
+  max_length: 128
+  # validation/test split handled internally
+
+model:
+  name: "microsoft/DialoGPT-medium"  # actual HF model ID
+
+training:
+  epochs: 1                    # single epoch to keep runtime/memory low
+  batch_size: 2               # tiny batch-size fits 500 MB RAM limitation
+  lr: 5e-5
