@@ -1,0 +1,30 @@
+seed: 42
+
+# ------------------------------
+# DATASET
+# ------------------------------
+dataset:
+  name: squad          # Real HF dataset (SQuAD v1.1)
+  subset_size: 400     # tiny slice for quick smoke-test
+  num_classes: 2       # binary label as defined in SquadBinaryDataset
+
+# ------------------------------
+# MODEL
+# ------------------------------
+model:
+  name: microsoft/DialoGPT-medium  # HuggingFace model identifier (config is used)
+
+# ------------------------------
+# TRAINING
+# ------------------------------
+training:
+  batch_size: 32
+  epochs: 3
+  learning_rate: 0.001
+  checkpoint_dir: ".research/iteration2/checkpoints/"
+
+# ------------------------------
+# EVALUATION
+# ------------------------------
+evaluation:
+  metrics: ["accuracy", "precision", "recall", "f1"]

@@ -1,0 +1,30 @@
+seed: 123
+
+# ------------------------------
+# DATASET
+# ------------------------------
+dataset:
+  name: squad          # Real HF dataset
+  subset_size: 3000    # larger slice for a fuller run (still manageable)
+  num_classes: 2
+
+# ------------------------------
+# MODEL
+# ------------------------------
+model:
+  name: microsoft/DialoGPT-medium  # HF identifier
+
+# ------------------------------
+# TRAINING
+# ------------------------------
+training:
+  batch_size: 64
+  epochs: 20
+  learning_rate: 0.0005
+  checkpoint_dir: ".research/iteration2/checkpoints/"
+
+# ------------------------------
+# EVALUATION
+# ------------------------------
+evaluation:
+  metrics: ["accuracy", "precision", "recall", "f1"]
